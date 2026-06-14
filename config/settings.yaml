@@ -1,0 +1,84 @@
+# YVAKOR — Configuração central
+# Ajuste aqui sem tocar em código.
+
+agent:
+  name: "YVAKOR"
+  language: "pt-BR"
+  max_iterations: 8          # limite de ciclos por tarefa (anti-loop)
+  reflection_enabled: true   # loop de autoavaliação pós-tarefa
+
+llm:
+  # Provider padrão enquanto o local não está pronto
+  default_provider: "deepseek"
+
+  providers:
+    deepseek:
+      base_url: "https://api.deepseek.com"
+      model: "deepseek-chat"        # V4 (chat) | "deepseek-reasoner" p/ raciocínio
+      api_key_env: "DEEPSEEK_API_KEY"
+      temperature: 0.1             # 0.1 = mais determinístico e previsível para ferramentas
+      max_tokens: 4096
+    # Ollama desativado (modo DeepSeek-only). Para usar IA local, descomente,
+    # instale o Ollama (https://ollama.com) e rode: ollama pull qwen2.5:7b
+    # ollama:
+    #   base_url: "http://localhost:11434"
+    #   model: "qwen2.5:7b"           # alternativas: llama3.1:8b, deepseek-r1:8b
+    #   temperature: 0.3
+    #   max_tokens: 4096
+
+  # Roteador: que tipo de tarefa vai para qual provider.
+  # Conforme skills ficam "estáveis", mova categorias para "local".
+  routing:
+    local:    ["classificacao", "resumo_curto", "resposta_simples", "formatacao"]
+    external: ["codigo", "arquitetura", "analise_complexa", "prospeccao", "pesquisa_sintese", "geracao_imagem"]
+    fallback_order: ["deepseek", "ollama"]   # se um falhar, tenta o próximo
+
+memory:
+  episodic_db: "data/yvakor_memory.db"
+  semantic_index: "data/semantic"     # ChromaDB se instalado; senão keyword search
+  semantic_top_k: 5
+  episodic_context_last_n: 10         # últimas interações injetadas no contexto
+
+skills:
+  library_path: "skills_library"
+  stable_threshold: 3                 # usos com sucesso p/ marcar skill estável
+
+tools:
+  sandbox_dir: "data/sandbox"
+  # Modo automático: executa ações de trabalho (escrever/editar arquivo, shell,
+  # python) SEM pedir confirmação. Coloque false para voltar a confirmar tudo.
+  auto_approve: true
+  # Mesmo em auto_approve, estas NUNCA são aprovadas sozinhas (envio externo/destrutivo
+  # ou escrita em arquivos do PC). Pedem confirmação via popup na interface.
+  always_confirm:
+    - "send_email"
+    - "send_whatsapp"
+    - "delete_file"
+    - "escrever_arquivo_local"   # criar/sobrescrever arquivo no PC → confirma
+    - "editar_arquivo_local"     # editar arquivo do PC → confirma
+    - "executar_shell"           # comando no shell do sistema → confirma
+    - "executar_python"          # execução de código Python → confirma
+  # Ações que exigem confirmação do usuário (Confirmation Guard)
+  guarded_actions:
+    - "send_email"
+    - "send_whatsapp"
+    - "delete_file"
+    - "execute_shell"
+    - "http_post"
+    - "escrever_arquivo"      # escrita no sandbox
+    - "executar_python"       # execução de código no sandbox
+    - "escrever_arquivo_local"  # escrita em qualquer arquivo do PC
+    - "editar_arquivo_local"    # edição de arquivo do PC
+    - "executar_shell"          # comando no shell do sistema
+
+cowork:
+  max_concurrent_tasks: 3     # máximo de tarefas simultâneas em segundo plano
+
+maintenance:
+  enabled: true               # auto-manutenção em segundo plano
+  interval_hours: 12          # de quanto em quanto tempo roda o ciclo
+  consolidate_memory: true    # dedup/limpeza da memória semântica (usa a IA)
+  # --- Atualização do próprio código (via git, opcional e seguro) ---
+  auto_update_code: false     # true = faz 'git pull' sozinho quando houver versão nova
+  git_remote: "origin"
+  git_branch: "main"

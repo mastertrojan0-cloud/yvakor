@@ -1,0 +1,1070 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YVAKOR — Núcleo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@300;400;500;600&family=Sora:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* ============ YVAKOR — tokens ============
+     noite      #060D12  fundo (noite sobre o rio)
+     rio-negro  #10212B  superfícies
+     solimões   #D9A441  acento dourado (sedimento)
+     água       #3FBFAE  estados ok / vivo
+     areia      #EAE4D3  texto
+  ========================================== */
+  :root{
+    --noite:#060D12; --rio:#10212B; --solimoes:#D9A441;
+    --agua:#3FBFAE; --areia:#EAE4D3;
+    --linha:rgba(234,228,211,.12);
+    --vidro:rgba(16,33,43,.55);
+  }
+  /* pilha tipografica com fallback do sistema (funciona offline) */
+  :root{
+    --fonte-texto:'Sora', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --fonte-titulo:'Unbounded', 'Sora', system-ui, sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    background:var(--noite); color:var(--areia);
+    font-family:var(--fonte-texto); font-weight:300;
+    overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+    -moz-osx-font-smoothing:grayscale;
+    text-rendering:optimizeLegibility;
+    font-feature-settings:"kern" 1, "liga" 1;
+  }
+  #scene{position:fixed; inset:0; z-index:0}
+
+  /* ---------- coluna esquerda: identidade + estado ---------- */
+  .brand{
+    position:fixed; top:32px; left:36px; z-index:2;
+  }
+  .brand h1{
+    font-family:var(--fonte-titulo); font-weight:400;
+    font-size:clamp(22px,2.4vw,32px); letter-spacing:.40em;
+    text-indent:.40em;  /* compensa o tracking p/ centrar oticamente */
+  }
+  .brand h1 b{color:var(--solimoes); font-weight:600}
+  .brand p{font-size:11px; letter-spacing:.18em; opacity:.55; margin-top:6px;
+    text-transform:uppercase}
+
+  .estado{
+    position:fixed; left:36px; bottom:36px; z-index:2;
+    display:flex; flex-direction:column; gap:14px; font-size:12px;
+  }
+  .estado .item{display:flex; align-items:baseline; gap:10px}
+  .estado .rotulo{letter-spacing:.22em; text-transform:uppercase;
+    font-size:10px; opacity:.45; width:84px}
+  .estado .valor{font-weight:400}
+  .estado .valor.agua{color:var(--agua)}
+  .estado .valor.ouro{color:var(--solimoes)}
+  .pulso{display:inline-block; width:7px; height:7px; border-radius:50%;
+    background:var(--agua); margin-right:7px; vertical-align:1px;
+    animation:pulso 2.4s ease-in-out infinite}
+  @keyframes pulso{0%,100%{opacity:.35}50%{opacity:1}}
+
+  /* ---------- painel de conversa ---------- */
+  .painel{
+    position:fixed; top:32px; right:36px; bottom:36px; z-index:2;
+    width:min(420px, 92vw);
+    display:flex; flex-direction:column;
+    background:var(--vidro); backdrop-filter:blur(14px);
+    border:1px solid var(--linha); border-radius:4px;
+  }
+  .painel header{
+    padding:16px 20px; border-bottom:1px solid var(--linha);
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  .painel header span{font-size:10px; letter-spacing:.26em;
+    text-transform:uppercase; opacity:.6}
+  .painel header em{font-style:normal; font-size:10px; letter-spacing:.1em;
+    color:var(--solimoes)}
+  /* estado do canal no cabeçalho */
+  .painel header .estado-canal{display:flex; align-items:center; gap:7px;
+    font-size:9px; letter-spacing:.2em; text-transform:uppercase; opacity:.7}
+  .painel header .ponto{width:7px; height:7px; border-radius:50%;
+    background:var(--agua); transition:background .3s}
+  .painel.ocupado header .ponto{background:var(--solimoes);
+    animation:pulso 1s ease-in-out infinite}
+  /* bolha "processando" dentro da conversa */
+  .msg.pensando{align-self:flex-start; border-left:2px solid var(--solimoes);
+    padding-left:12px; display:flex; gap:5px; align-items:center; opacity:.95}
+  .msg.pensando .dot{width:6px; height:6px; border-radius:50%;
+    background:var(--solimoes); animation:blink 1.2s infinite}
+  .msg.pensando .dot:nth-child(2){animation-delay:.2s}
+  .msg.pensando .dot:nth-child(3){animation-delay:.4s}
+  .msg.pensando .passo{font-size:11.5px; opacity:.75; margin-left:6px;
+    white-space:normal}
+  @keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:1}}
+  #fluxo{
+    flex:1; overflow-y:auto; padding:20px;
+    display:flex; flex-direction:column; gap:14px;
+    scrollbar-width:thin; scrollbar-color:var(--rio) transparent;
+  }
+  .msg{max-width:88%; font-size:13.5px; line-height:1.62; white-space:pre-wrap}
+  .msg.voce{align-self:flex-end; color:var(--areia);
+    border-right:2px solid var(--solimoes); padding-right:12px; text-align:right}
+  .msg.yvakor{align-self:flex-start; opacity:.92;
+    border-left:2px solid var(--agua); padding-left:12px}
+  .msg.sistema{align-self:center; font-size:11px; opacity:.5;
+    letter-spacing:.08em}
+  .msg .quem{display:block; font-size:9px; letter-spacing:.28em;
+    text-transform:uppercase; opacity:.45; margin-bottom:4px}
+
+  /* ----- markdown renderizado (respostas do YVAKOR, estilo Claude) ----- */
+  .msg.md{white-space:normal}
+  .msg.md > :first-child{margin-top:0}
+  .msg.md > :last-child{margin-bottom:0}
+  .msg.md h1,.msg.md h2,.msg.md h3{font-family:var(--fonte-titulo);
+    font-weight:500; line-height:1.3; margin:16px 0 7px; color:var(--areia)}
+  .msg.md h1{font-size:18px} .msg.md h2{font-size:16px} .msg.md h3{font-size:14px}
+  .msg.md p{margin:9px 0}
+  .msg.md ul,.msg.md ol{margin:8px 0; padding-left:22px}
+  .msg.md li{margin:3px 0}
+  .msg.md li::marker{color:var(--solimoes)}
+  .msg.md a{color:var(--solimoes); text-decoration:underline; word-break:break-word}
+  .msg.md strong{font-weight:600; color:var(--areia)}
+  .msg.md em{font-style:italic}
+  .msg.md code{font-family:ui-monospace,Consolas,"Courier New",monospace;
+    font-size:12px; background:rgba(234,228,211,.09); padding:1.5px 5px;
+    border-radius:4px; color:#f0d9a8}
+  .msg.md pre{background:#08121a; border:1px solid var(--linha);
+    border-radius:9px; padding:12px 14px; overflow:auto; margin:11px 0;
+    position:relative}
+  .msg.md pre .copiar{
+    position:absolute; top:7px; right:7px; font-family:var(--fonte-texto);
+    font-size:10.5px; letter-spacing:.04em; padding:3px 9px; border-radius:6px;
+    background:rgba(234,228,211,.08); color:var(--areia); cursor:pointer;
+    border:1px solid var(--linha); opacity:0; transition:.15s;
+  }
+  .msg.md pre:hover .copiar{opacity:.85}
+  .msg.md pre .copiar:hover{opacity:1; border-color:var(--solimoes)}
+  .msg.md pre .copiar.feito{color:var(--agua); border-color:rgba(63,191,174,.5); opacity:1}
+  .msg.md pre code{background:none; padding:0; color:#cfe8e3; font-size:12px;
+    line-height:1.55; display:block; white-space:pre}
+  .msg.md blockquote{border-left:3px solid var(--solimoes); margin:9px 0;
+    padding:3px 13px; opacity:.82}
+  .msg.md hr{border:none; border-top:1px solid var(--linha); margin:15px 0}
+  .msg.md table{border-collapse:collapse; margin:11px 0; font-size:12.5px;
+    width:100%; display:block; overflow-x:auto}
+  .msg.md th,.msg.md td{border:1px solid var(--linha); padding:6px 10px;
+    text-align:left; vertical-align:top}
+  .msg.md th{background:rgba(217,164,65,.12); font-weight:600; white-space:nowrap}
+
+  .entrada{
+    border-top:1px solid var(--linha); padding:14px; display:flex; gap:10px;
+  }
+  .entrada textarea{
+    flex:1; background:transparent; border:none; outline:none; resize:none;
+    color:var(--areia); font-family:var(--fonte-texto); font-size:13.5px;
+    line-height:1.5; max-height:120px;
+  }
+  .entrada textarea::placeholder{color:rgba(234,228,211,.3)}
+  .entrada{position:relative; align-items:flex-end}
+  #enviar{
+    align-self:flex-end; background:var(--solimoes); color:var(--noite);
+    border:none; border-radius:3px; padding:9px 18px; cursor:pointer;
+    font-family:var(--fonte-texto); font-size:12px; font-weight:600;
+    letter-spacing:.08em; transition:opacity .2s;
+  }
+  #enviar:hover{opacity:.85}
+  #enviar:focus-visible{outline:2px solid var(--agua); outline-offset:2px}
+  #enviar:disabled{opacity:.35; cursor:wait}
+
+  /* botão "+" de comandos e o menu popover (estilo Claude, enxuto) */
+  .cmd-toggle{
+    align-self:flex-end; width:34px; height:34px; flex:0 0 auto;
+    background:transparent; border:1px solid var(--linha); color:var(--areia);
+    border-radius:9px; cursor:pointer; font-size:19px; line-height:1; opacity:.7;
+    transition:all .2s;
+  }
+  .cmd-toggle:hover{opacity:1; border-color:var(--solimoes); color:var(--solimoes)}
+  .menu-cmd{
+    position:absolute; left:14px; bottom:58px; z-index:6; min-width:210px;
+    background:var(--rio); border:1px solid var(--linha); border-radius:11px;
+    padding:6px; box-shadow:0 16px 40px rgba(0,0,0,.5);
+    display:flex; flex-direction:column;
+  }
+  .menu-cmd[hidden]{display:none}
+  .menu-cmd button{
+    text-align:left; background:transparent; border:none; color:var(--areia);
+    font-family:var(--fonte-texto); font-size:13px; padding:8px 10px;
+    border-radius:7px; cursor:pointer; opacity:.85;
+  }
+  .menu-cmd button:hover{background:rgba(234,228,211,.07); opacity:1}
+  .menu-cmd .menu-sep{height:1px; background:var(--linha); margin:5px 4px}
+
+  /* ---------- barra lateral de conversas ---------- */
+  .conversas{
+    position:fixed; left:36px; top:108px; z-index:2;
+    width:244px; max-height:46vh; display:flex; flex-direction:column;
+    background:var(--vidro); backdrop-filter:blur(14px);
+    border:1px solid var(--linha); border-radius:4px; overflow:hidden;
+  }
+  .conversas h2{
+    font-size:10px; letter-spacing:.26em; text-transform:uppercase;
+    opacity:.7; font-weight:400; padding:12px 14px;
+    display:flex; justify-content:space-between; align-items:center;
+    border-bottom:1px solid var(--linha);
+  }
+  .conversas h2 button{
+    background:transparent; border:1px solid var(--linha); color:var(--solimoes);
+    font-family:var(--fonte-texto); font-size:10px; letter-spacing:.1em;
+    padding:3px 9px; border-radius:999px; cursor:pointer; opacity:.85;
+  }
+  .conversas h2 button:hover{opacity:1; border-color:var(--solimoes)}
+  .conversas .busca{
+    margin:8px 10px 4px; padding:7px 10px; border-radius:7px;
+    background:var(--noite); border:1px solid var(--linha); color:var(--areia);
+    font-family:var(--fonte-texto); font-size:12px; outline:none;
+  }
+  .conversas .busca:focus{border-color:var(--solimoes)}
+  .conversas .busca::placeholder{color:rgba(234,228,211,.35)}
+  #lista-conversas li.vazio{opacity:.4; font-size:11px; cursor:default;
+    justify-content:center}
+  #lista-conversas li.vazio:hover{background:none}
+  #lista-conversas{list-style:none; overflow-y:auto; flex:1;
+    scrollbar-width:thin; scrollbar-color:var(--rio) transparent;}
+  #lista-conversas li{
+    padding:9px 14px; cursor:pointer; font-size:12px;
+    border-left:2px solid transparent; display:flex; align-items:center; gap:8px;
+    transition:background .15s;
+  }
+  #lista-conversas li:hover{background:rgba(234,228,211,.06)}
+  #lista-conversas li.ativa{border-left-color:var(--solimoes);
+    background:rgba(217,164,65,.08)}
+  #lista-conversas li .tit{flex:1; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap}
+  #lista-conversas li .acoes{display:flex; gap:2px; opacity:0; transition:opacity .15s}
+  #lista-conversas li:hover .acoes, #lista-conversas li.ativa .acoes{opacity:.6}
+  #lista-conversas li .ic{font-size:13px; line-height:1; color:var(--areia);
+    border:none; background:none; cursor:pointer; padding:2px 4px; opacity:.8}
+  #lista-conversas li .ic:hover{opacity:1; color:var(--solimoes)}
+  #lista-conversas li .ic.del:hover{color:#e0567a}
+
+  @media (max-width:760px){
+    .brand{top:18px; left:18px}
+    .estado, .conversas{display:none}
+    .painel{top:auto; left:12px; right:12px; bottom:12px; height:62vh}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .pulso{animation:none}
+  }
+
+  /* ---------- popup de confirmação de ação protegida ---------- */
+  #confirmar{
+    position:fixed; inset:0; z-index:50; display:none;
+    align-items:center; justify-content:center;
+    background:rgba(6,13,18,.72); backdrop-filter:blur(4px);
+  }
+  #confirmar.aberto{display:flex}
+  #confirmar .caixa{
+    width:min(440px,90vw); background:var(--rio);
+    border:1px solid var(--linha); border-radius:14px; padding:26px 26px 22px;
+    box-shadow:0 24px 60px rgba(0,0,0,.5);
+  }
+  #confirmar h3{
+    font-family:var(--fonte-titulo); font-weight:400; font-size:16px;
+    letter-spacing:.06em; margin-bottom:6px;
+  }
+  #confirmar h3 .ic{color:var(--solimoes)}
+  #confirmar .acao{color:var(--solimoes); font-weight:500}
+  #confirmar .detalhe{
+    margin:12px 0 20px; padding:12px 14px; border-radius:10px;
+    background:rgba(234,228,211,.05); border:1px solid var(--linha);
+    font-size:12px; line-height:1.5; word-break:break-word;
+    max-height:160px; overflow:auto; opacity:.85;
+  }
+  #confirmar .botoes{display:flex; gap:12px; justify-content:flex-end}
+  #confirmar button{
+    font-family:var(--fonte-texto); font-size:13px; cursor:pointer;
+    padding:9px 18px; border-radius:9px; border:1px solid var(--linha);
+    background:transparent; color:var(--areia); transition:.15s;
+  }
+  #confirmar button:hover{border-color:var(--areia)}
+  #confirmar button.ok{
+    background:var(--solimoes); border-color:var(--solimoes); color:var(--noite);
+    font-weight:600;
+  }
+  #confirmar button.ok:hover{filter:brightness(1.08)}
+
+  /* ---------- painel de conectores ---------- */
+  #conectores{
+    position:fixed; inset:0; z-index:55; display:none;
+    align-items:center; justify-content:center;
+    background:rgba(6,13,18,.72); backdrop-filter:blur(4px);
+  }
+  #conectores.aberto{display:flex}
+  .cx-caixa{
+    width:min(560px,92vw); max-height:86vh; overflow:auto;
+    background:var(--rio); border:1px solid var(--linha); border-radius:14px;
+    padding:22px 24px; box-shadow:0 24px 60px rgba(0,0,0,.5);
+  }
+  .cx-topo{display:flex; justify-content:space-between; align-items:center}
+  #cx-fechar{
+    background:transparent; border:none; color:var(--areia); opacity:.6;
+    font-size:22px; cursor:pointer; line-height:1;
+  }
+  #cx-fechar:hover{opacity:1}
+  .cx-sub{font-size:12px; opacity:.6; margin:4px 0 16px}
+  .cx-item{
+    border:1px solid var(--linha); border-radius:11px; padding:14px 16px;
+    margin-bottom:12px; background:rgba(234,228,211,.03);
+  }
+  .cx-cab{display:flex; align-items:center; gap:10px; cursor:pointer}
+  .cx-ic{font-size:20px}
+  .cx-nome{font-weight:500; font-size:14px}
+  .cx-desc{font-size:11px; opacity:.55; margin-top:2px}
+  .cx-flex{flex:1}
+  .cx-tag{
+    font-size:10px; letter-spacing:.12em; text-transform:uppercase;
+    padding:3px 9px; border-radius:20px; border:1px solid var(--linha);
+  }
+  .cx-tag.on{color:var(--agua); border-color:rgba(63,191,174,.5);
+    background:rgba(63,191,174,.08)}
+  .cx-tag.off{opacity:.5}
+  .cx-form{display:none; margin-top:14px; gap:10px; flex-direction:column}
+  .cx-form.aberto{display:flex}
+  .cx-campo label{display:block; font-size:11px; opacity:.6; margin-bottom:4px}
+  .cx-campo input{
+    width:100%; padding:8px 10px; border-radius:8px; font-size:13px;
+    background:var(--noite); color:var(--areia); border:1px solid var(--linha);
+    font-family:var(--fonte-texto);
+  }
+  .cx-campo input:focus{outline:none; border-color:var(--solimoes)}
+  .cx-botoes{display:flex; gap:10px; justify-content:flex-end; margin-top:6px}
+  .cx-botoes button{
+    font-family:var(--fonte-texto); font-size:13px; cursor:pointer;
+    padding:8px 16px; border-radius:8px; border:1px solid var(--linha);
+    background:transparent; color:var(--areia); transition:.15s;
+  }
+  .cx-botoes button:hover{border-color:var(--areia)}
+  .cx-botoes button.ok{
+    background:var(--solimoes); border-color:var(--solimoes);
+    color:var(--noite); font-weight:600;
+  }
+  .cx-botoes button.danger:hover{border-color:#d9534f; color:#ff8b86}
+  .cx-erro{font-size:11px; color:#ff8b86; min-height:14px}
+  /* botão "Entrar com Google" (branded) */
+  .cx-signin{
+    display:inline-flex; align-items:center; gap:8px;
+    background:#fff; color:#3c4043; border:1px solid #dadce0 !important;
+    font-weight:600; padding:9px 16px; border-radius:8px; cursor:pointer;
+    font-family:var(--fonte-texto); font-size:13px;
+  }
+  .cx-signin:hover{filter:brightness(.96)}
+  .cx-signin.gh{background:#1f2328; color:#fff; border-color:#1f2328 !important}
+  .cx-signin.gh:hover{filter:brightness(1.25)}
+  .cx-signin.slack{background:#4A154B; color:#fff; border-color:#4A154B !important}
+  .cx-signin.slack:hover{filter:brightness(1.2)}
+  .cx-signin .g{
+    font-weight:700; font-size:15px;
+    background:conic-gradient(from -45deg,#ea4335 110deg,#4285f4 90deg 180deg,#34a853 180deg 270deg,#fbbc05 270deg);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+  }
+  .cx-botoes button.linkbtn{
+    border:none; background:none; opacity:.6; text-decoration:underline;
+    padding:8px 4px;
+  }
+  .cx-botoes button.linkbtn:hover{opacity:1; border:none}
+</style>
+</head>
+<body>
+
+<canvas id="scene" aria-hidden="true"></canvas>
+
+<div id="confirmar" role="dialog" aria-modal="true" aria-labelledby="cf-titulo">
+  <div class="caixa">
+    <h3 id="cf-titulo"><span class="ic">⚠</span> Confirmar ação protegida</h3>
+    <p>O YVAKOR quer executar: <span class="acao" id="cf-acao">—</span></p>
+    <div class="detalhe" id="cf-detalhe">—</div>
+    <div class="botoes">
+      <button id="cf-negar">Negar</button>
+      <button class="ok" id="cf-aprovar">Aprovar</button>
+    </div>
+  </div>
+</div>
+
+<div id="conectores" role="dialog" aria-modal="true" aria-labelledby="cx-titulo">
+  <div class="caixa cx-caixa">
+    <div class="cx-topo">
+      <h3 id="cx-titulo">🔌 Conectores</h3>
+      <button id="cx-fechar" title="Fechar">×</button>
+    </div>
+    <p class="cx-sub">Faça login uma vez. O YVAKOR usa o serviço sozinho quando a tarefa precisar.</p>
+    <div id="cx-lista"></div>
+  </div>
+</div>
+
+<div class="brand">
+  <h1>YVA<b>KOR</b></h1>
+  <p>agente pessoal evolutivo</p>
+</div>
+
+<aside class="estado" aria-label="Estado do agente">
+  <div class="item"><span class="rotulo">Estado</span>
+    <span class="valor agua" id="st-estado"><span class="pulso"></span>despertando</span></div>
+  <div class="item"><span class="rotulo">Modelo</span>
+    <span class="valor" id="st-modelo">—</span></div>
+  <div class="item"><span class="rotulo">Memórias</span>
+    <span class="valor" id="st-mem">—</span></div>
+  <div class="item"><span class="rotulo">Skills</span>
+    <span class="valor ouro" id="st-skills">—</span></div>
+</aside>
+
+<aside class="conversas" aria-label="Conversas">
+  <h2>Conversas <button id="btn-nova" title="Nova conversa">+ nova</button></h2>
+  <input id="busca-conversas" class="busca" type="search"
+    placeholder="Buscar conversas…" aria-label="Buscar conversas">
+  <ul id="lista-conversas"></ul>
+</aside>
+
+<section class="painel" id="painel" aria-label="Conversa com o YVAKOR">
+  <header>
+    <span class="estado-canal"><span class="ponto"></span><span id="hd-estado">em escuta</span></span>
+    <em id="hd-provider"></em>
+  </header>
+  <div id="fluxo">
+    <div class="msg sistema">As duas águas se encontram. O núcleo está ativo.</div>
+  </div>
+  <div class="entrada">
+    <button id="btn-cmd" class="cmd-toggle" title="Comandos e ferramentas">+</button>
+    <div id="menu-cmd" class="menu-cmd" hidden>
+      <button id="btn-conectores"><span>🔌</span> Conectores</button>
+      <button data-cmd="[conversas]">Listar conversas</button>
+      <button data-cmd="[ferramentas]">Ver ferramentas</button>
+      <button data-cmd="[aprender] 5">Autoaprendizado</button>
+      <button data-cmd="[manutencao]">Manutenção</button>
+      <div class="menu-sep"></div>
+      <button data-cmd="[perfil] ">Editar perfil…</button>
+      <button data-cmd="[skill] ">Criar skill…</button>
+      <button data-cmd="[memoria] ">Buscar memória…</button>
+      <button data-cmd="[cowork] ">Tarefa em 2º plano…</button>
+    </div>
+    <textarea id="texto" rows="1" placeholder="Fale com o YVAKOR…"
+      aria-label="Mensagem para o YVAKOR"></textarea>
+    <button id="enviar">Enviar</button>
+  </div>
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* =====================================================================
+   NÚCLEO 3D — "Encontro das Águas"
+   Dois rios de partículas que se entrelaçam sem se misturar:
+   Rio Negro (água escura, verde-petróleo) e Solimões (sedimento dourado)
+   — o fenômeno de Manaus como mente do agente.
+   Estados: idle (fluxo lento) | thinking (vórtice acelera e contrai)
+===================================================================== */
+const reduzMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const canvas = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true, alpha:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const cena = new THREE.Scene();
+cena.fog = new THREE.FogExp2(0x060D12, 0.055);
+const cam = new THREE.PerspectiveCamera(50, 1, .1, 100);
+cam.position.set(0, 1.2, 11);
+
+const N = 2600;                       // partículas por rio
+let modo = 0;                         // 0 = idle | 1 = thinking
+let energia = 0;                      // interpolação suave entre modos
+
+function rio(corA, corB, fase){
+  const geo = new THREE.BufferGeometry();
+  const pos = new Float32Array(N*3);
+  const cor = new Float32Array(N*3);
+  const seed = new Float32Array(N*2);  // [t da curva, raio próprio]
+  const cA = new THREE.Color(corA), cB = new THREE.Color(corB);
+  for(let i=0;i<N;i++){
+    seed[i*2]   = Math.random()*Math.PI*2;
+    seed[i*2+1] = .25 + Math.random()*1.15;
+    const c = cA.clone().lerp(cB, Math.random());
+    cor.set([c.r,c.g,c.b], i*3);
+  }
+  geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  geo.setAttribute('color',    new THREE.BufferAttribute(cor,3));
+  const mat = new THREE.PointsMaterial({
+    size:.045, vertexColors:true, transparent:true, opacity:.85,
+    blending:THREE.AdditiveBlending, depthWrite:false
+  });
+  const pts = new THREE.Points(geo, mat);
+  pts.userData = {seed, fase};
+  cena.add(pts);
+  return pts;
+}
+
+/* Rio Negro: petróleo → verde-água | Solimões: dourado → areia */
+const rioNegro  = rio(0x0E2A33, 0x3FBFAE, 0);
+const solimoes  = rio(0x8A5E1E, 0xD9A441, Math.PI);
+
+/* fundo: leito de estrelas-sedimento, bem discreto */
+(function leito(){
+  const g = new THREE.BufferGeometry();
+  const p = new Float32Array(700*3);
+  for(let i=0;i<700;i++){
+    p[i*3]=(Math.random()-.5)*60; p[i*3+1]=(Math.random()-.5)*34;
+    p[i*3+2]=-14-Math.random()*26;
+  }
+  g.setAttribute('position', new THREE.BufferAttribute(p,3));
+  cena.add(new THREE.Points(g, new THREE.PointsMaterial(
+    {color:0xEAE4D3, size:.03, transparent:true, opacity:.22})));
+})();
+
+/* Curva-mãe: cada rio percorre um "oito" 3D defasado — eles se cruzam
+   no centro (o Encontro) mas mantêm identidade. */
+function curva(t, fase, aperto){
+  const a = t + fase;
+  const r = 2.6 - aperto*1.1;
+  return [
+    Math.sin(a)*r,
+    Math.sin(a*2)*(.9 - aperto*.35),
+    Math.cos(a)*r*.78
+  ];
+}
+
+let t0 = performance.now();
+function frame(now){
+  requestAnimationFrame(frame);
+  const dt = Math.min((now-t0)/1000, .05); t0 = now;
+  energia += ((modo? 1:0) - energia) * dt * 2.2;
+  const vel = (reduzMotion? .05 : .14) + energia*.55;
+
+  for(const pts of [rioNegro, solimoes]){
+    const {seed, fase} = pts.userData;
+    const pos = pts.geometry.attributes.position.array;
+    const tempo = now*.001*vel;
+    for(let i=0;i<N;i++){
+      const t = seed[i*2] + tempo;
+      const raio = seed[i*2+1]*(1-energia*.45);
+      const [x,y,z] = curva(t, fase, energia);
+      const orb = t*3.1 + i;
+      pos[i*3]   = x + Math.cos(orb)*raio*.34;
+      pos[i*3+1] = y + Math.sin(orb*1.3)*raio*.3;
+      pos[i*3+2] = z + Math.sin(orb)*raio*.34;
+    }
+    pts.geometry.attributes.position.needsUpdate = true;
+    pts.rotation.y += dt*(.05 + energia*.4);
+    pts.material.opacity = .75 + energia*.25;
+  }
+  cam.position.x = Math.sin(now*.00012)*1.4;
+  cam.lookAt(0,0,0);
+  renderer.render(cena, cam);
+}
+function ajustar(){
+  renderer.setSize(innerWidth, innerHeight, false);
+  cam.aspect = innerWidth/innerHeight; cam.updateProjectionMatrix();
+}
+addEventListener('resize', ajustar); ajustar();
+requestAnimationFrame(frame);
+
+/* =====================================================================
+   CANAL DE COMANDO — conversa com o backend (/api/chat)
+===================================================================== */
+const fluxo  = document.getElementById('fluxo');
+const texto  = document.getElementById('texto');
+const enviar = document.getElementById('enviar');
+const stEstado = document.getElementById('st-estado');
+
+/* ---- mini-renderizador de markdown (sem dependências, estilo Claude) ---- */
+function renderMarkdown(src){
+  const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  src = String(src).replace(/\r\n/g,'\n');
+  const fences=[];
+  src = src.replace(/```[ \t]*[\w-]*\n?([\s\S]*?)```/g,function(m,code){
+    fences.push('<pre><code>'+esc(code.replace(/\n$/,''))+'</code></pre>');
+    return '\n@@F'+(fences.length-1)+'@@\n';
+  });
+  function inline(t){
+    t = esc(t);
+    const codes=[]; const links=[];
+    t = t.replace(/`([^`]+)`/g,function(m,c){codes.push(c);return '@@C'+(codes.length-1)+'@@';});
+    // links markdown [texto](url) — guardados para não serem auto-linkados de novo
+    t = t.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,function(m,txt,url){
+      links.push('<a href="'+url+'" target="_blank" rel="noopener">'+txt+'</a>');
+      return '@@L'+(links.length-1)+'@@';
+    });
+    // URLs soltas (http/https) viram links clicáveis, sem engolir pontuação final
+    t = t.replace(/(https?:\/\/[^\s<]+)/g,function(u){
+      let tail=''; const mt=u.match(/[.,;:!?)\]]+$/);
+      if(mt){ tail=mt[0]; u=u.slice(0,-tail.length); }
+      return '<a href="'+u+'" target="_blank" rel="noopener">'+u+'</a>'+tail;
+    });
+    t = t.replace(/\*\*([^*]+?)\*\*/g,'<strong>$1</strong>');
+    t = t.replace(/(^|[^*])\*([^*\n]+?)\*/g,'$1<em>$2</em>');
+    t = t.replace(/@@L(\d+)@@/g,function(m,i){return links[+i];});
+    t = t.replace(/@@C(\d+)@@/g,function(m,i){return '<code>'+codes[+i]+'</code>';});
+    return t;
+  }
+  const isSep = s => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(s);
+  const L = src.split('\n'); const out=[]; let i=0;
+  while(i<L.length){
+    let ln = L[i];
+    let mf = ln.match(/^@@F(\d+)@@$/);
+    if(mf){ out.push(fences[+mf[1]]); i++; continue; }
+    if(/^\s*$/.test(ln)){ i++; continue; }
+    let mh = ln.match(/^(#{1,6})\s+(.*)$/);
+    if(mh){ const lv=Math.min(mh[1].length,3); out.push('<h'+lv+'>'+inline(mh[2])+'</h'+lv+'>'); i++; continue; }
+    if(/^\s*([-*_])\1{2,}\s*$/.test(ln)){ out.push('<hr>'); i++; continue; }
+    if(/^\s*>\s?/.test(ln)){
+      let b=[]; while(i<L.length && /^\s*>\s?/.test(L[i])){ b.push(L[i].replace(/^\s*>\s?/,'')); i++; }
+      out.push('<blockquote>'+inline(b.join(' '))+'</blockquote>'); continue;
+    }
+    if(/\|/.test(ln) && i+1<L.length && isSep(L[i+1])){
+      const cels = r => r.replace(/^\s*\|/,'').replace(/\|\s*$/,'').split('|').map(c=>c.trim());
+      const head = cels(ln); i+=2; let rows=[];
+      while(i<L.length && /\|/.test(L[i]) && !/^\s*$/.test(L[i])){ rows.push(cels(L[i])); i++; }
+      out.push('<table><thead><tr>'+head.map(h=>'<th>'+inline(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+inline(c)+'</td>').join('')+'</tr>').join('')+'</tbody></table>'); continue;
+    }
+    if(/^\s*[-*+]\s+/.test(ln)){
+      let it=[]; while(i<L.length && /^\s*[-*+]\s+/.test(L[i])){ it.push(inline(L[i].replace(/^\s*[-*+]\s+/,''))); i++; }
+      out.push('<ul>'+it.map(x=>'<li>'+x+'</li>').join('')+'</ul>'); continue;
+    }
+    if(/^\s*\d+\.\s+/.test(ln)){
+      let it=[]; while(i<L.length && /^\s*\d+\.\s+/.test(L[i])){ it.push(inline(L[i].replace(/^\s*\d+\.\s+/,''))); i++; }
+      out.push('<ol>'+it.map(x=>'<li>'+x+'</li>').join('')+'</ol>'); continue;
+    }
+    let pa=[];
+    while(i<L.length && !/^\s*$/.test(L[i]) && !/^#{1,6}\s/.test(L[i]) && !/^\s*[-*+]\s+/.test(L[i]) && !/^\s*\d+\.\s+/.test(L[i]) && !/^\s*>\s?/.test(L[i]) && !/^@@F\d+@@$/.test(L[i]) && !/^\s*([-*_])\1{2,}\s*$/.test(L[i])){ pa.push(L[i]); i++; }
+    if(pa.length) out.push('<p>'+inline(pa.join('\n')).replace(/\n/g,'<br>')+'</p>');
+  }
+  return out.join('');
+}
+
+function add(tipo, quem, corpo){
+  const d = document.createElement('div');
+  d.className = 'msg ' + tipo;
+  const cab = quem ? `<span class="quem">${quem}</span>` : '';
+  if(tipo === 'yvakor'){            // respostas do agente: markdown formatado
+    d.classList.add('md');
+    d.innerHTML = cab + renderMarkdown(corpo);
+    d.querySelectorAll('pre').forEach(addBotaoCopiar);   // copiar blocos de código
+  } else {                          // você / sistema: texto puro
+    d.innerHTML = cab;
+    d.appendChild(document.createTextNode(corpo));
+  }
+  fluxo.appendChild(d); fluxo.scrollTop = fluxo.scrollHeight;
+}
+
+/* copiar para a área de transferência (com fallback p/ contexto não-seguro) */
+function copiarTexto(txt){
+  function fallback(){
+    const ta=document.createElement('textarea'); ta.value=txt;
+    ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta);
+    ta.select();
+    try{ document.execCommand('copy'); }finally{ ta.remove(); }
+  }
+  return new Promise(res=>{
+    if(navigator.clipboard && window.isSecureContext){
+      navigator.clipboard.writeText(txt).then(res, ()=>{ fallback(); res(); });
+    } else { fallback(); res(); }
+  });
+}
+
+/* adiciona o botão "Copiar" no canto de um bloco <pre> */
+function addBotaoCopiar(pre){
+  const b=document.createElement('button'); b.className='copiar'; b.textContent='Copiar';
+  b.onclick=()=>{
+    const code=pre.querySelector('code');
+    copiarTexto(code ? code.innerText : pre.innerText).then(()=>{
+      b.textContent='Copiado!'; b.classList.add('feito');
+      setTimeout(()=>{ b.textContent='Copiar'; b.classList.remove('feito'); }, 1600);
+    });
+  };
+  pre.appendChild(b);
+}
+
+const painel   = document.getElementById('painel');
+const hdEstado = document.getElementById('hd-estado');
+
+function setEstado(txt, pensando){
+  modo = pensando ? 1 : 0;                       // anima o vórtice 3D
+  stEstado.innerHTML = `<span class="pulso"></span>${txt}`;  // sidebar esquerda
+  hdEstado.textContent = txt;                    // cabeçalho do painel
+  painel.classList.toggle('ocupado', !!pensando);// ponto dourado pulsando
+}
+
+/* bolha "processando…" dentro da conversa, com passo atual ao vivo */
+function mostrarPensando(){
+  const d = document.createElement('div');
+  d.className = 'msg pensando'; d.id = 'pensando';
+  d.innerHTML = '<span class="dot"></span><span class="dot"></span>'
+              + '<span class="dot"></span>'
+              + '<span class="passo" id="passo-atual">pensando…</span>';
+  fluxo.appendChild(d); fluxo.scrollTop = fluxo.scrollHeight;
+}
+function atualizarPensando(txt){
+  const s = document.getElementById('passo-atual');
+  if(s && txt){ s.textContent = txt; fluxo.scrollTop = fluxo.scrollHeight; }
+}
+function removerPensando(){
+  const d = document.getElementById('pensando');
+  if(d) d.remove();
+}
+
+/* ---------------- confirmação de ação protegida ---------------- */
+const cfBox = document.getElementById('confirmar');
+let pendenciaAtual = null;   // id da pendência já exibida (evita reabrir)
+
+function tratarPendencia(pend){
+  if(!pend){                       // backend não tem nada pendente
+    if(pendenciaAtual!==null){ cfBox.classList.remove('aberto'); pendenciaAtual=null; }
+    return;
+  }
+  if(pend.id === pendenciaAtual) return;   // já estou mostrando esta
+  pendenciaAtual = pend.id;
+  document.getElementById('cf-acao').textContent = pend.action || '—';
+  document.getElementById('cf-detalhe').textContent = pend.detail || '';
+  cfBox.classList.add('aberto');
+}
+
+async function responderConfirmacao(allow){
+  cfBox.classList.remove('aberto');
+  try{
+    await fetch('/api/confirm',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({session:conversaAtiva, allow})});
+  }catch(e){}
+}
+document.getElementById('cf-aprovar').onclick = ()=> responderConfirmacao(true);
+document.getElementById('cf-negar').onclick   = ()=> responderConfirmacao(false);
+
+/* ---------------- conectores (integrações) ---------------- */
+const cxBox = document.getElementById('conectores');
+const cxLista = document.getElementById('cx-lista');
+
+async function abrirConectores(){
+  cxLista.innerHTML = '<p style="opacity:.5;font-size:12px">carregando…</p>';
+  cxBox.classList.add('aberto');
+  try{
+    const j = await (await fetch('/api/connectors')).json();
+    renderConectores(j.connectors||[]);
+  }catch(e){
+    cxLista.innerHTML = '<p class="cx-erro">Falha ao carregar conectores.</p>';
+  }
+}
+function fecharConectores(){ cxBox.classList.remove('aberto'); }
+
+function renderConectores(lista){
+  cxLista.innerHTML = '';
+  lista.forEach(c=>{
+    const item = document.createElement('div'); item.className = 'cx-item';
+    // cabeçalho com status
+    const cab = document.createElement('div'); cab.className = 'cx-cab';
+    cab.innerHTML =
+      `<span class="cx-ic">${c.icon||'🔌'}</span>`
+      + `<span class="cx-flex"><span class="cx-nome">${c.name}</span>`
+      + `<div class="cx-desc">${c.desc||''}</div></span>`
+      + `<span class="cx-tag ${c.connected?'on':'off'}">`
+      + `${c.connected?'conectado':'desligado'}</span>`;
+    item.appendChild(cab);
+
+    const erro = document.createElement('div'); erro.className = 'cx-erro';
+
+    // formulário de credenciais (avançado para OAuth; principal para os demais)
+    const form = document.createElement('div'); form.className = 'cx-form';
+    (c.fields||[]).forEach(f=>{
+      const campo = document.createElement('div'); campo.className = 'cx-campo';
+      const ph = f.preenchido ? '•••••• (preenchido — deixe vazio p/ manter)'
+                              : (f.placeholder||'');
+      campo.innerHTML = `<label>${f.label}</label>`
+        + `<input data-key="${f.key}" type="${f.type==='password'?'password':'text'}" `
+        + `placeholder="${ph}" value="${(!f.preenchido && f.default)?f.default:''}">`;
+      form.appendChild(campo);
+    });
+    const provLabel = {google:'Google', github:'GitHub', slack:'Slack'};
+    if(c.oauth){
+      const prov = provLabel[c.provider] || c.name;
+      const nota = document.createElement('div');
+      nota.className = 'cx-desc'; nota.style.marginTop='4px';
+      nota.innerHTML = `No app OAuth do ${prov}, registre a URI de redirecionamento: `
+        + '<b>http://localhost:7777/api/oauth/callback</b>';
+      form.appendChild(nota);
+    }
+    const fbtns = document.createElement('div'); fbtns.className='cx-botoes';
+    const bs = document.createElement('button'); bs.className='ok';
+    bs.textContent = c.oauth ? 'Salvar credenciais próprias'
+                             : (c.connected?'Atualizar':'Conectar');
+    bs.onclick = ()=> conectar(c.id, form, erro, bs);
+    fbtns.appendChild(bs);
+    form.appendChild(fbtns);
+
+    // ações principais (sempre visíveis)
+    const acoes = document.createElement('div'); acoes.className='cx-botoes';
+    acoes.style.marginTop='12px';
+    if(c.connected){
+      const bd = document.createElement('button'); bd.className='danger';
+      bd.textContent='Desconectar'; bd.onclick=()=>desconectar(c.id);
+      acoes.appendChild(bd);
+    }
+    if(c.oauth && !c.connected){
+      const prov = provLabel[c.provider] || (c.name||'serviço');
+      const bg = document.createElement('button');
+      const estilo = {github:' gh', slack:' slack'}[c.provider] || '';
+      bg.className = 'cx-signin' + estilo;
+      const marca = c.provider==='google' ? '<span class="g">G</span>'
+                  : (c.icon||'🔌');
+      // Sem credenciais de app ainda → o clique só abre o formulário de setup,
+      // então o rótulo deixa isso claro em vez de prometer "Entrar".
+      const verbo = c.can_signin ? 'Entrar com' : 'Configurar';
+      bg.innerHTML = `${marca} ${verbo} ${prov}`;
+      bg.onclick = ()=>{
+        if(c.can_signin){ autorizar(c.id, erro); }
+        else { form.classList.add('aberto'); erro.style.color='#EAE4D3';
+               erro.textContent='Informe Client ID/Secret abaixo (ou defina '
+                 +'GOOGLE_CLIENT_ID/SECRET no .env) e clique em Entrar de novo.'; }
+      };
+      acoes.appendChild(bg);
+      const link = document.createElement('button'); link.className='linkbtn';
+      link.textContent='usar minhas credenciais';
+      link.onclick=()=>form.classList.toggle('aberto');
+      acoes.appendChild(link);
+    }
+    if(!c.oauth){
+      const bo = document.createElement('button');
+      bo.textContent = c.connected ? 'Editar' : 'Conectar';
+      bo.onclick = ()=> form.classList.toggle('aberto');
+      acoes.appendChild(bo);
+    }
+
+    item.appendChild(acoes);
+    item.appendChild(erro);
+    item.appendChild(form);
+    cxLista.appendChild(item);
+  });
+}
+
+async function conectar(cid, form, erro, btn){
+  const fields = {};
+  form.querySelectorAll('input[data-key]').forEach(inp=>{
+    if(inp.value.trim()!=='') fields[inp.dataset.key] = inp.value.trim();
+  });
+  erro.textContent=''; btn.disabled=true; const txt=btn.textContent; btn.textContent='…';
+  try{
+    const r = await (await fetch(`/api/connectors/${cid}/connect`,{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({fields})})).json();
+    if(r.ok){ abrirConectores(); }            // recarrega com status novo
+    else { erro.textContent = r.erro || 'falha ao conectar'; }
+  }catch(e){ erro.textContent = 'erro de conexão'; }
+  btn.disabled=false; btn.textContent=txt;
+}
+
+async function desconectar(cid){
+  try{
+    await fetch(`/api/connectors/${cid}/disconnect`,{method:'POST'});
+    abrirConectores();
+  }catch(e){}
+}
+
+async function autorizar(cid, erro){
+  erro.textContent='';
+  try{
+    const r = await (await fetch(`/api/connectors/${cid}/authorize`,{method:'POST'})).json();
+    if(!r.ok){ erro.textContent = r.erro || 'falha ao iniciar autorização'; return; }
+    window.open(r.auth_url, '_blank');           // abre o consentimento do Google
+    erro.style.color = '#3FBFAE';
+    erro.textContent = 'Autorize na aba aberta… aguardando confirmação.';
+    // polling: assim que o callback gravar o token, o status vira "conectado"
+    let tentativas = 0;
+    const it = setInterval(async ()=>{
+      tentativas++;
+      try{
+        const j = await (await fetch('/api/connectors')).json();
+        const c = (j.connectors||[]).find(x=>x.id===cid);
+        if(c && c.connected){ clearInterval(it); abrirConectores(); }
+      }catch(e){}
+      if(tentativas>40){ clearInterval(it); }    // ~2min
+    }, 3000);
+  }catch(e){ erro.textContent = 'erro de conexão'; }
+}
+
+document.getElementById('btn-conectores').onclick = ()=>{
+  const m=document.getElementById('menu-cmd'); if(m) m.hidden=true;   // fecha o menu
+  abrirConectores();
+};
+document.getElementById('cx-fechar').onclick = fecharConectores;
+cxBox.onclick = e=>{ if(e.target===cxBox) fecharConectores(); };
+
+async function mandar(){
+  const m = texto.value.trim();
+  if(!m) return;
+  texto.value=''; texto.style.height='auto';
+  add('voce','você',m);
+  enviar.disabled = true; enviar.textContent = '…';
+  setEstado('processando', true);
+  mostrarPensando();
+  // polling do progresso ao vivo (qual ferramenta está rodando agora)
+  const poll = setInterval(async ()=>{
+    try{
+      const p = await (await fetch('/api/progress?session='
+                  + encodeURIComponent(conversaAtiva||''))).json();
+      if(p.steps && p.steps.length)
+        atualizarPensando(p.steps[p.steps.length-1]);
+      tratarPendencia(p.pending);   // mostra o popup se houver ação a confirmar
+    }catch(e){}
+  }, 600);
+  try{
+    const r = await fetch('/api/chat',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({message:m, session:conversaAtiva})});
+    const j = await r.json();
+    if(j.session) conversaAtiva = j.session;
+    clearInterval(poll); removerPensando();
+    add('yvakor','yvakor', j.answer || j.error || 'sem resposta');
+    carregarConversas();   // atualiza título/contagem
+  }catch(e){
+    clearInterval(poll); removerPensando();
+    add('sistema', null, 'Falha de conexão com o núcleo: '+e.message);
+  }
+  enviar.disabled = false; enviar.textContent = 'Enviar';
+  setEstado('em escuta', false);
+  texto.focus();
+}
+
+/* ---------------- conversas (sessões) ---------------- */
+let conversaAtiva = null;
+const lista = document.getElementById('lista-conversas');
+
+let sessoesCache = [];
+const buscaConversas = document.getElementById('busca-conversas');
+
+function renderConversas(){
+  const f = (buscaConversas.value || '').trim().toLowerCase();
+  const itens = f
+    ? sessoesCache.filter(s => (s.title || s.id).toLowerCase().includes(f))
+    : sessoesCache;
+  lista.innerHTML = '';
+  if(!itens.length){
+    const li = document.createElement('li'); li.className = 'vazio';
+    li.textContent = f ? 'Nenhuma conversa encontrada' : 'Sem conversas';
+    lista.appendChild(li); return;
+  }
+  itens.forEach(s=>{
+    const li = document.createElement('li');
+    if(s.id === conversaAtiva) li.className = 'ativa';
+    const tit = document.createElement('span');
+    tit.className = 'tit'; tit.textContent = s.title || s.id;
+    const acoes = document.createElement('span'); acoes.className = 'acoes';
+    const ren = document.createElement('button');
+    ren.className = 'ic'; ren.textContent = '✎'; ren.title = 'Renomear';
+    ren.onclick = ev=>{ ev.stopPropagation(); renomearConversa(s.id, s.title); };
+    const del = document.createElement('button');
+    del.className = 'ic del'; del.textContent = '×'; del.title = 'Apagar';
+    del.onclick = ev=>{ ev.stopPropagation(); apagarConversa(s.id); };
+    acoes.append(ren, del);
+    li.append(tit, acoes);
+    li.onclick = ()=> abrirConversa(s.id);
+    lista.appendChild(li);
+  });
+}
+
+async function carregarConversas(){
+  try{
+    const j = await (await fetch('/api/sessions')).json();
+    conversaAtiva = conversaAtiva || j.active;
+    sessoesCache = j.sessions || [];
+    renderConversas();
+  }catch(e){ /* servidor pode não ter o endpoint */ }
+}
+buscaConversas.addEventListener('input', renderConversas);
+
+async function abrirConversa(id){
+  conversaAtiva = id;
+  await fetch(`/api/sessions/${id}/activate`,{method:'POST'});
+  const j = await (await fetch(`/api/sessions/${id}/messages`)).json();
+  fluxo.innerHTML = '';
+  if(!(j.messages||[]).length)
+    add('sistema', null, 'Conversa retomada. Continue de onde parou.');
+  (j.messages||[]).forEach(msg=>
+    add(msg.role==='user'?'voce':'yvakor', msg.role==='user'?'você':'yvakor',
+        msg.content));
+  carregarConversas();
+}
+
+async function novaConversa(){
+  // estilo Claude: cria já, sem pedir título (ele vem da 1ª mensagem)
+  const j = await (await fetch('/api/sessions',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({})})).json();
+  conversaAtiva = j.active;
+  fluxo.innerHTML = '';
+  add('sistema', null, 'Nova conversa. Mande a primeira mensagem.');
+  carregarConversas();
+  texto.focus();
+}
+
+async function renomearConversa(id, atual){
+  const novo = (prompt('Novo título da conversa:', atual||'') || '').trim();
+  if(!novo) return;
+  await fetch(`/api/sessions/${id}/rename`,{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({title:novo})});
+  carregarConversas();
+}
+
+async function apagarConversa(id){
+  if(!confirm('Apagar esta conversa?')) return;
+  const j = await (await fetch(`/api/sessions/${id}`,{method:'DELETE'})).json();
+  if(!j.ok){ alert(j.motivo||'não foi possível apagar'); return; }
+  if(id === conversaAtiva){ conversaAtiva = j.active; abrirConversa(j.active); }
+  else carregarConversas();
+}
+document.getElementById('btn-nova').addEventListener('click', novaConversa);
+enviar.addEventListener('click', mandar);
+texto.addEventListener('keydown', e=>{
+  if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); mandar(); }
+});
+texto.addEventListener('input', ()=>{
+  texto.style.height='auto';
+  texto.style.height=Math.min(texto.scrollHeight,120)+'px';
+});
+/* menu de comandos (popover "+") */
+const btnCmd = document.getElementById('btn-cmd');
+const menuCmd = document.getElementById('menu-cmd');
+function fecharMenuCmd(){ menuCmd.hidden = true; }
+btnCmd.addEventListener('click', e=>{ e.stopPropagation(); menuCmd.hidden = !menuCmd.hidden; });
+document.addEventListener('click', e=>{
+  if(!menuCmd.hidden && !menuCmd.contains(e.target) && e.target!==btnCmd) fecharMenuCmd();
+});
+
+document.querySelectorAll('#menu-cmd button[data-cmd]').forEach(b=>
+  b.addEventListener('click', ()=>{
+    fecharMenuCmd();
+    const cmd = b.dataset.cmd;
+    texto.value = cmd;
+    if(cmd.endsWith(' ')){            // precisa de argumento → preenche e espera digitar
+      texto.style.height='auto';
+      texto.style.height=Math.min(texto.scrollHeight,120)+'px';
+      texto.focus();
+      texto.setSelectionRange(cmd.length, cmd.length);
+    } else {                          // comando completo → envia direto
+      mandar();
+    }
+  }));
+
+/* estado inicial do agente */
+(async function status(){
+  try{
+    const j = await (await fetch('/api/status')).json();
+    document.getElementById('st-modelo').textContent =
+      `${j.provider} · ${j.model}`;
+    document.getElementById('st-mem').textContent =
+      `${j.episodes} episódios`;
+    document.getElementById('st-skills').textContent =
+      `${j.skills.length} skill${j.skills.length===1?'':'s'}`;
+    document.getElementById('hd-provider').textContent =
+      j.build ? `${j.provider} · ${j.build}` : j.provider;
+    setEstado('em escuta', false);
+    carregarConversas();
+  }catch(e){
+    setEstado('offline', false);
+    add('sistema', null,
+      'Núcleo não respondeu. Inicie com: python -m yvakor.server');
+  }
+})();
+</script>
+</body>
+</html>

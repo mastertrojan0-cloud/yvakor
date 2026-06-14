@@ -1,0 +1,9 @@
+# Núcleo (mínimo para rodar em qualquer máquina)
+pyyaml>=6.0
+
+# Opcional — memória semântica vetorial (recomendado, mas o YVAKOR roda sem)
+# chromadb>=0.5
+
+# Opcional — futuras ferramentas
+# requests          # http_client / web_search
+# playwright        # automação web
