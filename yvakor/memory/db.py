@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import re
 import sqlite3
+import threading
 import unicodedata
 from pathlib import Path
 
@@ -27,9 +28,9 @@ PRAGMAS = (
 )
 
 
-def conectar(caminho: Path | str) -> sqlite3.Connection:
+def _abrir_conn(caminho: str) -> sqlite3.Connection:
     Path(caminho).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(caminho), check_same_thread=False, timeout=5.0)
+    conn = sqlite3.connect(caminho, check_same_thread=False, timeout=5.0)
     conn.row_factory = sqlite3.Row
     for p in PRAGMAS:
         try:
@@ -37,6 +38,87 @@ def conectar(caminho: Path | str) -> sqlite3.Connection:
         except sqlite3.DatabaseError:
             pass
     return conn
+
+
+class ConexaoThreadLocal:
+    """Uma conexão SQLite por thread (WAL permite leituras concorrentes).
+
+    Antes um único `sqlite3.Connection` era compartilhado entre a thread da
+    conversa e as threads daemon (absorção, avaliação, sync do vault,
+    manutenção). Como uma conexão tem UMA transação, uma leitura numa thread
+    entrava na transação de escrita de outra — causando rollback cruzado e
+    erros intermitentes ("database is locked", "Recursive use of cursors").
+
+    Esta classe entrega a cada thread a sua própria conexão, de forma
+    transparente: o código segue usando `self.conn.execute(...)` e
+    `with self.conn:` como antes. Expõe só o que a memória usa.
+    """
+
+    def __init__(self, caminho: Path | str):
+        self._caminho = str(caminho)
+        self._local = threading.local()
+        self._todas: list[sqlite3.Connection] = []
+        self._lock = threading.Lock()
+        self.row_factory = sqlite3.Row
+        self._obter()  # cria a conexão da thread atual (schema/migração no init)
+
+    def _obter(self) -> sqlite3.Connection:
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = _abrir_conn(self._caminho)
+            conn.row_factory = self.row_factory
+            self._local.conn = conn
+            with self._lock:
+                self._todas.append(conn)
+        return conn
+
+    # --- proxy dos métodos usados pela memória --- #
+    def execute(self, *a, **k):
+        return self._obter().execute(*a, **k)
+
+    def executemany(self, *a, **k):
+        return self._obter().executemany(*a, **k)
+
+    def executescript(self, *a, **k):
+        return self._obter().executescript(*a, **k)
+
+    def cursor(self, *a, **k):
+        return self._obter().cursor(*a, **k)
+
+    def commit(self):
+        return self._obter().commit()
+
+    def rollback(self):
+        return self._obter().rollback()
+
+    def backup(self, *a, **k):
+        return self._obter().backup(*a, **k)
+
+    def create_function(self, *a, **k):
+        return self._obter().create_function(*a, **k)
+
+    def __enter__(self):
+        return self._obter().__enter__()
+
+    def __exit__(self, *a):
+        return self._obter().__exit__(*a)
+
+    def close(self):
+        with self._lock:
+            for conn in self._todas:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self._todas.clear()
+        try:
+            self._local.conn = None
+        except Exception:
+            pass
+
+
+def conectar(caminho: Path | str) -> ConexaoThreadLocal:
+    return ConexaoThreadLocal(caminho)
 
 
 def tem_fts5(conn: sqlite3.Connection) -> bool:
