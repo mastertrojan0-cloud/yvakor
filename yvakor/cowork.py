@@ -220,6 +220,20 @@ class CoworkManager:
     # ------------------------------------------------------------------ #
     # Submissão
     # ------------------------------------------------------------------ #
+    def _evento(self, tid: str) -> threading.Event:
+        """Evento de cancelamento da tarefa, criado sob lock e SEMPRE guardado
+        em self._events. Antes só `submit()` populava o dict; `retomar()` e a
+        recuperação após queda não — então `_run` criava um Event local que
+        `cancel()`/`shutdown()` nunca enxergavam e o cancelamento não parava a
+        tarefa. Com setdefault, todo caminho (submit/retomar/recover) usa o
+        mesmo evento registrado."""
+        with self._lock:
+            ev = self._events.get(tid)
+            if ev is None:
+                ev = threading.Event()
+                self._events[tid] = ev
+            return ev
+
     def submit(self, description: str) -> dict:
         desc = " ".join((description or "").split())
         if not desc:
@@ -241,8 +255,8 @@ class CoworkManager:
             "session_id": sid, "workspace": str(ws),
         }
         self.store.insert(tarefa)
+        self._evento(tid)
         with self._lock:
-            self._events[tid] = threading.Event()
             self._steps[tid] = []
         self._drain()
         return self.get(tid) or tarefa
@@ -367,6 +381,9 @@ class CoworkManager:
             return {"ok": False, "erro": "tarefa não encontrada"}
         if t["status"] not in ("interrompida", "falha", "cancelada"):
             return {"ok": False, "erro": "tarefa não está parada"}
+        # Evento limpo: uma tarefa cancelada/interrompida pode ter o evento
+        # sinalizado de antes; ao retomar começamos com ele zerado.
+        self._evento(tid).clear()
         self.store.update(tid, status="na_fila", error=None,
                           finished_at=None)
         self._drain()
@@ -376,7 +393,9 @@ class CoworkManager:
         tarefa = self.store.get(tid)
         if not tarefa:
             return
-        ev = self._events.get(tid) or threading.Event()
+        # Garante o evento no dict (setdefault) — inclui tarefas retomadas e
+        # recuperadas após queda, para que cancel()/shutdown() as alcancem.
+        ev = self._evento(tid)
         ws = Path(tarefa["workspace"] or (self.workspace_root / tid))
         ws.mkdir(parents=True, exist_ok=True)
         self._anotar(tid, "tarefa iniciada")

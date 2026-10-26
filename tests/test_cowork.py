@@ -139,5 +139,46 @@ def test_cowork() -> None:
     print("  ✅ cowork ok — fila, cancelamento, persistência, recuperação")
 
 
+def test_cowork_cancel_retomada() -> None:
+    """Regressão: cancelar uma tarefa RETOMADA/recuperada tem de pará-la.
+    Antes, retomar()/recover não repovoavam self._events, então _run criava um
+    Event local e cancel()/shutdown() nunca sinalizavam a tarefa."""
+    tmp = Path(tempfile.mkdtemp(prefix="yvk-cowork-ret-"))
+    db = tmp / "cowork.db"
+    ws = tmp / "workspace"
+    orch = FakeOrch()
+    cfg = {"cowork": {"max_concurrent_tasks": 1, "auto_resume": False}}
+
+    # simula uma tarefa longa que "estava rodando" quando o processo caiu
+    mgr = CoworkManager(orch, cfg, db_path=db, workspace_root=ws)
+    mgr.store.insert({
+        "id": "ret1", "description": "tarefa longa recuperada",
+        "status": "executando", "created_at": "2026-01-01 00:00:00",
+        "started_at": "2026-01-01 00:00:01", "finished_at": None,
+        "result": None, "error": None, "steps": [],
+        "session_id": None, "workspace": None,
+    })
+
+    # novo manager recupera -> interrompida
+    mgr2 = CoworkManager(orch, cfg, db_path=db, workspace_root=ws)
+    assert mgr2.get("ret1")["status"] == "interrompida"
+
+    # retomar e deixar começar a rodar
+    assert mgr2.retomar("ret1")["ok"]
+    assert esperar(lambda: mgr2.get("ret1")["status"] == "executando"), \
+        mgr2.get("ret1")
+
+    # cancelar a tarefa RETOMADA deve efetivamente pará-la
+    r = mgr2.cancel("ret1")
+    assert r["ok"], r
+    assert "ret1" in mgr2._events and mgr2._events["ret1"].is_set(), \
+        "evento de cancelamento não registrado/sinalizado para tarefa retomada"
+    assert esperar(lambda: mgr2.get("ret1")["status"] == "cancelada", 10), \
+        mgr2.get("ret1")
+
+    print("  ✅ cancelamento de tarefa retomada ok")
+
+
 if __name__ == "__main__":
     test_cowork()
+    test_cowork_cancel_retomada()
