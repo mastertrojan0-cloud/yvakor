@@ -15,6 +15,7 @@ Cada passo:
 from __future__ import annotations
 import json
 import re
+import threading
 import time
 
 PROTOCOLO = """
@@ -278,7 +279,35 @@ class AgentLoop:
         self.roteador = roteador
         self.max_ferramentas = max_ferramentas
         self.timeout_s = timeout_s
-        self.ultima_selecao: list[str] = []
+        # Estado por-requisição em thread-local: uma mesma instância de
+        # AgentLoop é usada pelo chat E por tarefas cowork em paralelo. Guardar
+        # artefatos/seleção em atributos simples fazia uma execução vazar na
+        # outra (entregáveis trocados). Com thread-local cada run() é isolado.
+        self._tl = threading.local()
+
+    @property
+    def artefatos(self) -> list[dict]:
+        lst = getattr(self._tl, "artefatos", None)
+        if lst is None:
+            lst = []
+            self._tl.artefatos = lst
+        return lst
+
+    @artefatos.setter
+    def artefatos(self, valor: list[dict]) -> None:
+        self._tl.artefatos = valor
+
+    @property
+    def ultima_selecao(self) -> list[str]:
+        v = getattr(self._tl, "ultima_selecao", None)
+        if v is None:
+            v = []
+            self._tl.ultima_selecao = v
+        return v
+
+    @ultima_selecao.setter
+    def ultima_selecao(self, valor: list[str]) -> None:
+        self._tl.ultima_selecao = valor
 
     def _selecionar(self, history: list[dict]) -> list[str] | None:
         if not self.roteador:
@@ -365,7 +394,7 @@ class AgentLoop:
         on_event(tipo, dado) opcional p/ logar passos (ferramenta, observação).
         should_stop() opcional: retorna True para interromper (cancelamento de
         tarefa em segundo plano) entre um passo e outro."""
-        self.artefatos: list[dict] = []
+        self.artefatos = []   # zera a lista desta thread (ver properties acima)
         nomes = self._selecionar(history)
         messages = [{"role": "system",
                      "content": self.system_with_tools(base_system, nomes)}]

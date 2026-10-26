@@ -17,6 +17,19 @@ class PonteExtensao:
         self.falhas = 0
         self.quedas = 0
         self._ultima_queda = 0.0
+        # Por-requisição: se a mensagem pede explicitamente outro navegador.
+        # Thread-local porque chat e cowork compartilham esta ponte singleton
+        # e rodam em threads distintas (senão uma requisição liberava shell de
+        # navegador para outra).
+        self._tl = threading.local()
+
+    @property
+    def permitir_outro(self) -> bool:
+        return getattr(self._tl, "permitir_outro", False)
+
+    @permitir_outro.setter
+    def permitir_outro(self, valor: bool) -> None:
+        self._tl.permitir_outro = bool(valor)
 
     def ping(self) -> None:
         agora = time.time()

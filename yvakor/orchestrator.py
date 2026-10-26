@@ -226,6 +226,11 @@ class Orchestrator:
         # Progresso ao vivo das tarefas (por conversa) p/ a interface acompanhar
         self.progress: dict = {}
         self._prog_lock = threading.Lock()
+        # Estado por-requisição (chat e cowork compartilham esta instância e
+        # rodam em threads diferentes): a mensagem atual precisa ser isolada
+        # por thread, senão os wrappers de navegador/shell de uma requisição
+        # leem a mensagem de outra.
+        self._tl = threading.local()
         # Confirmação de ações protegidas via interface (popup no navegador)
         self.confirm_broker = ConfirmationBroker()
         self.telemetria = Telemetria()
@@ -312,7 +317,7 @@ class Orchestrator:
         from yvakor.extensao_bridge import PONTE
 
         def alvo_ext(navegador: str) -> bool:
-            msg = getattr(self, "_msg_atual", "") or ""
+            msg = getattr(self._tl, "msg_atual", "") or ""
             if _re.search(r"\b(edge|firefox|outro navegador|outra janela|"
                           r"playwright)\b", msg, _re.I):
                 return False
@@ -390,7 +395,7 @@ class Orchestrator:
         if shell_original is not None:
             def shell_wrapper(comando: str = "", timeout: int = 25,
                               cwd: str | None = None, _orig=shell_original):
-                msg = getattr(self, "_msg_atual", "") or ""
+                msg = getattr(self._tl, "msg_atual", "") or ""
                 if _re.search(r"\b(edge|firefox|outro navegador|outra janela|"
                               r"playwright)\b", msg, _re.I):
                     return _orig(comando, timeout, cwd)
@@ -680,7 +685,7 @@ class Orchestrator:
 
         sid = session_id or getattr(self.episodic, "active_id", "default")
         inicio = time.time()
-        self._msg_atual = user_message
+        self._tl.msg_atual = user_message
         from yvakor.extensao_bridge import PONTE as _ponte
         _ponte.permitir_outro = bool(_re.search(
             r"\b(edge|firefox|outro navegador|outra janela|playwright)\b",
@@ -932,10 +937,14 @@ class Orchestrator:
             answer = self.agent.run(system, history=history, on_event=_trace,
                                     should_stop=should_stop,
                                     forcar_provider=forcar)
-            self.ultimos_artefatos = list(getattr(self.agent, "artefatos", []))
-            answer = self._completar_entregaveis(answer, self.ultimos_artefatos)
+            # Lista local desta resposta (agent.artefatos é thread-local, lido
+            # na MESMA thread) — garante que os entregáveis anexados são os
+            # desta execução, não os de outra tarefa concorrente.
+            artefatos = list(getattr(self.agent, "artefatos", []))
+            self.ultimos_artefatos = artefatos  # compat UI/voz (melhor esforço)
+            answer = self._completar_entregaveis(answer, artefatos)
             answer = self._podar_resposta(answer, user_message, task_type,
-                                          self.ultimos_artefatos)
+                                          artefatos)
         finally:
             clear_thread_confirmer()
             self._prog_done(sid)
