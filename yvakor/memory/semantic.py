@@ -123,20 +123,44 @@ class SemanticMemory:
         return ""
 
     def _contraditorio(self, fato: str) -> int | None:
-        """Fato com quase as mesmas palavras mas número diferente → obsoleto."""
+        """Fato com quase as mesmas palavras mas número diferente → obsoleto.
+
+        Antes varria a tabela INTEIRA a cada gravação (O(N) dentro do lock de
+        escrita) — gravar não escalava. Agora pré-filtra por FTS5: só os fatos
+        que compartilham termos entram no Jaccard; sem FTS, cai para uma
+        varredura limitada aos mais recentes.
+        """
         novo = set(normalizar(fato).split())
         numeros_novos = set(re.findall(r"\d+", fato))
         if not numeros_novos or len(novo) < 3:
             return None
-        for row in self.conn.execute(
-                "SELECT id, fato FROM facts WHERE obsoleto=0").fetchall():
+        novo_palavras = {t for t in novo if not any(c.isdigit() for c in t)}
+        if not novo_palavras:
+            return None
+
+        candidatos = []
+        q = fts_query(" ".join(novo_palavras))
+        if q and self._fts:
+            try:
+                candidatos = self.conn.execute(
+                    "SELECT f.id, f.fato FROM facts_fts JOIN facts f "
+                    "ON f.id = facts_fts.rowid WHERE facts_fts MATCH ? "
+                    "AND f.obsoleto=0 ORDER BY bm25(facts_fts) LIMIT 50",
+                    (q,)).fetchall()
+            except sqlite3.DatabaseError:
+                candidatos = []
+        if not candidatos:
+            candidatos = self.conn.execute(
+                "SELECT id, fato FROM facts WHERE obsoleto=0 "
+                "ORDER BY id DESC LIMIT 200").fetchall()
+
+        for row in candidatos:
             velho = set(normalizar(row["fato"]).split())
             if not velho:
                 continue
             # compara sem os tokens numéricos (IP, valor, data mudam)
-            novo_palavras = {t for t in novo if not any(c.isdigit() for c in t)}
             velho_palavras = {t for t in velho if not any(c.isdigit() for c in t)}
-            if not novo_palavras or not velho_palavras:
+            if not velho_palavras:
                 continue
             jaccard = (len(novo_palavras & velho_palavras)
                        / len(novo_palavras | velho_palavras))

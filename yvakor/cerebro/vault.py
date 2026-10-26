@@ -282,13 +282,26 @@ class Cerebro:
                 vistos.add(rel)
                 try:
                     mtime = arquivo.stat().st_mtime
+                except OSError:
+                    continue
+                atual = self.conn.execute(
+                    "SELECT id, hash, mtime FROM notes WHERE caminho=?",
+                    (rel,)).fetchone()
+                # mtime inalterado → nem lê nem hasheia o arquivo (antes relia e
+                # re-hasheava TODOS os .md a cada sync, a cada ~2 min).
+                if (atual and atual["mtime"] is not None
+                        and abs(float(atual["mtime"]) - mtime) < 1e-6):
+                    continue
+                try:
                     texto = arquivo.read_text(encoding="utf-8", errors="replace")
                 except OSError:
                     continue
                 h = hash_texto(texto)
-                atual = self.conn.execute(
-                    "SELECT id, hash FROM notes WHERE caminho=?", (rel,)).fetchone()
                 if atual and atual["hash"] == h:
+                    # conteúdo igual (só o mtime mudou): atualiza o mtime e segue,
+                    # sem reprocessar parse/links.
+                    self.conn.execute(
+                        "UPDATE notes SET mtime=? WHERE caminho=?", (mtime, rel))
                     continue
                 meta = self._parse(texto, rel)
                 self.conn.execute("""
@@ -374,12 +387,17 @@ class Cerebro:
             return {"ok": False, "erro": "executor de ferramentas indisponível"}
         return ExecutorReceitas(self.executor).executar(receita, texto, simular)
 
-    def buscar(self, termo: str, limite: int = 10) -> list[dict]:
+    def buscar(self, termo: str, limite: int = 10,
+               incluir_conteudo: bool = False) -> list[dict]:
+        # incluir_conteudo=True traz o corpo da nota no mesmo SELECT (JOIN),
+        # evitando o N+1 em que o chamador fazia nota() por resultado.
+        corpo = "n.conteudo AS conteudo, " if incluir_conteudo else ""
         q = fts_query(termo)
         if q and self._fts:
             try:
                 rows = self.conn.execute(
                     "SELECT n.caminho, n.titulo, n.tipo, n.tags, "
+                    f"{corpo}"
                     "snippet(notes_fts, 2, '[', ']', '…', 16) AS trecho, "
                     "bm25(notes_fts) AS score "
                     "FROM notes_fts JOIN notes n ON n.id = notes_fts.rowid "
@@ -389,8 +407,10 @@ class Cerebro:
             except sqlite3.DatabaseError:
                 pass
         padrao = f"%{termo}%"
+        corpo2 = "conteudo, " if incluir_conteudo else ""
         rows = self.conn.execute(
-            "SELECT caminho, titulo, tipo, tags, substr(conteudo,1,300) AS trecho, 0 "
+            f"SELECT caminho, titulo, tipo, tags, {corpo2}"
+            "substr(conteudo,1,300) AS trecho, 0 "
             "FROM notes WHERE titulo LIKE ? OR conteudo LIKE ? LIMIT ?",
             (padrao, padrao, limite)).fetchall()
         return [dict(r) for r in rows]

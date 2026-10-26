@@ -102,8 +102,9 @@ class Resolvedor:
     def _melhor_conversa(self, mensagem: str, termos: list[str]):
         melhor = None
         try:
-            for nota in self.c.buscar(mensagem, 8):
-                completa = self.c.nota(nota["caminho"]) or {}
+            for nota in self.c.buscar(mensagem, 8, incluir_conteudo=True):
+                completa = nota if nota.get("conteudo") is not None \
+                    else (self.c.nota(nota["caminho"]) or {})
                 if completa.get("tipo") != "conversa":
                     continue
                 texto = self._limpar_conversa(completa.get("conteudo", ""))
@@ -147,8 +148,9 @@ class Resolvedor:
         ips = re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", mensagem or "")
         for ip in ips:
             try:
-                for resumo in self.c.buscar(ip, 8):
-                    completa = self.c.nota(resumo.get("caminho")) or {}
+                for resumo in self.c.buscar(ip, 8, incluir_conteudo=True):
+                    completa = resumo if resumo.get("conteudo") is not None \
+                        else (self.c.nota(resumo.get("caminho")) or {})
                     texto = completa.get("conteudo", "") or ""
                     if texto.startswith("---"):
                         partes = texto.split("---", 2)
@@ -184,8 +186,9 @@ class Resolvedor:
 
         candidatos = []
         try:
-            for nota in self.c.buscar(mensagem, 6):
-                completa = self.c.nota(nota["caminho"]) or {}
+            for nota in self.c.buscar(mensagem, 6, incluir_conteudo=True):
+                completa = nota if nota.get("conteudo") is not None \
+                    else (self.c.nota(nota["caminho"]) or {})
                 # conversa não serve como resposta direta (é transcript)
                 if completa and completa.get("tipo") != "conversa":
                     cobertura, resposta = self._extrair(completa, termos)
@@ -254,8 +257,9 @@ class Resolvedor:
                   "Use isto como fonte de verdade. Se resolve a pergunta, "
                   "responda com base nisto (cite a nota)."]
         try:
-            for nota in self.c.buscar(mensagem, 5):
-                completa = self.c.nota(nota["caminho"]) or {}
+            for nota in self.c.buscar(mensagem, 5, incluir_conteudo=True):
+                completa = nota if nota.get("conteudo") is not None \
+                    else (self.c.nota(nota["caminho"]) or {})
                 resumo = self._resumo_nota(completa)[:600]
                 if resumo:
                     partes.append(f"### {nota.get('titulo')} "
