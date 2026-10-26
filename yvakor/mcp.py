@@ -9,6 +9,7 @@ import json
 import os
 import re
 import subprocess
+from yvakor import proc as _ywproc
 import sys
 import threading
 import time
@@ -48,7 +49,7 @@ class MCPClient:
         env.update({str(k): str(v) for k, v in (self.cfg.get("env") or {}).items()})
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
         try:
-            self.proc = subprocess.Popen(
+            self.proc = _ywproc.popen(
                 [str(cmd), *args], cwd=str(self.cfg.get("cwd") or ROOT),
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, text=True, encoding="utf-8",
@@ -156,7 +157,7 @@ class MCPClient:
         if not proc:
             return
         try:
-            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+            _ywproc.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
                            capture_output=True, timeout=10)
         except Exception:
             try:

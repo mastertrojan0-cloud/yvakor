@@ -10,6 +10,7 @@ import argparse
 import json
 import shlex
 import subprocess
+from yvakor import proc as _ywproc
 import sys
 import time
 import urllib.request
@@ -41,7 +42,7 @@ def _saudavel(url: str) -> bool:
 
 def _matar(proc: subprocess.Popen) -> None:
     try:
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+        _ywproc.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
                        capture_output=True, timeout=10)
     except Exception:
         try:
@@ -92,7 +93,7 @@ def main() -> int:
         try:
             flags = subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(
                 subprocess, "CREATE_NEW_PROCESS_GROUP") else 0
-            proc = subprocess.Popen(cmd, cwd=ROOT, stdout=saida,
+            proc = _ywproc.popen(cmd, cwd=ROOT, stdout=saida,
                                     stderr=subprocess.STDOUT,
                                     creationflags=flags)
             falhas, ultimo_probe, motivo = 0, 0.0, ""

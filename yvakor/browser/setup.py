@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import sys
 import subprocess
+from yvakor import proc as _ywproc
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -52,7 +53,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print("  [navegador] baixando Chromium do Playwright (~130 MB, uma vez)…")
     try:
-        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"],
+        _ywproc.run([sys.executable, "-m", "playwright", "install", "chromium"],
                        check=True)
     except Exception as exc:
         print(f"  [navegador] falhou: {exc}")

@@ -17,6 +17,7 @@ import ipaddress
 import re
 import socket
 import subprocess
+from yvakor import proc as _ywproc
 import subprocess
 import time
 import xml.etree.ElementTree as ET
@@ -112,7 +113,7 @@ def fabricante_por_mac(mac: str) -> str:
 
 def _netbios(ip: str) -> str:
     try:
-        out = subprocess.run(["nbtstat", "-A", ip], capture_output=True,
+        out = _ywproc.run(["nbtstat", "-A", ip], capture_output=True,
                              text=True, timeout=2).stdout
         for linha in out.splitlines():
             if "<00>" in linha and "UNIQUE" in linha.upper():
@@ -151,7 +152,7 @@ def arp_tabela() -> dict[str, str]:
     """IP -> MAC, lido da tabela ARP do sistema (só hosts unicast reais)."""
     tabela: dict[str, str] = {}
     try:
-        p = subprocess.run(["arp", "-a"], capture_output=True, text=True,
+        p = _ywproc.run(["arp", "-a"], capture_output=True, text=True,
                            timeout=8, encoding="utf-8", errors="replace")
         for linha in p.stdout.splitlines():
             m = _MAC_RE.search(linha)

@@ -2,6 +2,7 @@
 imagens e desenvolvimento. Ferramentas prefixadas com `cap_`.
 """
 from __future__ import annotations
+from yvakor import proc as _ywproc
 
 import ast
 import json
@@ -314,7 +315,7 @@ def _executar_local_limitado(cmd: list[str], cwd: str, timeout: int) -> dict:
     import time
 
     if not hasattr(ctypes, "WinDLL"):
-        proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
+        proc = _ywproc.run(cmd, cwd=cwd, capture_output=True, text=True,
                               timeout=timeout)
         return {"proc": proc, "limites": "nenhum"}
 
@@ -357,7 +358,7 @@ def _executar_local_limitado(cmd: list[str], cwd: str, timeout: int) -> dict:
         info.BasicLimitInformation.ActiveProcessLimit = 1
         k32.SetInformationJobObject(job, 9, ctypes.byref(info),
                                     ctypes.sizeof(info))
-    proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE,
+    proc = _ywproc.popen(cmd, cwd=cwd, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True)
     if job:
         try:
@@ -397,7 +398,7 @@ def executar_codigo(codigo: str, linguagem: str = "python",
         cmd = [sys.executable, "-I", "-S", "-B", str(arq)]
         inicio = time.time()
         try:
-            proc = subprocess.run(
+            proc = _ywproc.run(
                 cmd, cwd=tmp, capture_output=True, text=True, timeout=timeout,
                 env={"PYTHONIOENCODING": "utf-8", "PATH": "",
                      "SYSTEMROOT": os.environ.get("SYSTEMROOT", "")})

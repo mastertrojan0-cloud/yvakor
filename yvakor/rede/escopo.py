@@ -16,6 +16,7 @@ import ipaddress
 import json
 import socket
 import subprocess
+from yvakor import proc as _ywproc
 import time
 
 LOOPBACK = ipaddress.ip_network("127.0.0.0/8")
@@ -29,7 +30,7 @@ _VIRTUAIS = ("vethernet", "hyper-v", "vmware", "virtualbox", "loopback",
 def _ps_json(comando: str, timeout: int = 8):
     """Roda PowerShell e devolve JSON (usado só no Windows)."""
     try:
-        p = subprocess.run(
+        p = _ywproc.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", comando],
             capture_output=True, text=True, timeout=timeout,
             encoding="utf-8", errors="replace")

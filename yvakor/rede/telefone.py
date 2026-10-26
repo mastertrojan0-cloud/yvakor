@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from yvakor import proc as _ywproc
 import time
 import urllib.request
 import zipfile
@@ -81,7 +82,7 @@ class Telefones:
                                          "rede_telefone_preparar primeiro"}
         comando = [adb] + args
         try:
-            p = subprocess.run(
+            p = _ywproc.run(
                 comando, capture_output=True, timeout=timeout,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             saida = p.stdout if binario else p.stdout.decode("utf-8", "replace")

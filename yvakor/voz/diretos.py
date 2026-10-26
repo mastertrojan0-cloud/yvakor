@@ -1,5 +1,6 @@
 """YVAKOR — respostas diretas de voz/texto (sem IA) para pedidos simples."""
 from __future__ import annotations
+from yvakor import proc as _ywproc
 
 from datetime import datetime
 import re
@@ -138,7 +139,7 @@ def detectar(texto: str) -> dict | None:
 def _ps(comando: str) -> str:
     import subprocess
     try:
-        p = subprocess.run(["powershell", "-NoProfile", "-Command", comando],
+        p = _ywproc.run(["powershell", "-NoProfile", "-Command", comando],
                            capture_output=True, text=True, timeout=15)
         return (p.stdout or p.stderr or "").strip()
     except Exception as exc:

@@ -14,6 +14,7 @@ import asyncio
 import hashlib
 import shutil
 import subprocess
+from yvakor import proc as _ywproc
 import threading
 import time
 from pathlib import Path
@@ -89,7 +90,7 @@ class TTS:
         ffplay = shutil.which("ffplay")
         if ffplay:
             try:
-                subprocess.run([ffplay, "-nodisp", "-autoexit", "-loglevel",
+                _ywproc.run([ffplay, "-nodisp", "-autoexit", "-loglevel",
                                 "quiet", str(caminho)], timeout=120)
                 return True
             except Exception:
@@ -123,7 +124,7 @@ class TTS:
             f"$s.SetOutputToWaveFile('{destino}');"
             "$s.Speak($t); $s.Dispose()")
         try:
-            p = subprocess.run(
+            p = _ywproc.run(
                 ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
                 capture_output=True, text=True, timeout=120,
                 encoding="utf-8", errors="replace")
@@ -195,7 +196,7 @@ class TTS:
                     ff = self._ffmpeg()
                     if ff:
                         try:
-                            subprocess.run([ff, "-hide_banner", "-loglevel", "error",
+                            _ywproc.run([ff, "-hide_banner", "-loglevel", "error",
                                             "-y", "-i", str(mp3), str(wav)],
                                            capture_output=True, timeout=60)
                         except Exception:
@@ -261,7 +262,7 @@ class TTS:
                       "(New-Object System.Speech.Synthesis.SpeechSynthesizer)"
                       ".GetInstalledVoices() | ForEach-Object { "
                       "$_.VoiceInfo.Name + '|' + $_.VoiceInfo.Culture.Name }")
-            p = subprocess.run(["powershell", "-NoProfile", "-NonInteractive",
+            p = _ywproc.run(["powershell", "-NoProfile", "-NonInteractive",
                                 "-Command", script], capture_output=True,
                                text=True, timeout=30, encoding="utf-8",
                                errors="replace")

@@ -17,6 +17,7 @@ import re
 import shutil
 import socket
 import subprocess
+from yvakor import proc as _ywproc
 import threading
 import time
 from pathlib import Path
@@ -230,7 +231,7 @@ class CameraRTSP:
                    "-fflags", "nobuffer", "-flags", "low_delay",
                    "-f", "h264", "-i", "-", "-f", "image2pipe",
                    "-vcodec", "mjpeg", "-q:v", "5", "-"]
-        self._ffmpeg = subprocess.Popen(
+        self._ffmpeg = _ywproc.popen(
             comando, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL)
         if info.get("sps") and info.get("pps"):

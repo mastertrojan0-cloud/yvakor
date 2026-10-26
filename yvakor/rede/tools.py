@@ -7,6 +7,7 @@ pelo Confirmation Guard. Segredos (senha de câmera, token de TV) e comandos
 que podem ser destrutivos (ADB shell) exigem confirmação SEMPRE.
 """
 from __future__ import annotations
+from yvakor import proc as _ywproc
 
 from yvakor.rede.facade import Rede
 
@@ -101,11 +102,11 @@ def register_rede_tools(registry, rede: Rede) -> list[str]:
         dev = rede.cameras._dev(alvo)
         import subprocess
         try:
-            saida = subprocess.run(
+            saida = _ywproc.run(
                 ["tasklist", "/FI", "IMAGENAME eq Yoosee.exe"],
                 capture_output=True, text=True, timeout=8).stdout
             if "Yoosee.exe" not in saida:
-                subprocess.Popen([r"C:\Program Files (x86)\Yoosee\Yoosee.exe"])
+                _ywproc.popen([r"C:\Program Files (x86)\Yoosee\Yoosee.exe"])
         except Exception:
             pass
         url = f"http://127.0.0.1:7777/camera/{dev['ip']}"

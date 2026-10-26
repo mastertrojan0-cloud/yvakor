@@ -19,6 +19,7 @@ import os
 import queue
 import shutil
 import subprocess
+from yvakor import proc as _ywproc
 import sys
 import time
 import urllib.request
@@ -118,7 +119,7 @@ class STT:
         cmd = [ff, "-hide_banner", "-loglevel", "error", "-y",
                "-i", str(origem), "-ar", "16000", "-ac", "1",
                "-c:a", "pcm_s16le", str(destino)]
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=120,
+        p = _ywproc.run(cmd, capture_output=True, text=True, timeout=120,
                            encoding="utf-8", errors="replace")
         if not destino.exists():
             raise VozIndisponivel(f"falha ao converter áudio: {p.stderr[:200]}")
@@ -194,7 +195,7 @@ class STT:
             "a=np.frombuffer(r.tobytes(),dtype=np.int16).astype(np.float32)\n"
             "print('RMS', round(float(np.sqrt((a*a).mean())),2))\n")
         try:
-            p = subprocess.run([sys.executable, "-c", codigo],
+            p = _ywproc.run([sys.executable, "-c", codigo],
                                capture_output=True, text=True, timeout=8)
         except subprocess.TimeoutExpired:
             return {"ok": False, "dispositivo": self.dispositivo_entrada,

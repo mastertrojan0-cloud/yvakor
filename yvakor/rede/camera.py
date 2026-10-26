@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from yvakor import proc as _ywproc
 import threading
 import time
 from pathlib import Path
@@ -212,7 +213,7 @@ class Cameras:
                 cmd = [vlc, "--no-one-instance", "--no-video-title-show",
                        "--rtsp-tcp", "--network-caching=300", url]
                 try:
-                    proc = subprocess.Popen(cmd, close_fds=True)
+                    proc = _ywproc.popen(cmd, close_fds=True)
                 except Exception as exc:
                     return {"ok": False, "erro": str(exc)}
                 if int(segundos) > 0:
@@ -229,7 +230,7 @@ class Cameras:
                "-flags", "low_delay", "-window_title", titulo,
                "-loglevel", "warning", "-i", url]
         try:
-            proc = subprocess.Popen(cmd, close_fds=True)
+            proc = _ywproc.popen(cmd, close_fds=True)
         except Exception as exc:
             return {"ok": False, "erro": str(exc)}
         if int(segundos) > 0:
@@ -298,7 +299,7 @@ class Cameras:
                            "-rtsp_transport", self.rtsp_transport,
                            "-i", url, "-frames:v", "1", "-q:v", "2",
                            "-y", str(destino)]
-                    p = subprocess.run(cmd, capture_output=True, text=True,
+                    p = _ywproc.run(cmd, capture_output=True, text=True,
                                        timeout=25, encoding="utf-8",
                                        errors="replace")
                     if destino.exists() and destino.stat().st_size > 1000:
@@ -347,7 +348,7 @@ class Cameras:
                "-i", url, "-t", str(max(1, min(int(segundos), 300))),
                "-c", "copy", "-y", str(destino)]
         try:
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=segundos + 30,
+            p = _ywproc.run(cmd, capture_output=True, text=True, timeout=segundos + 30,
                                encoding="utf-8", errors="replace")
             ok = destino.exists() and destino.stat().st_size > 1000
             if not ok:

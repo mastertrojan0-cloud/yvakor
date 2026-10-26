@@ -12,6 +12,7 @@ import math
 import os
 import queue
 import subprocess
+from yvakor import proc as _ywproc
 import sys
 import tempfile
 import threading
@@ -471,7 +472,7 @@ class ChatView(tk.Frame):
                 try:
                     temp = Path(tempfile.gettempdir()) / (
                         "yvakor_" + str(abs(hash(caminho))) + ".jpg")
-                    subprocess.run(
+                    _ywproc.run(
                         ["ffmpeg", "-y", "-loglevel", "error", "-ss", "0.4",
                          "-i", caminho, "-frames:v", "1", "-vf", "scale=430:-2",
                          str(temp)], capture_output=True, timeout=15)
@@ -1054,7 +1055,7 @@ def garantir_nucleo(timeout_s: float = 45.0, on_status=None) -> bool:
         pasta = ROOT / "data" / "logs"
         pasta.mkdir(parents=True, exist_ok=True)
         with open(pasta / "nucleo.log", "ab") as log:
-            subprocess.Popen(
+            _ywproc.popen(
                 [sys.executable, "-m", "yvakor.server"], cwd=str(ROOT),
                 creationflags=flags, stdin=subprocess.DEVNULL,
                 stdout=log, stderr=log, close_fds=True)
@@ -1360,7 +1361,7 @@ class JanelaCameraVivo(tk.Toplevel):
         if os.name == "nt":
             flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:
-            self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+            self._proc = _ywproc.popen(cmd, stdout=subprocess.PIPE,
                                           stderr=subprocess.DEVNULL,
                                           creationflags=flags)
         except Exception as exc:
@@ -1415,7 +1416,7 @@ class JanelaCameraVivo(tk.Toplevel):
         if proc is None:
             return
         try:
-            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+            _ywproc.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
                            capture_output=True, timeout=10)
         except Exception:
             try:
@@ -1627,7 +1628,7 @@ class TelaCamera(tk.Frame):
                "-r", "12", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
         try:
-            self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+            self._proc = _ywproc.popen(cmd, stdout=subprocess.PIPE,
                                           stderr=subprocess.DEVNULL,
                                           creationflags=flags)
         except Exception as exc:
@@ -1676,7 +1677,7 @@ class TelaCamera(tk.Frame):
         if proc is None:
             return
         try:
-            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+            _ywproc.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
                            capture_output=True, timeout=10)
         except Exception:
             try:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import subprocess
+from yvakor import proc as _ywproc
 import tempfile
 from pathlib import Path
 
@@ -48,7 +49,7 @@ def ocr_imagem(caminho: str | Path) -> dict:
     if not p.is_file():
         return {"ok": False, "erro": f"imagem não encontrada: {p}"}
     try:
-        proc = subprocess.run(
+        proc = _ywproc.run(
             ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
              "-File", str(_garantir_ps()), str(p)],
             capture_output=True, text=True, encoding="utf-8", errors="replace",

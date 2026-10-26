@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 import threading
 import subprocess
+from yvakor import proc as _ywproc
 import time
 from pathlib import Path
 from datetime import datetime
@@ -64,7 +65,7 @@ class Maintenance:
     # ------------------------------------------------------------------ #
     def _git(self, *args, timeout=60) -> tuple[int, str]:
         try:
-            p = subprocess.run(["git", *args], cwd=str(ROOT),
+            p = _ywproc.run(["git", *args], cwd=str(ROOT),
                                capture_output=True, text=True, timeout=timeout)
             return p.returncode, (p.stdout + p.stderr).strip()
         except FileNotFoundError:

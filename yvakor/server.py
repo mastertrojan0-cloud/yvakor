@@ -36,6 +36,7 @@ import sys
 import json
 import secrets
 import subprocess
+from yvakor import proc as _ywproc
 import threading
 import time
 import urllib.parse
@@ -364,7 +365,7 @@ class Handler(BaseHTTPRequestHandler):
         if not _shutil.which("ffmpeg"):
             return self._json(503, {"error": "ffmpeg não encontrado no PATH — "
                                     "instale o ffmpeg para espelhar a câmera"})
-        proc = subprocess.Popen(
+        proc = _ywproc.popen(
             ["ffmpeg", "-hide_banner", "-loglevel", "error",
              "-f", "gdigrab", "-framerate", "10", "-i", "title=Yoosee",
              "-vf", "scale=1280:-2", "-f", "image2pipe",

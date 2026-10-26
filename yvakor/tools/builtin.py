@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 import json
 import subprocess
+from yvakor import proc as _ywproc
 import sys
 import time
 import urllib.request
@@ -134,7 +135,7 @@ def executar_python(codigo: str, timeout: int = 15) -> dict:
     script = SANDBOX / "_run.py"
     script.write_text(codigo, encoding="utf-8")
     try:
-        p = subprocess.run([sys.executable, str(script)], cwd=str(SANDBOX),
+        p = _ywproc.run([sys.executable, str(script)], cwd=str(SANDBOX),
                            capture_output=True, text=True, timeout=timeout)
         return {"ok": p.returncode == 0, "stdout": p.stdout[-6000:],
                 "stderr": p.stderr[-3000:], "returncode": p.returncode}
@@ -205,7 +206,7 @@ def executar_shell(comando: str, timeout: int = 25, cwd: str | None = None) -> d
     except Exception:
         pass
     try:
-        p = subprocess.run(comando, shell=True, capture_output=True, text=True,
+        p = _ywproc.run(comando, shell=True, capture_output=True, text=True,
                            timeout=timeout, cwd=cwd)
         return {"ok": p.returncode == 0, "stdout": p.stdout[-8000:],
                 "stderr": p.stderr[-4000:], "returncode": p.returncode}
@@ -227,7 +228,7 @@ def gerar_imagem(prompt: str, resolucao: str = "512x768",
     hf_ok = False
     if hf:
         try:
-            p = subprocess.run([hf, "account", "status"],
+            p = _ywproc.run([hf, "account", "status"],
                                capture_output=True, text=True, timeout=8)
             if p.returncode == 0:
                 hf_ok = True
@@ -240,7 +241,7 @@ def gerar_imagem(prompt: str, resolucao: str = "512x768",
                "--prompt", prompt, "--aspect_ratio", aspecto,
                "--resolution", "2k", "--wait", "--wait-timeout", "5m"]
         try:
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=360)
+            p = _ywproc.run(cmd, capture_output=True, text=True, timeout=360)
             url_line = ""
             for line in (p.stdout + p.stderr).splitlines():
                 line = line.strip()
@@ -285,7 +286,7 @@ def gerar_imagem_higgsfield(prompt: str, estilo: str = "foto",
     if not hf:
         return {"ok": False, "erro": "Higgsfield CLI nao encontrado. Rode: npm i -g @higgsfield/cli"}
     try:
-        p = subprocess.run([hf, "account", "status"],
+        p = _ywproc.run([hf, "account", "status"],
                            capture_output=True, text=True, timeout=10)
         if p.returncode != 0:
             return {"ok": False, "erro": "Higgsfield nao autenticado. Rode: higgsfield auth login"}
@@ -296,7 +297,7 @@ def gerar_imagem_higgsfield(prompt: str, estilo: str = "foto",
         cmd = [hf, "generate", "create", "gpt_image_2",
                "--prompt", prompt, "--aspect_ratio", proporcao,
                "--resolution", "2k", "--wait", "--wait-timeout", "5m"]
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=360)
+        p = _ywproc.run(cmd, capture_output=True, text=True, timeout=360)
         url_line = ""
         for line in (p.stdout + p.stderr).splitlines():
             line = line.strip()
@@ -389,7 +390,7 @@ td,th{{border:1px solid #ccc;padding:8px;text-align:left}}
 def extrair_log_docker(container: str, filtro: str = "", linhas: int = 200) -> dict:
     """Extrai logs de um container Docker, com filtro opcional por palavra."""
     try:
-        p = subprocess.run(["docker", "logs", "--tail", str(linhas), container],
+        p = _ywproc.run(["docker", "logs", "--tail", str(linhas), container],
                            capture_output=True, text=True, timeout=30)
     except FileNotFoundError:
         return {"ok": False, "erro": "docker não está instalado/no PATH"}

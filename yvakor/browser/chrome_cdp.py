@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from yvakor import proc as _ywproc
 import time
 import urllib.request
 from pathlib import Path
@@ -85,7 +86,7 @@ def garantir(url: str = "http://127.0.0.1:9222",
         "about:blank",
     ]
     try:
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+        _ywproc.popen(cmd, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, close_fds=True)
     except Exception as exc:
         return {"ok": False, "erro": f"não consegui abrir o Chrome: {exc}"}

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from yvakor import proc as _ywproc
 from pathlib import Path
 
 VLC_CAMINHOS = (
@@ -53,7 +54,7 @@ class Player:
             cmd.append("--rtsp-tcp")
         cmd.append(alvo)
         try:
-            self.proc = subprocess.Popen(cmd, close_fds=True)
+            self.proc = _ywproc.popen(cmd, close_fds=True)
             self.alvo = alvo
             return {"ok": True, "alvo": alvo, "titulo": titulo or Path(alvo).name,
                     "vlc": self.vlc}
@@ -63,7 +64,7 @@ class Player:
     def parar(self) -> dict:
         if self.proc and self.proc.poll() is None:
             try:
-                subprocess.run(["taskkill", "/PID", str(self.proc.pid), "/T",
+                _ywproc.run(["taskkill", "/PID", str(self.proc.pid), "/T",
                                 "/F"], capture_output=True, timeout=10)
             except Exception:
                 try:
