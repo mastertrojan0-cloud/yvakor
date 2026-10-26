@@ -216,7 +216,10 @@ class Resolvedor:
             if conv and conv[0] >= self.limiar_direto:
                 fato = conv[1]
                 try:
-                    self.c.semantic.store(fato, fonte="conversa")
+                    # Fato extraído de transcript de conversa: confiança baixa
+                    # (revisar=1), não reaproveitado como verdade direta sem
+                    # revisão. Evita compor o loop auto-reforçante.
+                    self.c.semantic.store(fato, fonte="conversa", confianca=0.5)
                 except Exception:
                     pass
                 return {"modo": "cerebro", "confianca": round(conv[0], 2),

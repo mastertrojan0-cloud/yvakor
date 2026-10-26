@@ -955,12 +955,15 @@ class Orchestrator:
         if sid == self.episodic.active_id:
             self.episodic.maybe_autotitle(user_message)
 
-        # Absorção automática: extrai fatos + destila skills da IA principal
+        # Aprendizado automático: avalia a resposta e SÓ absorve fatos/destila
+        # skills se a nota for boa (a nota 1-5 agora gateia o aprendizado, em
+        # vez de ser apenas gravada em avaliacoes.jsonl).
         if self.settings["agent"]["reflection_enabled"] and not private:
-            threading.Thread(target=self._absorver_fundo,
+            threading.Thread(target=self._aprender_fundo,
                              args=(user_message, answer, task_type),
-                             daemon=True, name="yvakor-absorver").start()
-        if self.settings["agent"].get("avaliar_auto") and not private:
+                             daemon=True, name="yvakor-aprender").start()
+        elif self.settings["agent"].get("avaliar_auto") and not private:
+            # Reflexão desligada: ainda avaliamos (telemetria de qualidade).
             threading.Thread(target=self._avaliar_fundo,
                              args=(user_message, answer),
                              daemon=True, name="yvakor-avaliar").start()
@@ -1033,12 +1036,14 @@ class Orchestrator:
         return ((texto or "").rstrip() +
                 "\n\n**Entregáveis gerados:**\n" + "\n".join(linhas))
 
-    def _avaliar_fundo(self, pergunta: str, resposta: str) -> None:
+    def _avaliar_fundo(self, pergunta: str, resposta: str) -> int | None:
+        """Avalia a resposta (1-5), grava em avaliacoes.jsonl e devolve a nota
+        (ou None se a avaliação falhar), para o aprendizado poder usá-la."""
         try:
             from yvakor.colaboracao import avaliar_resposta
             r = avaliar_resposta(self.router, pergunta, resposta)
             if not r.get("ok"):
-                return
+                return None
             r.update({"ts": datetime.now().isoformat(timespec="seconds"),
                       "pergunta": (pergunta or "")[:600],
                       "resposta": (resposta or "")[:1200]})
@@ -1047,10 +1052,26 @@ class Orchestrator:
             with self._avaliacao_lock:
                 with arq.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(r, ensure_ascii=False) + "\n")
+            try:
+                return int(r.get("nota"))
+            except (TypeError, ValueError):
+                return None
         except Exception:
-            pass
+            return None
 
-    def _absorver_fundo(self, pergunta: str, resposta: str, task_type: str) -> None:
+    # Nota mínima (1-5) para a resposta "ensinar" a memória. Respostas ruins
+    # não contaminam fatos/skills (antes a nota era write-only em jsonl).
+    NOTA_MIN_APRENDER = 4
+
+    def _aprender_fundo(self, pergunta: str, resposta: str,
+                        task_type: str) -> None:
+        """Avalia e SÓ absorve/destila se a resposta foi boa. Antes absorção e
+        avaliação eram threads independentes: a nota não influenciava nada."""
+        nota = None
+        if self.settings["agent"].get("avaliar_auto"):
+            nota = self._avaliar_fundo(pergunta, resposta)
+            if nota is not None and nota < self.NOTA_MIN_APRENDER:
+                return  # resposta fraca: não vira fato nem skill
         if not self._abs_lock.acquire(blocking=False):
             return
         try:

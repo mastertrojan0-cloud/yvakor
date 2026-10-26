@@ -57,7 +57,11 @@ class KnowledgeAbsorber:
             data = _parse_json(raw) or {}
             facts = [f for f in data.get("fatos", []) if isinstance(f, str)]
             for f in facts:
-                self.semantic.store(f)
+                # Fato extraído da resposta do PRÓPRIO modelo: confiança baixa
+                # (<0.6 → revisar=1), então NÃO é servido como verdade direta
+                # até passar por revisão/consolidação. Evita o loop em que um
+                # chute do modelo vira "fato oficial" e é respondido sem IA.
+                self.semantic.store(f, fonte="auto_absorvido", confianca=0.5)
             return len(facts)
         except Exception:
             return 0  # absorção nunca quebra o fluxo principal
