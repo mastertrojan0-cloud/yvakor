@@ -997,11 +997,20 @@ class ErroAPI(RuntimeError):
     pass
 
 
+def _token() -> str:
+    """Token do servidor local (data/.server_token), exigido em POST/DELETE."""
+    try:
+        return (ROOT / "data" / ".server_token").read_text(
+            encoding="utf-8").strip()
+    except Exception:
+        return os.environ.get("YVAKOR_TOKEN", "")
+
+
 def api(path: str, dados: dict | None = None, timeout: float = 60,
         metodo: str | None = None):
     url = BASE + path
     corpo = None
-    headers = {"Accept": "application/json"}
+    headers = {"Accept": "application/json", "X-YVAKOR-Token": _token()}
     if dados is not None:
         corpo = json.dumps(dados, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json; charset=utf-8"

@@ -34,6 +34,7 @@ from __future__ import annotations
 import os
 import sys
 import json
+import secrets
 import subprocess
 import threading
 import time
@@ -164,6 +165,80 @@ _lock_handle = None
 _lock = threading.Lock()
 
 
+# --------------------------------------------------------------------- #
+# Segurança do servidor local
+# --------------------------------------------------------------------- #
+# Token por execução: exigido (header X-YVAKOR-Token) em TODAS as rotas que
+# causam efeito (POST/DELETE). Como é um header customizado, o navegador força
+# um preflight CORS que só aprovamos para origens confiáveis — logo um site
+# qualquer aberto no navegador NÃO consegue disparar /api/chat & cia. O valor
+# ainda é validado para clientes não-navegador. O token é gravado em
+# data/.server_token (0600) para os clientes locais (GUI, voz) e injetado no
+# index.html para a interface web.
+def _gerar_token() -> str:
+    tok = os.environ.get("YVAKOR_TOKEN") or secrets.token_urlsafe(32)
+    try:
+        pasta = ROOT / "data"
+        pasta.mkdir(parents=True, exist_ok=True)
+        arq = pasta / ".server_token"
+        arq.write_text(tok, encoding="utf-8")
+        try:
+            os.chmod(arq, 0o600)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return tok
+
+
+TOKEN = _gerar_token()
+
+# Extensão do YVAKOR: se YVAKOR_EXT_ID for definido, só essa extensão é aceita
+# no CORS; sem ele, mantém compatibilidade aceitando extensões instaladas
+# (confiança de nível de extensão — bem acima de "qualquer site").
+_EXT_ID = os.environ.get("YVAKOR_EXT_ID", "").strip()
+# Hosts aceitos (anti DNS-rebinding): só loopback na porta do servidor.
+HOSTS_OK = {f"127.0.0.1:{PORT}", f"localhost:{PORT}", f"{HOST}:{PORT}"}
+ORIGENS_OK = {f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}"}
+
+
+def _origem_permitida(origem: str) -> bool:
+    if not origem:
+        return False
+    if origem in ORIGENS_OK:
+        return True
+    if origem.startswith("chrome-extension://"):
+        return (not _EXT_ID) or origem == f"chrome-extension://{_EXT_ID}"
+    return False
+
+
+# Script injetado no index.html: publica o token e embrulha window.fetch para
+# anexar X-YVAKOR-Token (e Content-Type JSON) em toda chamada a /api/*. Assim
+# as ~28 chamadas existentes passam a autenticar sem precisar editar cada uma.
+_FETCH_SHIM = """<script>
+window.__YVAKOR_TOKEN__=%s;
+(function(){var _f=window.fetch;window.fetch=function(u,o){o=o||{};try{
+var p=(typeof u==='string')?u:(u&&u.url)||'';
+if(p.indexOf('/api/')===0||p.indexOf(location.origin+'/api/')===0){
+var h=new Headers(o.headers||((typeof u!=='string'&&u.headers)||{}));
+h.set('X-YVAKOR-Token',window.__YVAKOR_TOKEN__);
+if((o.method||'GET').toUpperCase()!=='GET'&&o.body&&!h.has('Content-Type'))
+h.set('Content-Type','application/json');
+o.headers=h;}}catch(e){}return _f(u,o);};})();
+</script>"""
+
+
+def _injetar_token(html: bytes) -> bytes:
+    shim = (_FETCH_SHIM % json.dumps(TOKEN)).encode("utf-8")
+    low = html.lower()
+    pos = low.find(b"</head>")
+    if pos == -1:
+        pos = low.find(b"<body")
+    if pos == -1:
+        return shim + html
+    return html[:pos] + shim + html[pos:]
+
+
 def get_agent() -> Orchestrator:
     global _agent
     with _lock:
@@ -178,31 +253,51 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         origem = self.headers.get("Origin", "")
-        permitido = (origem.startswith("chrome-extension://")
-                     or origem in ("http://127.0.0.1:7777",
-                                   "http://localhost:7777", "null"))
-        if permitido:
+        if _origem_permitida(origem):
             self.send_header("Access-Control-Allow-Origin", origem)
             self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods",
                          "GET, POST, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers",
+                         "Content-Type, X-YVAKOR-Token")
         self.end_headers()
         self.wfile.write(body)
 
     def do_OPTIONS(self):
         self.send_response(204)
         origem = self.headers.get("Origin", "")
-        if (origem.startswith("chrome-extension://")
-                or origem in ("http://127.0.0.1:7777",
-                              "http://localhost:7777", "null")):
+        if _origem_permitida(origem):
             self.send_header("Access-Control-Allow-Origin", origem)
             self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods",
                          "GET, POST, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers",
+                         "Content-Type, X-YVAKOR-Token")
         self.send_header("Access-Control-Max-Age", "86400")
         self.end_headers()
+
+    # ------------------------- autorização -------------------------- #
+    def _host_ok(self) -> bool:
+        """Anti DNS-rebinding: só aceita Host loopback na porta do servidor."""
+        host = (self.headers.get("Host") or "").strip().lower()
+        return host in HOSTS_OK
+
+    def _token_ok(self) -> bool:
+        enviado = self.headers.get("X-YVAKOR-Token", "")
+        return bool(enviado) and secrets.compare_digest(enviado, TOKEN)
+
+    def _autorizar_efeito(self) -> bool:
+        """Barra rotas de efeito (POST/DELETE) sem Host válido ou sem token.
+        Responde 403 e retorna False quando negado."""
+        if not self._host_ok():
+            self.close_connection = True
+            self._json(403, {"error": "host não autorizado"})
+            return False
+        if not self._token_ok():
+            self.close_connection = True
+            self._json(403, {"error": "token ausente ou inválido"})
+            return False
+        return True
 
     def _json(self, code: int, obj: dict):
         self._send(code, json.dumps(obj, ensure_ascii=False).encode(),
@@ -362,10 +457,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._camera_janela()
         if self.path in ("/dispositivos", "/dispositivos/"):
             html = (INTERFACE / "dispositivos.html").read_bytes()
-            return self._send(200, html, "text/html; charset=utf-8")
+            return self._send(200, _injetar_token(html),
+                              "text/html; charset=utf-8")
         if self.path in ("/galeria", "/galeria/"):
             html = (INTERFACE / "galeria.html").read_bytes()
-            return self._send(200, html, "text/html; charset=utf-8")
+            return self._send(200, _injetar_token(html),
+                              "text/html; charset=utf-8")
         if self.path.startswith("/api/galeria"):
             import mimetypes
             itens = []
@@ -470,6 +567,14 @@ class Handler(BaseHTTPRequestHandler):
             import os as _os
             return self._json(200, {"ok": True, "pid": _os.getpid(),
                                     "ts": time.time()})
+        # Bootstrap do token para clientes de navegador (a extensão). O CORS
+        # só deixa origens confiáveis LEREM esta resposta; um site qualquer
+        # consegue disparar a requisição, mas não consegue ler o token.
+        if self.path == "/api/token":
+            if not self._host_ok():
+                self.close_connection = True
+                return self._json(403, {"error": "host não autorizado"})
+            return self._json(200, {"token": TOKEN})
         if self.path.startswith("/api/health"):
             return self._json(200, _saude_health(get_agent(),
                                                 forcar="refresh=1" in self.path,
@@ -522,7 +627,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if self.path in ("/", "/index.html"):
             html = (INTERFACE / "index.html").read_bytes()
-            return self._send(200, html, "text/html; charset=utf-8")
+            return self._send(200, _injetar_token(html),
+                              "text/html; charset=utf-8")
 
         if self.path == "/api/status":
             agent = get_agent()
@@ -876,6 +982,16 @@ class Handler(BaseHTTPRequestHandler):
             self._erro_interno("POST", exc)
 
     def _do_post(self):
+        if not self._autorizar_efeito():
+            return
+        # Só JSON em rotas de efeito: rejeita os content-types "CORS-safelisted"
+        # (text/plain, form-urlencoded, multipart) que o truque de CSRF por
+        # requisição simples usaria — além do token já exigido acima.
+        if int(self.headers.get("Content-Length", 0) or 0):
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if ctype and ctype != "application/json":
+                self.close_connection = True
+                return self._json(400, {"error": "content-type não suportado"})
         ag = get_agent()
         try:
             data = self._body()
@@ -1390,6 +1506,8 @@ class Handler(BaseHTTPRequestHandler):
 
     # ----------------------------- DELETE ---------------------------- #
     def do_DELETE(self):
+        if not self._autorizar_efeito():
+            return
         if self.path.startswith("/api/agenda/"):
             tid = self.path[len("/api/agenda/"):]
             return self._json(200, get_agent().agenda.cancelar(tid))

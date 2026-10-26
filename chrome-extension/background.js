@@ -4,12 +4,37 @@ chrome.sidePanel
 
 const BASE = "http://127.0.0.1:7777";
 
+// Token exigido pelo núcleo em rotas de efeito (POST). Buscado no GET
+// /api/token (o CORS só deixa a extensão ler essa resposta) e reenviado no
+// header X-YVAKOR-Token. Em 403, renova e tenta de novo.
+let TOKEN = "";
+async function obterToken() {
+  try {
+    const r = await fetch(BASE + "/api/token", { cache: "no-store" });
+    if (r.ok) { TOKEN = (await r.json()).token || ""; }
+  } catch (e) { /* núcleo offline */ }
+  return TOKEN;
+}
+function cabNucleo() {
+  const h = { "Content-Type": "application/json" };
+  if (TOKEN) h["X-YVAKOR-Token"] = TOKEN;
+  return h;
+}
+async function postNucleo(path, obj) {
+  if (!TOKEN) await obterToken();
+  const corpo = JSON.stringify(obj || {});
+  let r = await fetch(BASE + path, { method: "POST", headers: cabNucleo(), body: corpo });
+  if (r.status === 403) {
+    await obterToken();
+    r = await fetch(BASE + path, { method: "POST", headers: cabNucleo(), body: corpo });
+  }
+  return r;
+}
+obterToken();
+
 function reportarErro() {
   try {
-    fetch(BASE + "/api/ext/erro", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: "{}"
-    }).catch(() => {});
+    postNucleo("/api/ext/erro", {}).catch(() => {});
   } catch (e) {}
 }
 globalThis.addEventListener("error", reportarErro);
@@ -17,10 +42,7 @@ globalThis.addEventListener("unhandledrejection", reportarErro);
 
 async function pontePing() {
   try {
-    await fetch(BASE + "/api/ext/ping", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: "{}"
-    });
+    await postNucleo("/api/ext/ping", {});
   } catch (e) { /* núcleo offline */ }
 }
 
@@ -72,10 +94,7 @@ async function scriptBG(func, args = []) {
 }
 
 async function responderBG(c, ok, dados = {}, erro = "") {
-  await fetch(BASE + "/api/ext/resultado", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id: c.id, ok, erro, ...dados })
-  });
+  await postNucleo("/api/ext/resultado", { id: c.id, ok, erro, ...dados });
 }
 
 async function injetarOverlayBG() {
