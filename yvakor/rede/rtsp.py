@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import re
+import shutil
 import socket
 import subprocess
 import threading
@@ -48,7 +49,12 @@ def _resposta(sock: socket.socket) -> tuple[int, dict, bytes]:
             headers[k.strip().lower()] = v.strip()
     tamanho = int(headers.get("content-length", "0") or 0)
     while len(corpo) < tamanho:
-        corpo += sock.recv(tamanho - len(corpo))
+        bloco = sock.recv(tamanho - len(corpo))
+        if not bloco:
+            # Peer fechou a conexão no meio do corpo: sem este guarda o laço
+            # girava para sempre (recv() devolvendo b"" a 100% de CPU).
+            raise RTSPErro("conexão encerrada antes do corpo completo")
+        corpo += bloco
     return status, headers, corpo
 
 
@@ -217,6 +223,9 @@ class CameraRTSP:
         if status != 200:
             raise RTSPErro(f"PLAY recusado ({status})")
 
+        if not shutil.which("ffmpeg"):
+            raise RTSPErro("ffmpeg não encontrado no PATH — instale o ffmpeg "
+                           "(winget/choco) para ver o vídeo da câmera")
         comando = ["ffmpeg", "-hide_banner", "-loglevel", "error",
                    "-fflags", "nobuffer", "-flags", "low_delay",
                    "-f", "h264", "-i", "-", "-f", "image2pipe",

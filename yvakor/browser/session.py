@@ -176,6 +176,13 @@ class BrowserSession:
                 paginas = self._ctx.pages
                 self._page = paginas[0] if paginas else self._ctx.new_page()
                 self._engine = f"{self.channel} (CDP)"
+                # Timeouts default para nenhuma operação pendurar o worker
+                # (um worker único serve a fila; op infinita congelava tudo).
+                try:
+                    self._ctx.set_default_timeout(self.timeout_ms)
+                    self._ctx.set_default_navigation_timeout(self.nav_timeout_ms)
+                except Exception:
+                    pass
             if self._page is None or self._page.is_closed():
                 paginas = self._ctx.pages if self._ctx else []
                 self._page = paginas[0] if paginas else self._ctx.new_page()
@@ -228,6 +235,7 @@ class BrowserSession:
                 self._page = pages[0] if pages else self._ctx.new_page()
                 try:
                     self._ctx.set_default_timeout(self.timeout_ms)
+                    self._ctx.set_default_navigation_timeout(self.nav_timeout_ms)
                 except Exception:
                     pass
                 return self._ctx
@@ -808,7 +816,7 @@ class BrowserSession:
                 return {"ok": False, "erro": "login não concluído no tempo",
                         "url": self._page.url, "visivel": True}
             return {"ok": True, "url": self._page.url, "visivel": True,
-                    "perfil": str(self._profile_dir), "estado": salvo,
+                    "perfil": str(self.profile_dir), "estado": salvo,
                     "cookies": len(self._ctx.cookies())}
         return self._call(run, timeout=timeout_s + 20)
 
@@ -817,7 +825,7 @@ class BrowserSession:
         estado = pasta / "google.json"
         return {"logado": bool(getattr(self, "google_logado", False)),
                 "desde": getattr(self, "google_em", 0),
-                "perfil": str(getattr(self, "_profile_dir", "")),
+                "perfil": str(getattr(self, "profile_dir", "")),
                 "estado_salvo": estado.exists(),
                 "estado_kb": round(estado.stat().st_size / 1024, 1)
                 if estado.exists() else 0}

@@ -360,6 +360,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _espelho_yoosee(self, ip: str):
         """Espelha a janela do app Yoosee (que já tem vídeo ao vivo) em MJPEG."""
+        import shutil as _shutil
+        if not _shutil.which("ffmpeg"):
+            return self._json(503, {"error": "ffmpeg não encontrado no PATH — "
+                                    "instale o ffmpeg para espelhar a câmera"})
         proc = subprocess.Popen(
             ["ffmpeg", "-hide_banner", "-loglevel", "error",
              "-f", "gdigrab", "-framerate", "10", "-i", "title=Yoosee",

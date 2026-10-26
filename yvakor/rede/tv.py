@@ -219,13 +219,12 @@ class Televisores:
         try:
             if nivel is None:
                 return {"ok": True, **self._lg_pedido(ip, "ssap://audio/getVolume")}
-            atual = self._lg_pedido(ip, "ssap://audio/getVolume")
-            valor = int(((atual.get("payload") or {}).get("volumeStatus") or {})
-                        .get("volume", 0))
             alvo_n = max(0, min(100, int(nivel)))
-            passo = "volumeUp" if alvo_n > valor else "volumeDown"
-            for _ in range(abs(alvo_n - valor)):
-                self._lg_pedido(ip, f"ssap://audio/{passo}")
+            # setVolume é absoluto: UMA chamada. Antes o volume era ajustado
+            # degrau a degrau (volumeUp/Down), e cada _lg_pedido abria uma nova
+            # websocket refazendo o pareamento — ir de 0→100 = 100 conexões
+            # sequenciais (minutos travado e enxurrada de registros na TV).
+            self._lg_pedido(ip, "ssap://audio/setVolume", {"volume": alvo_n})
             return {"ok": True, "volume": alvo_n}
         except Exception:
             tecla = "volume+" if (nivel or 0) >= 50 else "volume-"
