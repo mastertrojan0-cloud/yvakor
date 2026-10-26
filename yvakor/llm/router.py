@@ -88,17 +88,20 @@ class LLMRouter:
     def _dispatch(self, task_type: str, call, forcar: str | None = None) -> str:
         provider = self.providers.get(forcar) if forcar else None
         provider = provider or self.pick_provider(task_type)
+        erros = []
         try:
             return call(provider)
-        except Exception as first_error:
-            # fallback: tenta os demais providers na ordem
-            for name in self.routing["fallback_order"]:
-                p = self.providers.get(name)
-                if p and p is not provider:
-                    try:
-                        return call(p)
-                    except Exception:
-                        continue
-            raise RuntimeError(
-                f"Todos os providers falharam. Primeiro erro ({provider.name}): "
-                f"{first_error}")
+        except Exception as exc:
+            erros.append(f"{provider.name}: {exc}")
+        # fallback: tenta os demais providers na ordem (ex.: DeepSeek caiu →
+        # usa o modelo local). Era o plano desde o início.
+        for name in self.routing["fallback_order"]:
+            p = self.providers.get(name)
+            if p and p is not provider:
+                try:
+                    return call(p)
+                except Exception as exc:
+                    erros.append(f"{p.name}: {exc}")
+                    continue
+        raise RuntimeError("Todos os provedores de IA falharam — "
+                           + " | ".join(erros))
