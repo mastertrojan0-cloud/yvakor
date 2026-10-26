@@ -56,35 +56,60 @@ skills:
 
 tools:
   sandbox_dir: "data/sandbox"
-  # "total" = o agente tem os MESMOS privilégios da sua conta: lê, escreve,
-  # edita e apaga em qualquer pasta, roda shell, sem popup. Tudo vai para
-  # data/auditoria.jsonl. Use "protegido" para voltar a confirmar tudo.
-  privilegios: "total"
-  # Modo automático: executa ações de trabalho (escrever/editar arquivo, shell,
-  # python) SEM pedir confirmação. Coloque false para voltar a confirmar tudo.
-  auto_approve: true
-  # Mesmo em auto_approve, estas NUNCA são aprovadas sozinhas (envio externo/destrutivo
-  # ou escrita em arquivos do PC). Pedem confirmação via popup na interface.
+  # "protegido" (padrão) = toda ação destrutiva/externa pede confirmação.
+  # "total" = o agente age com os MESMOS privilégios da sua conta (sem popup)
+  # para ações de trabalho — MAS as ações de always_confirm continuam exigindo
+  # confirmação mesmo em "total" (última linha de defesa). Tudo vai para
+  # data/auditoria.jsonl. Troque para "total" por sua conta e risco.
+  privilegios: "protegido"
+  # Modo automático: executa ações de trabalho leves (copiar, criar pasta,
+  # zipar, baixar) SEM pedir confirmação. As de always_confirm nunca.
+  auto_approve: false
+  # Estas NUNCA são aprovadas sozinhas — NEM em "total"/auto_approve. Pedem
+  # confirmação via popup na interface (ou terminal). São os nomes REAIS das
+  # ferramentas registradas (antes havia nomes que não casavam e, por isso,
+  # nunca eram protegidos).
   always_confirm:
+    # Mensagens e envios externos
     - "send_email"
     - "send_whatsapp"
     - "delete_file"
-    - "escrever_arquivo_local"   # criar/sobrescrever arquivo no PC → confirma
-    - "editar_arquivo_local"     # editar arquivo do PC → confirma
-    - "executar_shell"           # comando no shell do sistema → confirma
-    - "executar_python"          # execução de código Python → confirma
-  # Ações que exigem confirmação do usuário (Confirmation Guard)
+    # Arquivos do PC — escrita/edição/remoção/movência/extração fora do workspace
+    - "arquivos_escrever"
+    - "arquivos_editar"
+    - "arquivos_apagar"
+    - "arquivos_mover"
+    - "arquivos_extrair"
+    - "escrever_arquivo"
+    - "escrever_arquivo_local"
+    - "editar_arquivo_local"
+    # Execução de código / shell no sistema
+    - "executar_shell"
+    - "executar_python"
+    - "cap_executar_codigo"
+    # Controle de dispositivos de rede (efeito físico / vigilância)
+    - "rede_mqtt_publicar"
+    - "rede_telefone_acao"
+    - "rede_camera_credenciais"
+    - "rede_camera_ptz"
+    - "rede_camera_gravar"
+    - "rede_camera_snapshot"
+    - "rede_camera_janela"
+    - "rede_http_dispositivo"
+    - "rede_cast"
+    - "rede_tv"
+    - "rede_wol"
+    - "rede_gerenciar"
+    - "rede_dispositivo_atualizar"
+    - "rede_dispositivo_esquecer"
+  # Ações de trabalho que o guard também checa. Em "protegido"/auto_approve=false
+  # pedem confirmação; sob "total"/auto_approve podem ser liberadas. As de
+  # always_confirm acima são SEMPRE protegidas, estejam aqui ou não.
   guarded_actions:
-    - "send_email"
-    - "send_whatsapp"
-    - "delete_file"
-    - "execute_shell"
-    - "http_post"
-    - "escrever_arquivo"      # escrita no sandbox
-    - "executar_python"       # execução de código no sandbox
-    - "escrever_arquivo_local"  # escrita em qualquer arquivo do PC
-    - "editar_arquivo_local"    # edição de arquivo do PC
-    - "executar_shell"          # comando no shell do sistema
+    - "arquivos_copiar"
+    - "arquivos_criar_pasta"
+    - "arquivos_zipar"
+    - "baixar_arquivo"
 
 cowork:
   max_concurrent_tasks: 3     # máximo de tarefas simultâneas em segundo plano

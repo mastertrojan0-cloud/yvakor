@@ -48,28 +48,48 @@ class ConfirmationGuard:
                                   ["send_email", "send_whatsapp", "delete_file"])
 
     def requires_confirmation(self, action: str) -> bool:
-        return action in self.guarded
+        # Uma ação é checada se está na lista de guardadas OU na de
+        # always_confirm — assim, mesmo que o settings esqueça de listar uma
+        # ação destrutiva em guarded_actions, ela continua protegida.
+        return action in self.guarded or action in self.always_confirm
 
     def confirm(self, action: str, detail: str) -> bool:
-        if self.total:
-            try:
-                from yvakor.arquivos import _auditar
-                _auditar("acao_sem_confirmacao", action, {"detalhe": detail[:200]})
-            except Exception:
-                pass
-            _safe_print(f"  • executado (privilégios totais): {action}")
-            return True
-        # Modo automático: aprova ações de trabalho sem travar (registra rastro).
-        # Exceção: ações realmente externas/destrutivas seguem exigindo confirmação.
-        if self.auto_approve and action not in self.always_confirm:
-            _safe_print(f"  ✓ auto-aprovado: {action} · {detail[:120]}")
-            return True
+        # Ações externas/destrutivas (always_confirm) SEMPRE exigem um humano,
+        # mesmo com privilégios "total" ou auto_approve ligados. É a última
+        # linha de defesa contra prompt-injection e contra requisições
+        # disparadas por páginas web: nenhum "total" aprova sozinho apagar
+        # arquivo, rodar shell, enviar mensagem ou controlar um dispositivo.
+        critica = action in self.always_confirm
 
+        if not critica:
+            if self.total:
+                try:
+                    from yvakor.arquivos import _auditar
+                    _auditar("acao_sem_confirmacao", action,
+                             {"detalhe": detail[:200]})
+                except Exception:
+                    pass
+                _safe_print(f"  • executado (privilégios totais): {action}")
+                return True
+            # Modo automático: aprova ações de trabalho sem travar.
+            if self.auto_approve:
+                _safe_print(f"  ✓ auto-aprovado: {action} · {detail[:120]}")
+                return True
+
+        # A partir daqui exige confirmação humana real — total/auto NÃO valem.
         # Se houver um confirmador de thread (modo servidor), faz o handshake
         # com a interface: bloqueia até o usuário aprovar/negar no navegador.
         fn = _thread_confirmer()
         if fn is not None:
-            return bool(fn(action, detail))
+            ok = bool(fn(action, detail))
+            if critica:
+                try:
+                    from yvakor.arquivos import _auditar
+                    _auditar("confirmacao_critica", action,
+                             {"ok": ok, "detalhe": detail[:200]})
+                except Exception:
+                    pass
+            return ok
 
         # Fora de um terminal interativo (ex.: servidor web), NUNCA bloqueia
         # esperando input — nega por segurança e deixa o rastro no log.
