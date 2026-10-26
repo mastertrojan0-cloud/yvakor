@@ -327,6 +327,22 @@ class AgentLoop:
         return base_system + "\n\n" + PROTOCOLO.format(
             manifesto=self.registry.manifest(nomes))
 
+    @staticmethod
+    def _janela(messages: list[dict], base: int, manter: int = 14) -> list[dict]:
+        """Janela deslizante: em tarefas longas o contexto crescia sem limite
+        (a cada passo + observação), estourava a janela do modelo (HTTP 400) e
+        caía no fallback 3B, que 'concluía' a tarefa com lixo silencioso.
+        Mantém o system + o histórico original (base) e os últimos `manter`
+        passos, resumindo os do meio."""
+        if len(messages) <= base + manter:
+            return messages
+        cabeca = messages[:base]
+        cauda = messages[-manter:]
+        nota = {"role": "user",
+                "content": "(… passos intermediários omitidos para caber no "
+                           "contexto; use a observação mais recente …)"}
+        return cabeca + [nota] + cauda
+
     def _coletar(self, resultado) -> None:
         """Guarda imagens, relatórios, planilhas e fotos geradas."""
         if isinstance(resultado, list):
@@ -399,15 +415,29 @@ class AgentLoop:
         messages = [{"role": "system",
                      "content": self.system_with_tools(base_system, nomes)}]
         messages += history
+        base = len(messages)   # system + histórico: nunca podados (ver _janela)
 
         # 1ª tentativa: function calling nativo (schema + validação).
-        # Se o provedor não suportar, cai no protocolo JSON abaixo.
+        # Se o provedor não suportar, cai no protocolo JSON abaixo — MAS só se
+        # nenhuma ferramenta já tiver rodado, para não re-executar ações com
+        # efeito colateral (ex.: enviar e-mail duas vezes). A exceção é logada,
+        # não engolida em silêncio (A4).
         if self.nativo and forcar_provider != "ollama":
+            estado = {"ferramentas": 0}
             try:
                 return self._run_nativo(messages, on_event, should_stop,
-                                        forcar_provider, nomes)
-            except Exception:
-                pass
+                                        forcar_provider, nomes, estado)
+            except Exception as exc:
+                import logging
+                logging.getLogger("yvakor.agent").warning(
+                    "loop nativo falhou (%s); %s", exc,
+                    "abortando (ferramentas já executadas)"
+                    if estado["ferramentas"] else "caindo para o protocolo JSON")
+                if estado["ferramentas"]:
+                    return ("⚠️ A tarefa foi interrompida por um erro no modo "
+                            "nativo após já executar ferramentas; não repeti "
+                            "as ações para evitar efeitos duplicados. "
+                            f"Detalhe: {str(exc)[:200]}")
 
         inicio_run = time.time()
         for _ in range(self.max_iterations):
@@ -423,7 +453,8 @@ class AgentLoop:
                     pass
                 return aviso
             raw = (self.router.complete_messages(
-                "analise_complexa", messages, forcar=forcar_provider) or "").strip()
+                "analise_complexa", self._janela(messages, base),
+                forcar=forcar_provider) or "").strip()
             acoes = _parse_acoes(raw, self.registry)
 
             # Nenhuma ferramenta reconhecida → resposta final (ou erro claro).
@@ -463,7 +494,8 @@ class AgentLoop:
                          "Pare de usar ferramentas e escreva agora a resposta "
                          "final em texto puro, resumindo o que foi feito."})
         final = (self.router.complete_messages(
-            "analise_complexa", messages, forcar=forcar_provider) or "").strip()
+            "analise_complexa", self._janela(messages, base),
+            forcar=forcar_provider) or "").strip()
         return _extrair_resposta_final(final) or \
             "Concluí os passos possíveis, mas não obtive resposta final."
 
@@ -471,12 +503,17 @@ class AgentLoop:
     # Function calling nativo
     # ------------------------------------------------------------------ #
     def _run_nativo(self, messages: list[dict], on_event, should_stop,
-                    forcar_provider, nomes: list[str] | None = None) -> str:
+                    forcar_provider, nomes: list[str] | None = None,
+                    estado: dict | None = None) -> str:
         msgs = list(messages)
         esquemas = self.registry.schemas(nomes)
+        inicio_run = time.time()
         for _ in range(self.max_iterations):
             if should_stop is not None and should_stop():
                 return "⏹ Tarefa interrompida a pedido do usuário."
+            if time.time() - inicio_run > self.timeout_s:
+                return (f"⏹ Interrompi a tarefa: excedi o limite de "
+                        f"{self.timeout_s}s. O que já foi feito está no histórico.")
             _, msg = self.router.complete_tools(
                 "analise_complexa", msgs, esquemas, forcar=forcar_provider)
             chamadas = msg.get("tool_calls") or []
@@ -498,6 +535,8 @@ class AgentLoop:
                 args = self.registry.coagir(nome, args if isinstance(args, dict) else {})
                 if on_event:
                     on_event("ferramenta", {"nome": nome, "args": args})
+                if estado is not None:
+                    estado["ferramentas"] += 1
                 resultado = self.registry.run(nome, **args)
                 self._coletar(resultado)
                 if on_event:
