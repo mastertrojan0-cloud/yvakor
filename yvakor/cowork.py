@@ -403,6 +403,12 @@ class CoworkManager:
         # duas tarefas simultâneas não disputam a mesma página.
         from yvakor.browser import contexto as nav_ctx
         nav_ctx.definir(aba=f"tarefa-{tid}")
+        # Esta thread é de segundo plano: o navegador da extensão abre abas
+        # sem ativá-las (não rouba a tela do usuário). Flag por thread.
+        try:
+            self._orch._tl.segundo_plano = True
+        except Exception:
+            pass
 
         def on_event(tipo: str, dado: dict) -> None:
             if tipo == "ferramenta":

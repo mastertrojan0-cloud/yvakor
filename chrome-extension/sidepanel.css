@@ -425,3 +425,25 @@ body {
   padding: 7px 10px;
 }
 #enviar:disabled { opacity: .55; cursor: wait; }
+
+/* Markdown renderizado em blocos (respostas do agente) */
+.msg .corpo { white-space: normal; }
+.msg .corpo > :first-child { margin-top: 0; }
+.msg .corpo > :last-child { margin-bottom: 0; }
+.msg .corpo p { margin: 0 0 7px; }
+.msg .corpo p.titulo { font-weight: 700; margin: 9px 0 4px; color: var(--ouro-escuro, #8a6a1f); }
+.msg .corpo ul, .msg .corpo ol { margin: 2px 0 7px; padding-left: 18px; }
+.msg .corpo li { margin: 1px 0; }
+.msg .corpo em { font-style: italic; }
+.msg .corpo a { color: #8a6a1f; text-decoration: underline; word-break: break-all; }
+.msg .corpo pre { white-space: pre; margin: 6px 0; }
+.msg .corpo .tabela { overflow-x: auto; margin: 6px 0; }
+.msg .corpo table { border-collapse: collapse; font-size: 11px; width: 100%; }
+.msg .corpo th, .msg .corpo td {
+  border: 1px solid var(--linha); padding: 3px 6px; text-align: left; vertical-align: top;
+}
+.msg .corpo th { background: #f1ebdf; font-weight: 700; }
+
+/* Painel de processo: cabeçalho clicável (expande/recolhe os passos) */
+.proc-topo { cursor: pointer; user-select: none; }
+.proc-topo:hover { opacity: .85; }

@@ -89,17 +89,23 @@ class PonteExtensao:
         return r
 
     def pendentes(self, tipo: str | None = None) -> list[dict]:
-        """Entrega cada comando para um consumidor por vez (evita duplicar)."""
-        agora = time.time()
+        """Entrega cada comando UMA única vez.
+
+        Antes um comando era reentregue se ainda não tivesse resultado após
+        10s. Só que open/snapshot/goto levam mais que isso (esperam a página
+        carregar), então o mesmo comando era executado duas vezes — ex.: um
+        `newtab` abria duas abas. Agora, entregue uma vez, não volta: se a
+        extensão não responder, `comando()` expira com erro claro e o agente
+        decide se repete (gerando um comando novo).
+        """
         with self._lock:
             saida = []
             for c in self._comandos.values():
                 if tipo and c.get("tipo") != tipo:
                     continue
-                marca = c.get("_entregue")
-                if marca and agora - marca < 10.0:
+                if c.get("_entregue"):
                     continue
-                c["_entregue"] = agora
+                c["_entregue"] = time.time()
                 item = {k: v for k, v in c.items() if not k.startswith("_")}
                 saida.append(item)
             return saida

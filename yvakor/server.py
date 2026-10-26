@@ -287,15 +287,27 @@ class Handler(BaseHTTPRequestHandler):
         enviado = self.headers.get("X-YVAKOR-Token", "")
         return bool(enviado) and secrets.compare_digest(enviado, TOKEN)
 
+    def _drenar_corpo(self) -> None:
+        """Consome o corpo da requisição antes de recusá-la. Fechar a conexão
+        com dados não lidos gera RST no Windows (WinError 10053): o cliente
+        perdia a resposta 403 e via só 'conexão anulada'."""
+        try:
+            n = int(self.headers.get("Content-Length", 0) or 0)
+            if 0 < n <= 2_000_000:
+                self.rfile.read(n)
+        except Exception:
+            pass
+        self.close_connection = True
+
     def _autorizar_efeito(self) -> bool:
         """Barra rotas de efeito (POST/DELETE) sem Host válido ou sem token.
         Responde 403 e retorna False quando negado."""
         if not self._host_ok():
-            self.close_connection = True
+            self._drenar_corpo()
             self._json(403, {"error": "host não autorizado"})
             return False
         if not self._token_ok():
-            self.close_connection = True
+            self._drenar_corpo()
             self._json(403, {"error": "token ausente ou inválido"})
             return False
         return True
@@ -458,6 +470,12 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def _do_get(self):
+        # Anti DNS-rebinding também na leitura: sem isso, um site que re-resolva
+        # seu domínio para 127.0.0.1 leria qualquer GET como "mesma origem".
+        # Só aplicado quando o servidor está preso ao loopback.
+        if HOST in ("127.0.0.1", "localhost", "::1") and not self._host_ok():
+            self.close_connection = True
+            return self._json(403, {"error": "host não autorizado"})
         if self.path.startswith("/camera/"):
             return self._camera_janela()
         if self.path in ("/dispositivos", "/dispositivos/"):
@@ -865,6 +883,11 @@ class Handler(BaseHTTPRequestHandler):
 
         # ---- Ponte com a janela do Chrome da extensão ----
         if self.path.startswith("/api/ext/comandos"):
+            # Carrega o texto que o agente digita em formulários (fill.valor):
+            # exige o token, como as rotas de efeito.
+            if not self._token_ok():
+                self.close_connection = True
+                return self._json(403, {"error": "token ausente ou inválido"})
             from yvakor.extensao_bridge import PONTE
             from urllib.parse import parse_qs, urlparse
             tipo = (parse_qs(urlparse(self.path).query).get("tipo") or [None])[0]
@@ -995,7 +1018,7 @@ class Handler(BaseHTTPRequestHandler):
         if int(self.headers.get("Content-Length", 0) or 0):
             ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
             if ctype and ctype != "application/json":
-                self.close_connection = True
+                self._drenar_corpo()
                 return self._json(400, {"error": "content-type não suportado"})
         ag = get_agent()
         try:

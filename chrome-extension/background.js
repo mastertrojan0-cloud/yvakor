@@ -108,16 +108,22 @@ async function executarBG(c) {
   const a = c.args || {};
   if (c.tipo === "open") {
     // Reaproveita a aba de controle em vez de abrir várias.
+    // `ativo` vem do núcleo: tarefas em segundo plano mandam ativo=false e NÃO
+    // trocam a aba que o usuário está vendo. Nunca damos foco à JANELA (isso
+    // puxava o Chrome para frente de qualquer app em uso) salvo `foco=true`.
+    const ativo = a.ativo !== false;
     const prev = await ctrlIdBG();
     let tab = prev ? await chrome.tabs.get(prev).catch(() => null) : null;
     if (tab) {
-      await chrome.tabs.update(tab.id, { url: a.url || "about:blank", active: true });
-      await chrome.windows.update(tab.windowId, { focused: true });
+      await chrome.tabs.update(tab.id, { url: a.url || "about:blank", active: ativo });
+      if (ativo && a.foco === true) {
+        await chrome.windows.update(tab.windowId, { focused: true });
+      }
       tab = await aguardarCarregarBG(tab.id);
       return { tab_id: tab.id, titulo: a.url || tab.title || "",
                url: a.url || tab.url || "" };
     }
-    tab = await chrome.tabs.create({ url: a.url || "about:blank", active: true });
+    tab = await chrome.tabs.create({ url: a.url || "about:blank", active: ativo });
     await setCtrlIdBG(tab.id);
     tab = await aguardarCarregarBG(tab.id);
     return { tab_id: tab.id, titulo: a.url || tab.title || "",
@@ -125,7 +131,7 @@ async function executarBG(c) {
   }
   if (c.tipo === "newtab") {
     let tab = await chrome.tabs.create({ url: a.url || "about:blank",
-                                         active: true });
+                                         active: a.ativo !== false });
     await setCtrlIdBG(tab.id);
     tab = await aguardarCarregarBG(tab.id);
     return { tab_id: tab.id, titulo: a.url || tab.title || "",
@@ -367,9 +373,21 @@ async function executarBG(c) {
   throw new Error("comando desconhecido: " + c.tipo);
 }
 
+let ponteOcupada = false;
 async function ponteComandos() {
+  // Sem reentrância: o setInterval e o alarme podem disparar enquanto um
+  // comando lento (open/snapshot) ainda roda; sem a trava, o mesmo comando
+  // podia ser pego duas vezes.
+  if (ponteOcupada) return;
+  ponteOcupada = true;
   try {
-    const r = await fetch(BASE + "/api/ext/comandos", { cache: "no-store" });
+    // Chamar uma API de extensão reinicia o timer de ociosidade (~30s) do
+    // service worker do MV3 — mantém a ponte viva sem depender do painel.
+    try { chrome.runtime.getPlatformInfo(() => {}); } catch (e) {}
+    if (!TOKEN) await obterToken();
+    const r = await fetch(BASE + "/api/ext/comandos", {
+      cache: "no-store", headers: TOKEN ? { "X-YVAKOR-Token": TOKEN } : {} });
+    if (r.status === 403) { await obterToken(); return; }
     const j = await r.json();
     for (const c of (j.comandos || [])) {
       try {
@@ -380,6 +398,7 @@ async function ponteComandos() {
       }
     }
   } catch (e) { /* sem comando */ }
+  finally { ponteOcupada = false; }
 }
 
 pontePing();

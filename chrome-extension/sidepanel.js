@@ -24,6 +24,31 @@ let contextoAba = null;
 let vozAtiva = localStorage.getItem("yvakor_voz") === "1";
 
 /* ------------------------------ API -------------------------------- */
+// O núcleo exige o header X-YVAKOR-Token em POST/DELETE (anti-CSRF). O token é
+// buscado em GET /api/token (só origens confiáveis conseguem ler) e renovado
+// se o núcleo reiniciar (403).
+let TOKEN = "";
+async function obterToken() {
+  try {
+    const r = await fetch(BASE + "/api/token", { cache: "no-store" });
+    if (r.ok) TOKEN = (await r.json()).token || "";
+  } catch (e) { /* núcleo offline */ }
+  return TOKEN;
+}
+async function fetchNucleo(path, cfg) {
+  const montar = () => ({
+    ...cfg,
+    headers: { ...(cfg.headers || {}), ...(TOKEN ? { "X-YVAKOR-Token": TOKEN } : {}) }
+  });
+  if (!TOKEN && cfg.method && cfg.method !== "GET") await obterToken();
+  let r = await fetch(BASE + path, montar());
+  if (r.status === 403) {
+    await obterToken();
+    r = await fetch(BASE + path, montar());
+  }
+  return r;
+}
+
 async function api(path, opts = {}) {
   const cfg = { ...opts, headers: { "Content-Type": "application/json", ...(opts.headers || {}) } };
   if (cfg.body && typeof cfg.body !== "string") cfg.body = JSON.stringify(cfg.body);
@@ -31,7 +56,7 @@ async function api(path, opts = {}) {
   const limite = setTimeout(() => ctrl.abort(), cfg.timeout || 120000);
   cfg.signal = ctrl.signal;
   try {
-    const r = await fetch(BASE + path, cfg);
+    const r = await fetchNucleo(path, cfg);
     const txt = await r.text();
     let j = {};
     try { j = txt ? JSON.parse(txt) : {}; } catch (e) { j = { erro: txt }; }
@@ -73,7 +98,11 @@ async function novaSessao() {
 }
 
 /* --------------------------- contexto ------------------------------ */
-async function atualizarContexto() {
+// completo=false: só atualiza a legenda (título/URL da aba) — NÃO injeta script
+// na página. Antes isso rodava a cada 10s e a cada troca de página, lendo até
+// 20 mil caracteres de TODA aba visitada só para escrever uma legenda.
+// completo=true: extrai o conteúdo da página (usado ao enviar a mensagem).
+async function atualizarContexto(completo = false) {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || !tab.id) {
@@ -81,6 +110,11 @@ async function atualizarContexto() {
       return;
     }
     contextoAba = tab;
+    if (!completo) {
+      ctxTitulo.textContent = tab.title || tab.url || "Página atual";
+      ctxTitulo.title = tab.url || "";
+      return;
+    }
     let resultado = null;
     if (!/^(chrome|edge|about|chrome-extension|devtools|view-source):/.test(tab.url || "")) {
       try {
@@ -125,11 +159,18 @@ async function atualizarContexto() {
     ctxTitulo.textContent = "Página atual indisponível";
   }
 }
-chrome.tabs.onActivated.addListener(() => setTimeout(atualizarContexto, 250));
+// Legenda atualiza só quando o painel está visível e com debounce.
+let timerLegenda = null;
+function agendarLegenda() {
+  if (document.visibilityState !== "visible") return;
+  clearTimeout(timerLegenda);
+  timerLegenda = setTimeout(() => atualizarContexto(false), 300);
+}
+chrome.tabs.onActivated.addListener(agendarLegenda);
 chrome.tabs.onUpdated.addListener((id, info) => {
-  if (info.status === "complete") setTimeout(atualizarContexto, 350);
+  if (info.status === "complete" || info.title) agendarLegenda();
 });
-setInterval(atualizarContexto, 10000);
+document.addEventListener("visibilitychange", agendarLegenda);
 
 /* ----------------------------- chat -------------------------------- */
 function esc(t) {
@@ -137,21 +178,80 @@ function esc(t) {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   }[c]));
 }
-function markdown(t) {
-  let s = esc(t);
-  const blocos = [];
-  s = s.replace(/```([\s\S]*?)```/g, (_, c) => {
-    blocos.push("<pre><code>" + c.trim() + "</code></pre>");
-    return "\u0000" + (blocos.length - 1) + "\u0000";
-  });
+// Inline: o texto JÁ vem escapado (esc), então só nossas próprias tags existem.
+function inline(s) {
   s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
   s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/(^|[\s(])\*([^*\s][^*]*?)\*(?=[\s).,;:!?]|$)/g, "$1<em>$2</em>");
   s = s.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, "");
   s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
     '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
-  s = s.replace(/\n/g, "<br>");
-  s = s.replace(/\u0000(\d+)\u0000/g, (_, i) => blocos[Number(i)]);
+  s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g,
+    '$1<a href="$2" target="_blank" rel="noreferrer">$2</a>');
   return s;
+}
+
+// Markdown em blocos: parágrafos, títulos, listas (-, *, 1.), tabelas, código.
+// Antes só havia negrito/código/link e \n → <br>: listas e títulos apareciam crus.
+function markdown(t) {
+  const codigos = [];
+  const bruto = String(t || "").replace(/```[^\n]*\n?([\s\S]*?)```/g, (_, c) => {
+    codigos.push("<pre><code>" + esc(c.replace(/\n$/, "")) + "</code></pre>");
+    return "\n\u0000" + (codigos.length - 1) + "\u0000\n";
+  });
+  const linhas = bruto.split("\n");
+  const out = [];
+  let lista = null, para = [];
+  const fecharPara = () => {
+    if (para.length) { out.push("<p>" + inline(esc(para.join("\n"))).replace(/\n/g, "<br>") + "</p>"); para = []; }
+  };
+  const fecharLista = () => { if (lista) { out.push("</" + lista + ">"); lista = null; } };
+  const celulas = (l) => l.trim().replace(/^\||\|$/g, "").split("|")
+    .map(c => inline(esc(c.trim())));
+
+  for (let i = 0; i < linhas.length; i++) {
+    const l = linhas[i];
+    let m;
+    if (!l.trim()) { fecharPara(); fecharLista(); continue; }
+    if ((m = l.trim().match(/^\u0000(\d+)\u0000$/))) {
+      fecharPara(); fecharLista(); out.push(codigos[Number(m[1])]); continue;
+    }
+    // tabela: linha com | seguida de separador |---|
+    if (/\|/.test(l) && i + 1 < linhas.length && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(linhas[i + 1])) {
+      fecharPara(); fecharLista();
+      const cab = celulas(l);
+      i += 2;
+      const corpo = [];
+      while (i < linhas.length && linhas[i].trim() && /\|/.test(linhas[i])) { corpo.push(celulas(linhas[i])); i++; }
+      i--;
+      out.push("<div class=\"tabela\"><table><thead><tr>" +
+        cab.map(c => "<th>" + c + "</th>").join("") + "</tr></thead><tbody>" +
+        corpo.map(r => "<tr>" + r.map(c => "<td>" + c + "</td>").join("") + "</tr>").join("") +
+        "</tbody></table></div>");
+      continue;
+    }
+    if ((m = l.match(/^\s{0,3}(#{1,4})\s+(.*)$/))) {
+      fecharPara(); fecharLista();
+      out.push("<p class=\"titulo\">" + inline(esc(m[2])) + "</p>");
+      continue;
+    }
+    if ((m = l.match(/^\s*[-*•]\s+(.*)$/))) {
+      fecharPara();
+      if (lista !== "ul") { fecharLista(); out.push("<ul>"); lista = "ul"; }
+      out.push("<li>" + inline(esc(m[1])) + "</li>");
+      continue;
+    }
+    if ((m = l.match(/^\s*(\d+)[.)]\s+(.*)$/))) {
+      fecharPara();
+      if (lista !== "ol") { fecharLista(); out.push("<ol>"); lista = "ol"; }
+      out.push("<li>" + inline(esc(m[2])) + "</li>");
+      continue;
+    }
+    fecharLista();
+    para.push(l);
+  }
+  fecharPara(); fecharLista();
+  return out.join("");
 }
 function rolar() { chat.scrollTop = chat.scrollHeight; }
 
@@ -163,6 +263,7 @@ function add(role, texto, artefatos = []) {
   quem.className = "quem";
   quem.textContent = role === "user" ? "VOCÊ" : "YVAKOR";
   const corpo = document.createElement("div");
+  corpo.className = "corpo";
   corpo.innerHTML = markdown(texto);
   d.append(quem, corpo);
   for (const a of artefatos || []) {
@@ -194,33 +295,63 @@ function add(role, texto, artefatos = []) {
 }
 
 /* --------------------------- progresso ----------------------------- */
+// Painel de processo discreto: mostra só o passo atual (uma linha) e o total;
+// clique no cabeçalho para ver os últimos passos. Só repinta quando algo muda
+// (antes refazia o DOM a cada 900ms, piscando) e se recolhe sozinho ao concluir.
+let assinaturaPassos = "";
+let processoAberto = false;
+let timerOcultar = null;
 function mostrarProcesso(v) { processo.classList.toggle("oculto", !v); }
 function pintarPassos(steps, running) {
+  const lista = steps || [];
+  const assinatura = lista.length + "|" + (lista[lista.length - 1] || "") +
+    "|" + running + "|" + processoAberto;
+  if (assinatura === assinaturaPassos) return;
+  assinaturaPassos = assinatura;
   passosEl.innerHTML = "";
-  const ultimos = (steps || []).slice(-8);
-  ultimos.forEach((s, i) => {
+  const visiveis = processoAberto ? lista.slice(-12) : lista.slice(-1);
+  visiveis.forEach((s, i) => {
     const d = document.createElement("div");
-    d.className = "passo" + (i === ultimos.length - 1 && running ? " atual" : "");
-    d.textContent = (i === ultimos.length - 1 && running ? "▸ " : "· ") + s;
+    const ultimo = i === visiveis.length - 1;
+    d.className = "passo" + (ultimo && running ? " atual" : "");
+    d.textContent = (ultimo && running ? "▸ " : "· ") + s;
     passosEl.appendChild(d);
   });
-  procStatus.textContent = running ? "executando" : "concluído";
+  const n = lista.length;
+  procStatus.textContent = (running ? "executando" : "concluído") +
+    (n ? ` · ${n} passo${n > 1 ? "s" : ""}` : "") + (processoAberto ? " ▾" : " ▸");
   procStatus.style.color = running ? "var(--ouro)" : "var(--agua)";
+  clearTimeout(timerOcultar);
+  if (!running && !processoAberto) {
+    timerOcultar = setTimeout(() => mostrarProcesso(false), 5000);
+  }
+}
+document.querySelector(".proc-topo").addEventListener("click", () => {
+  processoAberto = !processoAberto;
+  clearTimeout(timerOcultar);
+  assinaturaPassos = "";
+  if (ocupado) tickProgresso();
+});
+let sidProgresso = null;
+async function tickProgresso() {
+  if (!sidProgresso) return;
+  try {
+    const p = await api("/api/progress?session=" + encodeURIComponent(sidProgresso),
+                        { timeout: 4000 });
+    pintarPassos(p.steps || [], !!p.running);
+  } catch (e) { /* ignora */ }
 }
 async function acompanhar(sid) {
   clearInterval(timerProgresso);
+  clearTimeout(timerOcultar);
+  sidProgresso = sid;
+  assinaturaPassos = "";
   mostrarProcesso(true);
   passosEl.innerHTML = "";
   procStatus.textContent = "iniciando…";
-  const tick = async () => {
-    try {
-      const p = await api("/api/progress?session=" + encodeURIComponent(sid),
-                          { timeout: 4000 });
-      pintarPassos(p.steps || [], !!p.running);
-    } catch (e) { /* ignora */ }
-  };
-  await tick();
-  timerProgresso = setInterval(tick, 900);
+  await tickProgresso();
+  // 1,2s enquanto a tarefa roda; o intervalo é cancelado ao concluir.
+  timerProgresso = setInterval(tickProgresso, 1200);
 }
 
 /* ---------------------------- envio -------------------------------- */
@@ -240,7 +371,7 @@ async function enviarMensagem() {
   await acompanhar(sessao);
   try {
     const body = { message: texto, session: sessao };
-    await atualizarContexto();
+    await atualizarContexto(true);
     if (contexto) {
       body.page_context = `TÍTULO: ${contexto.titulo || ""}\n`
         + `URL: ${contexto.url || ""}\n`
@@ -268,7 +399,7 @@ async function enviarMensagem() {
     ocupado = false;
     enviar.disabled = false;
     clearInterval(timerProgresso);
-    procStatus.textContent = "concluído";
+    tickProgresso();   // leitura final: pinta "concluído · N passos" e recolhe sozinho
     entrada.focus();
     ping();
     atualizarContexto();
@@ -333,7 +464,7 @@ function falarTexto(texto, alvo) {
   const fala = limparFala(texto);
   if (!fala) return;
   // Voz neural do núcleo (Antonio) no painel; Web Speech só como fallback.
-  fetch(BASE + "/api/voz/audio", {
+  fetchNucleo("/api/voz/audio", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ texto: fala })
@@ -416,380 +547,10 @@ function alternarMicrofone() {
 }
 mic.addEventListener("click", alternarMicrofone);
 
-/* ---------------- ponte: operar o Chrome onde a extensão está -------- */
-let ponteOcupada = false;
-
-async function pontePing() {
-  try {
-    await api("/api/ext/ping", { method: "POST", body: {}, timeout: 3000 });
-  } catch (e) { /* núcleo offline */ }
-}
-
-async function abaAtiva() {
-  const [t] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!t || !t.id) throw new Error("sem aba ativa");
-  return t;
-}
-
-const CTRL_KEY = "yvakor_ctrl_tab";
-async function ctrlId() {
-  try {
-    const o = await chrome.storage.session.get(CTRL_KEY);
-    return o[CTRL_KEY] || null;
-  } catch (e) { return null; }
-}
-async function setCtrlId(id) {
-  try { await chrome.storage.session.set({ [CTRL_KEY]: id }); } catch (e) {}
-}
-async function ctrlOrActive() {
-  const id = await ctrlId();
-  if (id) {
-    const t = await chrome.tabs.get(id).catch(() => null);
-    if (t) return t;
-  }
-  return abaAtiva();
-}
-
-const dormir = (ms) => new Promise(r => setTimeout(r, ms));
-async function aguardarCarregar(tabId, ms = 7000) {
-  const fim = Date.now() + ms;
-  while (Date.now() < fim) {
-    const t = await chrome.tabs.get(tabId).catch(() => null);
-    if (t && t.status === "complete" && t.url && !t.url.startsWith("about:")) {
-      await dormir(500);
-      return t;
-    }
-    await dormir(250);
-  }
-  return chrome.tabs.get(tabId).catch(() => null);
-}
-
-async function script(func, args = []) {
-  const t = await ctrlOrActive();
-  const r = await chrome.scripting.executeScript({
-    target: { tabId: t.id }, func, args
-  });
-  return { tab: t, resultado: r && r[0] ? r[0].result : null };
-}
-
-async function responder(c, ok, dados = {}, erro = "") {
-  await api("/api/ext/resultado", {
-    method: "POST",
-    body: { id: c.id, ok, erro, ...dados },
-    timeout: 5000
-  });
-}
-
-async function injetarOverlay() {
-  const t = await ctrlOrActive();
-  await chrome.scripting.executeScript({
-    target: { tabId: t.id }, files: ["overlay.js"]
-  });
-}
-
-async function resumoCurto() {
-  try {
-    const { resultado } = await script(() => {
-      const corpo = document.body || document.documentElement;
-      return { url: location.href, titulo: document.title,
-               texto: (corpo ? corpo.innerText : "").slice(0, 1200) };
-    });
-    return resultado;
-  } catch (e) { return {}; }
-}
-
-async function executarComando(c) {
-  const a = c.args || {};
-  if (c.tipo === "open") {
-    // Reaproveita a aba de controle em vez de abrir várias.
-    const prev = await ctrlId();
-    let tab = prev ? await chrome.tabs.get(prev).catch(() => null) : null;
-    if (tab) {
-      await chrome.tabs.update(tab.id, { url: a.url || "about:blank", active: true });
-      await chrome.windows.update(tab.windowId, { focused: true });
-      tab = await aguardarCarregar(tab.id);
-      return { tab_id: tab.id, titulo: a.url || tab.title || "",
-               url: a.url || tab.url || "" };
-    }
-    tab = await chrome.tabs.create({ url: a.url || "about:blank", active: true });
-    await setCtrlId(tab.id);
-    tab = await aguardarCarregar(tab.id);
-    return { tab_id: tab.id, titulo: a.url || tab.title || "",
-             url: a.url || tab.url || "" };
-  }
-  if (c.tipo === "newtab") {
-    let tab = await chrome.tabs.create({ url: a.url || "about:blank",
-                                         active: true });
-    await setCtrlId(tab.id);
-    tab = await aguardarCarregar(tab.id);
-    return { tab_id: tab.id, titulo: a.url || tab.title || "",
-             url: a.url || tab.url || "" };
-  }
-  if (c.tipo === "goto") {
-    const t = await ctrlOrActive();
-    await chrome.tabs.update(t.id, { url: a.url || "about:blank" });
-    await aguardarCarregar(t.id);
-    return { tab_id: t.id, url: a.url || "" };
-  }
-  if (c.tipo === "search") {
-    const t = await ctrlOrActive();
-    const url = "https://www.google.com/search?q=" +
-      encodeURIComponent(a.termo || "");
-    await chrome.tabs.update(t.id, { url });
-    await aguardarCarregar(t.id);
-    return { tab_id: t.id, url };
-  }
-  if (c.tipo === "tabs") {
-    const tabs = await chrome.tabs.query({ currentWindow: true });
-    return { abas: tabs.map(t => ({ indice: t.index, id: t.id,
-                                    url: t.url || "", titulo: t.title || "",
-                                    ativa: !!t.active })) };
-  }
-  if (c.tipo === "switch_tab") {
-    const tabs = await chrome.tabs.query({ currentWindow: true });
-    const i = Math.max(0, Math.min(tabs.length - 1, Number(a.indice) || 0));
-    await chrome.tabs.update(tabs[i].id, { active: true });
-    return { tab_id: tabs[i].id, url: tabs[i].url || "" };
-  }
-  if (c.tipo === "close_tab") {
-    const tabs = await chrome.tabs.query({ currentWindow: true });
-    let i = Number(a.indice);
-    if (i === -1 || i === undefined) i = tabs.findIndex(t => t.active);
-    i = Math.max(0, Math.min(tabs.length - 1, i || 0));
-    await chrome.tabs.remove(tabs[i].id);
-    return { tab_id: tabs[i].id };
-  }
-  if (c.tipo === "snapshot") {
-    const coletaSnap = () => {
-      const SEL = "a,button,input,textarea,select,[role='button'],[role='link']," +
-                  "[onclick],ytd-video-renderer,ytd-rich-item-renderer," +
-                  "[data-testid],[aria-label]";
-      function deepText(node) {
-        if (!node) return "";
-        if (node.nodeType === 3) return node.textContent + " ";
-        if (node.nodeType === 1) {
-          const tag = (node.tagName || "").toLowerCase();
-          if (["script", "style", "noscript", "template", "svg", "head",
-               "iframe"].includes(tag)) return "";
-          let s = "";
-          if (node.shadowRoot) s += deepText(node.shadowRoot);
-          for (const c of node.childNodes) s += deepText(c);
-          return s;
-        }
-        if (node.nodeType === 11) {
-          let s = "";
-          for (const c of node.childNodes) s += deepText(c);
-          return s;
-        }
-        return "";
-      }
-      const vistos = new Set();
-      const items = [];
-      function collect(cont) {
-        if (!cont || !cont.querySelectorAll) return;
-        for (const el of Array.from(cont.querySelectorAll(SEL))) {
-          if (vistos.has(el)) continue;
-          vistos.add(el);
-          if (items.length >= 60) return;
-          const ref = "e" + (items.length + 1);
-          el.setAttribute("data-yvakor-ref", ref);
-          const txt = (el.innerText || el.textContent ||
-                       el.getAttribute("aria-label") || el.title ||
-                       el.value || el.placeholder || "")
-            .replace(/\s+/g, " ").trim().slice(0, 120);
-          items.push({ ref, tag: el.tagName.toLowerCase(),
-                       tipo: (el.getAttribute("type") || "").toLowerCase(),
-                       texto: txt, id: el.id || "",
-                       aria: (el.getAttribute("aria-label") || "").slice(0, 80) });
-        }
-        if (vistos.size >= 2500) return;
-        for (const el of Array.from(cont.querySelectorAll("*"))) {
-          if (el.shadowRoot) collect(el.shadowRoot);
-          if (vistos.size >= 2500) break;
-        }
-      }
-      collect(document.documentElement || document);
-      const texto = deepText(document.documentElement || document)
-        .replace(/\s+/g, " ").trim().slice(0, 3000);
-      return { url: location.href, title: document.title, text: texto, items };
-    };
-    let tab = null, resultado = null;
-    for (let i = 0; i < 5; i++) {
-      const r = await script(coletaSnap);
-      tab = r.tab; resultado = r.resultado;
-      if (resultado && (resultado.title || resultado.text)) break;
-      await dormir(700);
-    }
-    const elementos = (resultado && resultado.items) || [];
-    const resumo = `URL: ${resultado ? resultado.url : ""}\nTÍTULO: ${resultado ? resultado.title : ""}\n\n` +
-      `TEXTO:\n${((resultado && resultado.text) || "").slice(0, 1800)}\n\nELEMENTOS:\n` +
-      elementos.slice(0, 60).map(e => `[${e.ref}] <${e.tag}> ${e.texto}`).join("\n");
-    return { url: resultado ? resultado.url : "", titulo: resultado ? resultado.title : "",
-             elementos_total: elementos.length, resumo,
-             elementos, tab_id: tab ? tab.id : null };
-  }
-  if (c.tipo === "extract") {
-    const { resultado } = await script((maxChars) => {
-      function deepText(node) {
-        if (!node) return "";
-        if (node.nodeType === 3) return node.textContent + " ";
-        if (node.nodeType === 1) {
-          const tag = (node.tagName || "").toLowerCase();
-          if (["script", "style", "noscript", "template", "svg", "head",
-               "iframe"].includes(tag)) return "";
-          let s = "";
-          if (node.shadowRoot) s += deepText(node.shadowRoot);
-          for (const c of node.childNodes) s += deepText(c);
-          return s;
-        }
-        if (node.nodeType === 11) {
-          let s = "";
-          for (const c of node.childNodes) s += deepText(c);
-          return s;
-        }
-        return "";
-      }
-      const texto = deepText(document.documentElement || document)
-        .replace(/\s+/g, " ").trim().slice(0, maxChars || 6000);
-      const links = [];
-      const vistos = new Set();
-      function collectLinks(cont) {
-        if (!cont || !cont.querySelectorAll) return;
-        for (const a of Array.from(cont.querySelectorAll("a[href]"))) {
-          if (vistos.has(a)) continue;
-          vistos.add(a);
-          if (links.length >= 60) return;
-          links.push({
-            texto: (a.innerText || a.textContent ||
-                    a.getAttribute("aria-label") || "")
-              .replace(/\s+/g, " ").trim().slice(0, 80),
-            url: String(a.href).slice(0, 200)
-          });
-        }
-        if (vistos.size >= 5000) return;
-        for (const el of Array.from(cont.querySelectorAll("*"))) {
-          if (el.shadowRoot) collectLinks(el.shadowRoot);
-          if (vistos.size >= 5000) break;
-        }
-      }
-      collectLinks(document.documentElement || document);
-      return { texto, links: links.filter(l => l.texto),
-               url: location.href, titulo: document.title };
-    }, [Number(a.max_chars) || 6000]);
-    return { texto: resultado.texto, links: resultado.links,
-             url: resultado.url, titulo: resultado.titulo };
-  }
-  if (c.tipo === "click") {
-    await injetarOverlay();
-    const { resultado } = await script(async (alvo) => {
-      function findByRef(ref) {
-        function find(cont) {
-          if (!cont || !cont.querySelectorAll) return null;
-          const el = cont.querySelector(`[data-yvakor-ref="${ref}"]`);
-          if (el) return el;
-          for (const node of Array.from(cont.querySelectorAll("*"))) {
-            if (node.shadowRoot) {
-              const r = find(node.shadowRoot);
-              if (r) return r;
-            }
-          }
-          return null;
-        }
-        return find(document.documentElement || document);
-      }
-      let el = /^e\d+$/.test(alvo) ? findByRef(alvo) : null;
-      if (!el) {
-        try { el = document.querySelector(alvo); } catch (e) {}
-      }
-      if (!el) {
-        const txt = (alvo || "").toLowerCase();
-        el = Array.from(document.querySelectorAll("a,button,[role='button']"))
-          .find(x => (x.innerText || "").toLowerCase().includes(txt));
-      }
-      if (!el) return { ok: false, erro: "elemento não encontrado" };
-      await window.__yvakorVisual.click(el, "clicando");
-      const corpo = document.body || document.documentElement;
-      return { ok: true, url: location.href, titulo: document.title,
-               texto: (corpo ? corpo.innerText : "").slice(0, 1200) };
-    }, [a.alvo || ""]);
-    return resultado;
-  }
-  if (c.tipo === "fill") {
-    await injetarOverlay();
-    const { resultado } = await script(async (alvo, valor, enviar) => {
-      function findByRef(ref) {
-        function find(cont) {
-          if (!cont || !cont.querySelectorAll) return null;
-          const el = cont.querySelector(`[data-yvakor-ref="${ref}"]`);
-          if (el) return el;
-          for (const node of Array.from(cont.querySelectorAll("*"))) {
-            if (node.shadowRoot) {
-              const r = find(node.shadowRoot);
-              if (r) return r;
-            }
-          }
-          return null;
-        }
-        return find(document.documentElement || document);
-      }
-      let el = /^e\d+$/.test(alvo) ? findByRef(alvo) : null;
-      if (!el) { try { el = document.querySelector(alvo); } catch (e) {} }
-      if (!el) return { ok: false, erro: "campo não encontrado" };
-      await window.__yvakorVisual.type(el, valor, "digitando");
-      if (enviar) {
-        el.dispatchEvent(new KeyboardEvent("keydown",
-          { key: "Enter", bubbles: true }));
-        el.dispatchEvent(new KeyboardEvent("keyup",
-          { key: "Enter", bubbles: true }));
-      }
-      const corpo = document.body || document.documentElement;
-      return { ok: true, url: location.href, titulo: document.title,
-               texto: (corpo ? corpo.innerText : "").slice(0, 1200) };
-    }, [a.alvo || "", String(a.valor || ""), !!a.enviar]);
-    return resultado;
-  }
-  if (c.tipo === "press") {
-    const { resultado } = await script((tecla) => {
-      const alvo = document.activeElement || document.body;
-      alvo.dispatchEvent(new KeyboardEvent("keydown",
-        { key: tecla, bubbles: true }));
-      alvo.dispatchEvent(new KeyboardEvent("keyup",
-        { key: tecla, bubbles: true }));
-      return { ok: true };
-    }, [a.tecla || "Enter"]);
-    return resultado;
-  }
-  if (c.tipo === "scroll") {
-    const { resultado } = await script((dir, vezes) => {
-      const passo = (dir === "cima" ? -1 : 1) * 600 * (vezes || 1);
-      window.scrollBy(0, passo);
-      return { ok: true, y: window.scrollY };
-    }, [a.direcao || "baixo", Number(a.vezes) || 1]);
-    return resultado;
-  }
-  throw new Error("comando desconhecido: " + c.tipo);
-}
-
-async function ponteComandos() {
-  if (ponteOcupada) return;
-  ponteOcupada = true;
-  try {
-    const j = await api("/api/ext/comandos", { timeout: 4000 });
-    for (const c of j.comandos || []) {
-      try {
-        const dados = await executarComando(c);
-        await responder(c, true, dados);
-      } catch (e) {
-        await responder(c, false, {}, e.message || "falha");
-      }
-    }
-  } catch (e) { /* sem comando */ }
-  finally { ponteOcupada = false; }
-}
-
-pontePing();
-setInterval(pontePing, 5000);
-setInterval(ponteComandos, 1500);
+/* A ponte de comandos (abrir/clicar/preencher/snapshot…) roda SOMENTE no
+   background.js. Antes havia uma cópia completa aqui, e os dois faziam
+   polling em /api/ext/comandos: com o painel aberto, dois executores
+   competiam pelo mesmo comando (abas duplicadas, ações repetidas). */
 
 /* ----------------------------- iniciar ----------------------------- */
 (async function iniciar() {

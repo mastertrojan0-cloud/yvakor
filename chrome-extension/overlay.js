@@ -35,7 +35,10 @@
   status.id = "yvk-status";
   document.documentElement.append(cursor, status);
 
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  // Aba em segundo plano: o Chrome limita timers a 1/s, então cada passo da
+  // animação levava ~1s. Sem ninguém olhando, pula as esperas visuais.
+  const sleep = (ms) => document.hidden ? Promise.resolve()
+    : new Promise(r => setTimeout(r, ms));
   function show(msg) {
     status.textContent = "YVAKOR · " + msg;
     status.classList.add("on");
