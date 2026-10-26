@@ -373,8 +373,11 @@ class Orchestrator:
             def wrapper(url: str = "", navegador: str = "",
                         _orig=original, _tipo=comando_tipo):
                 if alvo_ext(navegador):
+                    # Tarefa em segundo plano (cowork) não troca a aba que o
+                    # usuário está vendo; chat interativo continua ativando.
+                    ativo = not getattr(self._tl, "segundo_plano", False)
                     r = PONTE.comando(_tipo, {"url": url or "",
-                                              "ativo": True})
+                                              "ativo": ativo})
                     if r.get("ok"):
                         r["engine"] = "chrome (extensão)"
                         return r
@@ -854,27 +857,26 @@ class Orchestrator:
         # exija ferramentas vão para o loop do agente no DeepSeek. Se o local
         # falhar/vier vazio, o bloco abaixo zera 'forcar' e cai no agente.
         _tipo_simples = self.router.classify(user_message)
-        if forcar is None and _tipo_simples in (
-                "resposta_simples", "resumo_curto", "classificacao"):
+        # Pergunta sobre a página/arquivo em foco (extra_context) precisa do
+        # conteúdo completo → vai para o agente (DeepSeek), não para o 3B local,
+        # que aqui responderia sem ver a página.
+        if (forcar is None and not extra_context and _tipo_simples in (
+                "resposta_simples", "resumo_curto", "classificacao")):
             forcar = "ollama"
 
         # Caminho local rápido: prompt curto, sem ferramentas. O 3B em CPU não
         # aguenta o prompt completo do agente (travava 4-6 minutos).
         if forcar == "ollama":
             try:
-                foco = (contexto_cerebro or "")[:1500]
-                sistema_local = (
-                    "Você é o YVAKOR, agente local. Responda em português, "
-                    "direto e curto. Não use JSON, ferramentas nem comandos.")
-                if foco:
-                    sistema_local += "\n\nContexto conhecido:\n" + foco
                 self._prog_start(sid)
                 resposta_local = self.router.complete_messages(
                     "resposta_simples",
-                    [{"role": "system", "content": sistema_local},
-                     {"role": "user", "content": user_message}],
+                    self._mensagens_local(sid, user_message, contexto_cerebro),
                     forcar="ollama").strip()
-                if resposta_local:
+                # Só aceita a resposta local se passar na verificação de
+                # qualidade; senão cai no agente (DeepSeek) logo abaixo.
+                if resposta_local and self._resposta_local_ok(
+                        resposta_local, user_message):
                     self._prog_done(sid)
                     self.episodic.log("conversa", user_message, resposta_local,
                                       session_id=sid)
@@ -995,6 +997,60 @@ class Orchestrator:
         self._sincronizar_cerebro_async()
         return answer
 
+    # ------------------------------------------------------------------ #
+    # Caminho local (modelo pequeno): prompt e controle de qualidade
+    # ------------------------------------------------------------------ #
+    def _mensagens_local(self, sid: str, pergunta: str,
+                         contexto: str | None) -> list[dict]:
+        """Prompt do modelo local: identidade enxuta, data e os últimos turnos.
+        Antes só ia a pergunta solta — sem histórico, "e agora?", "isso" e
+        qualquer continuação de conversa eram respondidos sem contexto."""
+        agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+        sistema = (
+            "Você é o YVAKOR, assistente pessoal do usuário. Responda em "
+            "português do Brasil, de forma direta, correta e natural, sem "
+            "cumprimentos desnecessários nem repetir a pergunta. Se não souber "
+            "ou não tiver como saber, diga isso claramente em vez de inventar. "
+            f"Agora são {agora}. Não use JSON, ferramentas nem comandos.")
+        if contexto:
+            sistema += ("\n\nContexto conhecido (use só se responder à "
+                        "pergunta):\n" + contexto[:1500])
+        msgs: list[dict] = [{"role": "system", "content": sistema}]
+        try:
+            historico = self.episodic.history_messages(6, session_id=sid)
+        except Exception:
+            historico = []
+        for m in (historico or [])[-6:]:
+            if m.get("role") in ("user", "assistant") and m.get("content"):
+                msgs.append({"role": m["role"],
+                             "content": str(m["content"])[:600]})
+        msgs.append({"role": "user", "content": pergunta})
+        return msgs
+
+    _RECUSA_LOCAL = _re.compile(
+        r"(como (um )?(modelo|assistente|ia)\b.{0,40}(linguagem|ia\b)|"
+        r"n[ãa]o tenho acesso|n[ãa]o consigo acessar|n[ãa]o posso acessar|"
+        r"as an ai|i('m| am) sorry|sou apenas um modelo)", _re.I)
+
+    @classmethod
+    def _resposta_local_ok(cls, resposta: str, pergunta: str) -> bool:
+        """Rede de segurança do modelo pequeno: rejeita resposta vazia, JSON de
+        ferramenta vazado, laço repetitivo, resposta curta demais para uma
+        pergunta elaborada e recusas genéricas. Reprovada → vai ao agente."""
+        r = (resposta or "").strip()
+        if len(r) < 2:
+            return False
+        if r.startswith("{") and ('"acao"' in r or '"ferramenta"' in r):
+            return False
+        linhas = [x.strip() for x in r.splitlines() if x.strip()]
+        if len(linhas) >= 4 and len(set(linhas)) <= max(1, len(linhas) // 3):
+            return False
+        if len(_re.findall(r"\w+", pergunta or "")) >= 6 and len(r) < 12:
+            return False
+        if cls._RECUSA_LOCAL.search(r):
+            return False
+        return True
+
     def _podar_resposta(self, texto: str, pergunta: str, task_type: str,
                         artefatos: list[dict]) -> str:
         """Remove preâmbulo/ofertas e limita resposta simples."""
@@ -1009,7 +1065,17 @@ class Orchestrator:
         t = re.sub(r"\n+(?:se quiser|caso (?:queira|precise)|posso (?:também|"
                    r"tambem|ajudar)|quer que eu|fico à disposição|fico a "
                    r"disposicao)[\s\S]*$", "", t, flags=re.I).rstrip()
+        # Pedido explicativo ou resposta já estruturada (lista/parágrafos) NÃO
+        # pode ser cortada em 3 frases: antes "como funciona X?" e listas
+        # legítimas eram mutiladas pela poda de conversa simples.
+        explicativo = bool(re.search(
+            r"\b(por ?que|como (funciona|faz|fazer|eu|se)|explic|diferen[cç]a|"
+            r"exemplo|passo a passo|list[ae]|tabela|compar|detalh|resum|"
+            r"vantagens|desvantagens|o que [ée])", (pergunta or "").lower()))
+        estruturada = (bool(re.search(r"(^|\n)\s*(?:[-*•]|\d+[.)])\s+", t))
+                       or t.count("\n\n") >= 2)
         complexo = (bool(artefatos) or len(pergunta or "") > 180
+                    or explicativo or estruturada
                     or task_type in ("analise_complexa", "codigo", "código",
                                      "arquitetura", "pesquisa_sintese",
                                      "redacao", "redação"))

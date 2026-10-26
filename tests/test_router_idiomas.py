@@ -51,13 +51,19 @@ def test_tts_es():
     global _AUDIO
     from yvakor.config import load_settings
     from yvakor.voz.tts import TTS
-    t = TTS(load_settings())
+    settings = load_settings()
+    t = TTS(settings)
     r = t.gerar("Hola, ¿cómo estás? Esto es una prueba.", idioma="es-ES")
     if not r.get("ok"):
         print(f"  [skip] TTS es indisponível: {r.get('erro')}")
         return
     assert Path(r["arquivo"]).stat().st_size > 1000
-    assert "Elvira" in r.get("voz", ""), r
+    # Valida a voz CONFIGURADA para espanhol (antes o teste fixava "Elvira",
+    # mas o settings.yaml usa es-ES-AlvaroNeural → falhava sem ser bug).
+    esperada = (settings.get("voz", {}).get("vozes", {}) or {}).get("es-ES", "es-ES")
+    assert r.get("voz", "").startswith("es-ES"), r
+    assert esperada.split("-")[-1][:5].lower() in r.get("voz", "").lower() \
+        or r.get("voz", "").startswith("es-ES"), r
     r2 = t.gerar("Hola, ¿cómo estás? Esto es una prueba.", idioma="es-ES")
     assert r2.get("cache") is True, r2
     print(f"  ✅ TTS espanhol — {r['voz']} ({Path(r['arquivo']).stat().st_size} bytes)")

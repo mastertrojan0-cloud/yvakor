@@ -50,6 +50,18 @@ def test_motores_e_abas():
                        "profile_dir": str(tmp / "perfil-chrome")},
         }}}
     nav = Navegadores(settings)
+    try:
+        _corpo_teste(nav, tmp, a, b, c)
+    finally:
+        try:
+            nav.fechar()
+            nav.shutdown()
+        except Exception:
+            pass
+    print("  ✅ navegadores — Edge e Chrome independentes, aba por tarefa, CDP com erro claro")
+
+
+def _corpo_teste(nav, tmp, a, b, c):
     assert nav.nomes() == ["edge", "chrome"]
     assert nav.padrao == "edge"
 
@@ -87,21 +99,27 @@ def test_motores_e_abas():
     assert "c.html" in st["motores"]["chrome"]["url"]
 
     # CDP para um endereço inexistente: erro claro, sem travar
+    # Isola o Chrome real: sem este patch, conectar_cdp() -> garantir_para_url()
+    # ABRIA um Chrome visível na porta 9931 e o deixava vivo a cada execução
+    # (o teste então falhava porque o CDP conectava com sucesso).
+    from unittest import mock
     from yvakor.browser.session import BrowserSession
     cdp = BrowserSession({"browser": {"headless": True}}, engine="chrome",
                          mode="cdp", cdp_url="http://127.0.0.1:9931",
                          profile_dir=str(tmp / "cdp"))
+    falha = {"ok": False, "erro": "connection refused (porta 9931 sem navegador)"}
     try:
-        cdp.conectar_cdp()
-        raise AssertionError("CDP deveria falhar sem navegador na porta")
-    except Exception as exc:
-        assert "connect" in str(exc).lower() or "refused" in str(exc).lower(), exc
+        with mock.patch("yvakor.browser.chrome_cdp.garantir_para_url",
+                        return_value=falha):
+            try:
+                cdp.conectar_cdp()
+                raise AssertionError("CDP deveria falhar sem navegador na porta")
+            except AssertionError:
+                raise
+            except Exception as exc:
+                assert "connect" in str(exc).lower() or "refused" in str(exc).lower(), exc
     finally:
         cdp.shutdown()
-
-    nav.fechar()
-    nav.shutdown()
-    print("  ✅ navegadores — Edge e Chrome independentes, aba por tarefa, CDP com erro claro")
 
 
 if __name__ == "__main__":
