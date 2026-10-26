@@ -72,7 +72,12 @@ def garantir(url: str = "http://127.0.0.1:9222",
         f"--remote-debugging-port={porta}",
         "--remote-debugging-address=127.0.0.1",
         f"--user-data-dir={pasta}",
-        "--remote-allow-origins=*",
+        # NUNCA usar "*": isso desliga a checagem de Origin do WebSocket do
+        # DevTools e deixa qualquer site (ws://127.0.0.1:porta) assumir o
+        # navegador. Restringimos à origem loopback — o Playwright conecta
+        # sem header Origin (permitido), mas sites, que sempre enviam Origin,
+        # são recusados.
+        f"--remote-allow-origins=http://127.0.0.1:{porta}",
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-features=Translate",

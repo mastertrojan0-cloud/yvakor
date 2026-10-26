@@ -7,12 +7,13 @@ baixar (o Chromecast não enxerga o disco do PC).
 """
 from __future__ import annotations
 
+import mimetypes
+import secrets
 import socket
 import threading
 import time
 import urllib.parse
-from functools import partial
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
@@ -27,38 +28,103 @@ def _ip_lan() -> str:
         return "127.0.0.1"
 
 
-class _Handler(SimpleHTTPRequestHandler):
+class _ServidorArquivos(ThreadingHTTPServer):
+    """HTTP na LAN que só serve arquivos explicitamente registrados por token.
+
+    Antes servíamos a PASTA inteira do arquivo (com listagem), expondo tudo ao
+    redor na rede local. Agora cada arquivo castado ganha um token aleatório;
+    qualquer outro caminho devolve 404 e não há listagem de diretório.
+    """
+
+    def __init__(self, addr, handler):
+        super().__init__(addr, handler)
+        self.arquivos: dict[str, Path] = {}
+
+
+class _Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def do_HEAD(self):
+        self._servir(enviar_corpo=False)
+
+    def do_GET(self):
+        self._servir(enviar_corpo=True)
+
+    def _servir(self, enviar_corpo: bool) -> None:
+        token = self.path.lstrip("/").split("/", 1)[0].split("?", 1)[0]
+        alvo = self.server.arquivos.get(token)
+        if not alvo or not alvo.is_file():
+            self.send_error(404)
+            return
+        tamanho = alvo.stat().st_size
+        inicio, fim, parcial = 0, tamanho - 1, False
+        faixa = self.headers.get("Range", "")
+        if faixa.startswith("bytes="):
+            try:
+                a, b = faixa[6:].split("-", 1)
+                inicio = int(a) if a else 0
+                fim = int(b) if b else tamanho - 1
+            except ValueError:
+                inicio, fim = 0, tamanho - 1
+            fim = min(fim, tamanho - 1)
+            parcial = True
+        ctype = mimetypes.guess_type(str(alvo))[0] or "application/octet-stream"
+        self.send_response(206 if parcial else 200)
+        if parcial:
+            self.send_header("Content-Range", f"bytes {inicio}-{fim}/{tamanho}")
+        self.send_header("Content-Type", ctype)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(fim - inicio + 1))
+        self.end_headers()
+        if not enviar_corpo:
+            return
+        with open(alvo, "rb") as f:
+            f.seek(inicio)
+            restante = fim - inicio + 1
+            while restante > 0:
+                bloco = f.read(min(65536, restante))
+                if not bloco:
+                    break
+                try:
+                    self.wfile.write(bloco)
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+                restante -= len(bloco)
+
 
 class ServidorMidia:
-    """Servidor HTTP de arquivos para o Chromecast baixar mídia local."""
+    """Servidor HTTP de arquivos para o Chromecast baixar mídia local.
 
-    def __init__(self, diretorio: Path):
-        self.diretorio = Path(diretorio)
-        self._httpd = None
+    Só serve os arquivos explicitamente passados em url(), cada um sob um
+    token aleatório não adivinhável — nunca a pasta inteira.
+    """
+
+    def __init__(self, diretorio: Path | None = None):
+        # 'diretorio' é mantido só por compatibilidade; não é mais exposto.
+        self._httpd: _ServidorArquivos | None = None
         self._thread = None
 
     def iniciar(self) -> str:
         if self._httpd is not None:
             return self._base()
-        handler = partial(_Handler, directory=str(self.diretorio))
-        self._httpd = ThreadingHTTPServer(("0.0.0.0", 0), handler)
-        porta = self._httpd.server_address[1]
+        self._httpd = _ServidorArquivos(("0.0.0.0", 0), _Handler)
         self._thread = threading.Thread(target=self._httpd.serve_forever,
                                         daemon=True, name="yvakor-midia")
         self._thread.start()
-        return f"http://{_ip_lan()}:{porta}"
+        return self._base()
 
     def _base(self) -> str:
         porta = self._httpd.server_address[1] if self._httpd else 0
         return f"http://{_ip_lan()}:{porta}"
 
     def url(self, caminho: Path) -> str:
-        base = self.iniciar()
-        nome = urllib.parse.quote(Path(caminho).name)
-        return f"{base}/{nome}"
+        self.iniciar()
+        alvo = Path(caminho).expanduser().resolve()
+        token = secrets.token_urlsafe(16)
+        self._httpd.arquivos[token] = alvo
+        nome = urllib.parse.quote(alvo.name)
+        return f"{self._base()}/{token}/{nome}"
 
     def parar(self) -> None:
         if self._httpd is not None:
