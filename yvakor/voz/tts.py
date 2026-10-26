@@ -1,0 +1,274 @@
+"""
+YVAKOR — Texto para fala (TTS)
+
+Dois motores:
+  • edge-tts  — voz masculina pt-BR-AntonioNeural (amigável/profissional)
+  • SAPI      — vozes do Windows (masculina quando disponível), offline
+
+`falar()` escolhe automaticamente: tenta edge (qualidade), cai para SAPI se
+falhar ou se o usuário pedir offline.
+"""
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import shutil
+import subprocess
+import threading
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+class TTS:
+    def __init__(self, settings: dict):
+        cfg = (settings or {}).get("voz", {}) or {}
+        self.cfg = cfg
+        self.motor_pref = str(cfg.get("tts") or "auto").lower()
+        self.voz_edge = cfg.get("voz_edge") or "pt-BR-AntonioNeural"
+        self.voz_sapi = cfg.get("voz_sapi") or ""
+        self.idioma_padrao = cfg.get("idioma") or "pt-BR"
+        self.vozes_idioma = cfg.get("vozes") or {
+            "pt-BR": self.voz_edge, "es-ES": "es-ES-AlvaroNeural"}
+        self.velocidade = int(cfg.get("velocidade") or 0)
+        self.tom = str(cfg.get("tom") or "-2Hz")
+        self.dir = ROOT / "data" / "voz"
+        self.cache_dir = self.dir / "cache"
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._cache_hits = 0
+        self._cache_miss = 0
+        self.ultimo_erro = ""
+
+    def _voz_para(self, idioma: str | None) -> str:
+        from yvakor.voz.idiomas import normalizar_idioma
+        lang = normalizar_idioma(idioma or self.idioma_padrao, self.idioma_padrao)
+        return self.vozes_idioma.get(lang) or self.voz_edge
+
+    def _cache_path(self, texto: str, motor: str, voz: str = "") -> Path:
+        chave = (f"{motor}|{voz or self.voz_edge}|{self.voz_sapi}|"
+                 f"{self.velocidade}|{self.tom}|{texto}")
+        h = hashlib.sha1(chave.encode("utf-8")).hexdigest()[:20]
+        return self.cache_dir / f"{h}.wav"
+
+    @staticmethod
+    def _naturalizar(texto: str) -> str:
+        """Remove ruído visual para a fala soar humana, não robótica."""
+        import re
+        t = str(texto or "")
+        t = re.sub(r"```.*?```", " ", t, flags=re.S).replace("```", " ")
+        t = re.sub(r"!\[[^\]]*\]\([^)]+\)", " ", t)
+        t = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)
+        t = re.sub(r"https?://\S+", " ", t)
+        t = re.sub(r"[*_#`>|~]", " ", t)
+        t = re.sub(r"\b(?:vc|vcs|pq|q|td|hj|amnh|blz)\b",
+                   lambda m: {"vc": "você", "vcs": "vocês", "pq": "porque",
+                              "q": "que", "td": "tudo", "hj": "hoje",
+                              "amnh": "amanhã", "blz": "beleza"}[m.group(0).lower()],
+                   t, flags=re.I)
+        t = re.sub(r"\s+", " ", t).strip()
+        return t
+
+    # ------------------------------------------------------------------ #
+    # Utilidades
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _ffmpeg() -> str | None:
+        return shutil.which("ffmpeg")
+
+    def _tocar_arquivo(self, caminho: Path) -> bool:
+        if not caminho.exists():
+            return False
+        try:
+            import winsound
+            winsound.PlaySound(str(caminho), winsound.SND_FILENAME)
+            return True
+        except Exception:
+            pass
+        # Fallback: ffplay
+        ffplay = shutil.which("ffplay")
+        if ffplay:
+            try:
+                subprocess.run([ffplay, "-nodisp", "-autoexit", "-loglevel",
+                                "quiet", str(caminho)], timeout=120)
+                return True
+            except Exception:
+                return False
+        return False
+
+    # ------------------------------------------------------------------ #
+    # SAPI (Windows, offline)
+    # ------------------------------------------------------------------ #
+    def _sapi_wav(self, texto: str, idioma: str = "pt-BR") -> Path | None:
+        self.dir.mkdir(parents=True, exist_ok=True)
+        txt = self.dir / "_fala.txt"
+        txt.write_text(texto, encoding="utf-8")
+        destino = self.dir / f"fala_sapi_{time.strftime('%Y%m%d_%H%M%S')}.wav"
+        voz = self.voz_sapi
+        cultura = "es" if str(idioma).lower().startswith("es") else "pt"
+        script = (
+            "Add-Type -AssemblyName System.Speech;"
+            "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;"
+            + (f"$s.SelectVoice('{voz}');" if voz else
+               f"$vs = $s.GetInstalledVoices();"
+               f"$v = $vs | Where-Object {{"
+               f"$_.VoiceInfo.Culture.Name -like '{cultura}-*' -and "
+               f"$_.VoiceInfo.Gender -eq 'Male' }} | Select-Object -First 1;"
+               f"if (-not $v) {{ $v = $vs | Where-Object {{"
+               f"$_.VoiceInfo.Culture.Name -like '{cultura}-*' }} | "
+               "Select-Object -First 1; }"
+               "if ($v) { $s.SelectVoice($v.VoiceInfo.Name) };")
+            + f"$s.Rate = {max(-10, min(10, self.velocidade))};"
+            f"$t = Get-Content -Raw -Encoding UTF8 '{txt}';"
+            f"$s.SetOutputToWaveFile('{destino}');"
+            "$s.Speak($t); $s.Dispose()")
+        try:
+            p = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                capture_output=True, text=True, timeout=120,
+                encoding="utf-8", errors="replace")
+            if destino.exists() and destino.stat().st_size > 1000:
+                return destino
+            self.ultimo_erro = (p.stderr or "")[:300]
+        except Exception as exc:
+            self.ultimo_erro = str(exc)
+        return None
+
+    # ------------------------------------------------------------------ #
+    # edge-tts (neural, online)
+    # ------------------------------------------------------------------ #
+    def _edge_mp3(self, texto: str, voz: str | None = None) -> Path | None:
+        try:
+            import edge_tts
+        except ImportError:
+            return None
+        self.dir.mkdir(parents=True, exist_ok=True)
+        destino = self.dir / f"fala_edge_{time.strftime('%Y%m%d_%H%M%S')}.mp3"
+        taxa = f"{'+' if self.velocidade >= 0 else ''}{self.velocidade * 10}%"
+
+        async def gerar():
+            try:
+                com = edge_tts.Communicate(texto, voz or self.voz_edge,
+                                           rate=taxa, pitch=self.tom)
+            except TypeError:
+                com = edge_tts.Communicate(texto, voz or self.voz_edge,
+                                           rate=taxa)
+            await com.save(str(destino))
+
+        try:
+            asyncio.run(gerar())
+            if destino.exists() and destino.stat().st_size > 1000:
+                return destino
+        except Exception as exc:
+            self.ultimo_erro = str(exc)[:200]
+        return None
+
+    # ------------------------------------------------------------------ #
+    # API
+    # ------------------------------------------------------------------ #
+    def gerar(self, texto: str, motor: str | None = None,
+              idioma: str | None = None) -> dict:
+        """Gera o áudio e devolve o caminho (não toca)."""
+        texto = (texto or "").strip()
+        if not texto:
+            return {"ok": False, "erro": "texto vazio"}
+        texto = self._naturalizar(texto)
+        if not texto:
+            return {"ok": False, "erro": "texto vazio"}
+        motor = (motor or self.motor_pref).lower()
+        voz = self._voz_para(idioma)
+        self.ultimo_erro = ""
+
+        cache = self._cache_path(texto, motor, voz)
+        if cache.exists() and cache.stat().st_size > 1000:
+            self._cache_hits += 1
+            return {"ok": True, "motor": "cache", "arquivo": str(cache),
+                    "voz": voz, "cache": True}
+
+        candidatos = (["edge", "sapi"] if motor in ("auto", "edge")
+                      else ["sapi"] if motor == "sapi" else ["edge", "sapi"])
+        for m in candidatos:
+            if m == "edge":
+                mp3 = self._edge_mp3(texto, voz)
+                if mp3:
+                    wav = self.dir / (mp3.stem + ".wav")
+                    ff = self._ffmpeg()
+                    if ff:
+                        try:
+                            subprocess.run([ff, "-hide_banner", "-loglevel", "error",
+                                            "-y", "-i", str(mp3), str(wav)],
+                                           capture_output=True, timeout=60)
+                        except Exception:
+                            pass
+                    if wav.exists():
+                        self._cache_miss += 1
+                        shutil.copy2(wav, cache)
+                        return {"ok": True, "motor": "edge",
+                                "voz": voz, "arquivo": str(cache)}
+                    return {"ok": True, "motor": "edge", "voz": voz,
+                            "arquivo": str(mp3.resolve())}
+            else:
+                wav = self._sapi_wav(texto, idioma or self.idioma_padrao)
+                if wav:
+                    self._cache_miss += 1
+                    shutil.copy2(wav, cache)
+                    return {"ok": True, "motor": "sapi", "arquivo": str(cache)}
+        return {"ok": False, "erro": "nenhum motor de voz funcionou",
+                "detalhe": getattr(self, "ultimo_erro", "")}
+
+    def falar(self, texto: str, motor: str | None = None,
+              tocar: bool = True, assincrono: bool = False,
+              prioridade: int = 1, idioma: str | None = None) -> dict:
+        if assincrono:
+            # fila única: nunca duas vozes ao mesmo tempo
+            if not hasattr(self, "falante"):
+                from yvakor.voz.falante import Falante
+                self.falante = Falante(self.gerar, self._tocar_arquivo)
+            return self.falante.falar(texto, prioridade=prioridade,
+                                      idioma=idioma)
+        r = self.gerar(texto, motor, idioma)
+        if not r.get("ok") or not tocar:
+            return r
+        r["tocou"] = self._tocar_arquivo(Path(r["arquivo"]))
+        return r
+
+    def parar(self) -> dict:
+        """Interrompe a fala atual e limpa a fila (barge-in)."""
+        removidos = 0
+        try:
+            if hasattr(self, "falante"):
+                removidos = self.falante.cancelar_abaixo(99)
+        except Exception:
+            pass
+        try:
+            import winsound
+            winsound.PlaySound(None, winsound.SND_PURGE)
+        except Exception:
+            pass
+        return {"ok": True, "fila_limpa": removidos}
+
+    def estatisticas(self) -> dict:
+        arquivos = list(self.cache_dir.glob("*.wav")) if self.cache_dir.exists() else []
+        return {"cache_arquivos": len(arquivos),
+                "cache_mb": round(sum(f.stat().st_size for f in arquivos)
+                                  / 1048576, 2),
+                "hits": self._cache_hits, "miss": self._cache_miss}
+
+    def vozes(self) -> dict:
+        saida = {"sapi": [], "edge": [self.voz_edge]}
+        try:
+            script = ("Add-Type -AssemblyName System.Speech;"
+                      "(New-Object System.Speech.Synthesis.SpeechSynthesizer)"
+                      ".GetInstalledVoices() | ForEach-Object { "
+                      "$_.VoiceInfo.Name + '|' + $_.VoiceInfo.Culture.Name }")
+            p = subprocess.run(["powershell", "-NoProfile", "-NonInteractive",
+                                "-Command", script], capture_output=True,
+                               text=True, timeout=30, encoding="utf-8",
+                               errors="replace")
+            for linha in (p.stdout or "").splitlines():
+                if "|" in linha:
+                    nome, cultura = linha.strip().split("|", 1)
+                    saida["sapi"].append({"nome": nome, "cultura": cultura})
+        except Exception:
+            pass
+        return saida

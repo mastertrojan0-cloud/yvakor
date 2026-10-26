@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="pt-BR"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YVAKOR · Dispositivos</title>
+<style>
+:root{--agua:#3fbfae;--sol:#d9a441;--bg:#070d12;--card:#0c1a22;--linha:#1b2b35;--txt:#dceaf0;--dim:#7f96a3}
+*{box-sizing:border-box} body{margin:0;background:radial-gradient(120% 90% at 50% 0,#0d1a22,#050a0e 70%);color:var(--txt);font-family:"Segoe UI",system-ui,sans-serif}
+header{display:flex;gap:12px;align-items:center;padding:14px 18px;border-bottom:1px solid var(--linha);background:#08121a;position:sticky;top:0;z-index:5}
+header h1{font-size:17px;margin:0;letter-spacing:.4px} .dot{width:9px;height:9px;border-radius:50%;background:var(--agua);box-shadow:0 0 10px var(--agua)}
+header .acoes{margin-left:auto;display:flex;gap:8px}
+button{background:#0f2029;color:var(--txt);border:1px solid var(--linha);border-radius:8px;padding:7px 11px;cursor:pointer;font-size:12px}
+button:hover{border-color:var(--agua);transform:translateY(-1px)} button.primario{background:linear-gradient(135deg,#1c6f68,#2f9d8f);border-color:transparent}
+.filtros{display:flex;gap:8px;padding:12px 18px;flex-wrap:wrap}
+input,select,textarea{background:#08131a;color:var(--txt);border:1px solid var(--linha);border-radius:8px;padding:7px 9px;font-size:13px;font-family:inherit}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--agua)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;padding:6px 18px 24px}
+.card{background:var(--card);border:1px solid var(--linha);border-radius:12px;padding:12px;cursor:pointer;transition:transform .12s,border-color .15s}
+.card:hover{border-color:var(--agua);transform:translateY(-2px)}
+.card h3{margin:0 0 4px;font-size:14px;display:flex;gap:6px;align-items:center}.card .ip{color:var(--dim);font-size:12px}
+.badges{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}
+.badge{font-size:10px;padding:2px 6px;border-radius:20px;border:1px solid var(--linha);color:var(--dim)}
+.badge.on{color:#7fe0c8;border-color:#1d5a52}.badge.off{color:#ff9c9c;border-color:#5a1d1d}.badge.fav{color:var(--sol);border-color:#5a4a1d}
+.lateral{position:fixed;top:0;right:0;height:100%;width:380px;max-width:92vw;background:#08121a;border-left:1px solid var(--linha);padding:16px;overflow:auto;transform:translateX(100%);transition:transform .2s ease;z-index:10}
+.lateral.aberto{transform:none}.lateral h2{font-size:15px;margin:0 0 10px}.lateral label{display:block;font-size:11px;color:var(--dim);margin:10px 0 4px}
+.lateral input,.lateral select,.lateral textarea{width:100%}.lateral .linha{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+.pre{background:#050b0f;border:1px solid var(--linha);border-radius:8px;padding:8px;font-size:11px;white-space:pre-wrap;color:#b9cdd6;margin-top:12px;max-height:220px;overflow:auto}
+.vazio{color:var(--dim);font-size:13px;padding:20px}
+@media(max-width:600px){.grid{grid-template-columns:1fr}}
+</style>
+<header><span class="dot"></span><h1>Dispositivos</h1><span id="contagem" class="badge"></span>
+<span class="acoes"><button onclick="gerenciar()">YVAKOR gerenciar</button><button onclick="escanear()">Escanear rede</button><button onclick="carregar()">Atualizar</button></span></header>
+<div class="filtros">
+  <input id="busca" placeholder="Buscar por nome, IP, MAC..." oninput="render()" style="flex:1;min-width:180px">
+  <select id="fGrupo" onchange="render()"><option value="">Todos os grupos</option></select>
+  <select id="fTipo" onchange="render()"><option value="">Todos os tipos</option></select>
+</div>
+<div id="lista" class="grid"></div>
+<aside id="painel" class="lateral">
+  <h2 id="pTitulo">Dispositivo</h2>
+  <div id="pInfo" class="badges"></div>
+  <label>Nome</label><input id="pNome">
+  <label>Tipo</label><select id="pTipo"></select>
+  <label>Grupo</label><input id="pGrupo" placeholder="ex.: casa, escritório">
+  <label>Notas</label><textarea id="pNotas" rows="3" placeholder="observações, senha local (referência), etc."></textarea>
+  <label><input type="checkbox" id="pFav" style="width:auto"> favorito</label>
+  <div class="linha"><button class="primario" onclick="salvar()">Salvar</button><button onclick="testar()">Testar</button><button onclick="devolver()">Devolver ao YVAKOR</button><button onclick="esquecer()" style="color:#ff9c9c">Esquecer</button><button onclick="fechar()">Fechar</button></div>
+  <div id="pTestes" class="pre" style="display:none"></div>
+</aside>
+<script>
+const TIPOS=["camera","tv","telefone","roteador","impressora","iot","computador","desconhecido"];
+const ICONE={camera:"📷",tv:"📺",telefone:"📱",roteador:"🌐",impressora:"🖨",iot:"💡",computador:"💻",desconhecido:"❔"};
+let devs=[], atual=null;
+async function carregar(){ try{ const r=await fetch("/api/rede"); devs=r.dispositivos||[]; montarFiltros(); render(); }catch(e){ document.getElementById("lista").innerHTML='<div class="vazio">Falha ao carregar.</div>'; } }
+function montarFiltros(){ const gs=new Set(devs.map(d=>d.grupo).filter(Boolean)); const fg=document.getElementById("fGrupo"); fg.innerHTML='<option value="">Todos os grupos</option>'+[...gs].map(g=>`<option>${g}</option>`).join(""); const ft=document.getElementById("fTipo"); ft.innerHTML='<option value="">Todos os tipos</option>'+TIPOS.map(t=>`<option value="${t}">${ICONE[t]||""} ${t}</option>`).join(""); const pt=document.getElementById("pTipo"); pt.innerHTML=TIPOS.map(t=>`<option value="${t}">${t}</option>`).join(""); }
+function render(){ const q=(document.getElementById("busca").value||"").toLowerCase(); const fg=document.getElementById("fGrupo").value, ft=document.getElementById("fTipo").value; const lista=devs.filter(d=>{ const txt=(d.nome+" "+d.ip+" "+(d.mac||"")).toLowerCase(); return (!q||txt.includes(q))&&(!fg||d.grupo===fg)&&(!ft||d.tipo===ft); }); document.getElementById("contagem").textContent=lista.length+" de "+devs.length; document.getElementById("lista").innerHTML=lista.length?lista.map(d=>`<div class="card" onclick="abrir('${d.chave}')"><h3>${ICONE[d.tipo]||"❔"} ${esc(d.nome||d.ip)}</h3><div class="ip">${d.ip||""} ${d.fabricante?"· "+esc(d.fabricante):""}</div><div class="badges"><span class="badge ${d.online?"on":"off"}">${d.online?"online":"offline"}</span>${d.favorito?'<span class="badge fav">★ favorito</span>':""}${d.grupo?`<span class="badge">${esc(d.grupo)}</span>`:""}<span class="badge">${d.tipo}</span></div></div>`).join(""):'<div class="vazio">Nenhum dispositivo com esses filtros.</div>'; }
+function esc(s){ return String(s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function abrir(chave){ atual=devs.find(d=>d.chave===chave); if(!atual) return; document.getElementById("pTitulo").textContent=atual.nome||atual.ip; document.getElementById("pInfo").innerHTML=`<span class="badge ${atual.online?"on":"off"}">${atual.online?"online":"offline"}</span><span class="badge">${atual.ip||""}</span><span class="badge">${atual.mac||"sem MAC"}</span>${atual.manual?'<span class="badge fav">manual</span>':""}`; document.getElementById("pNome").value=atual.nome||""; document.getElementById("pTipo").value=atual.tipo||"desconhecido"; document.getElementById("pGrupo").value=atual.grupo||""; document.getElementById("pNotas").value=atual.notas||""; document.getElementById("pFav").checked=!!atual.favorito; document.getElementById("pTestes").style.display="none"; document.getElementById("painel").classList.add("aberto"); }
+function fechar(){ document.getElementById("painel").classList.remove("aberto"); }
+async function salvar(){ const r=await fetch("/api/rede/dispositivo",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({acao:"atualizar",alvo:atual.chave,nome:document.getElementById("pNome").value,tipo:document.getElementById("pTipo").value,grupo:document.getElementById("pGrupo").value,notas:document.getElementById("pNotas").value,favorito:document.getElementById("pFav").checked})}); const j=await r.json(); if(j.ok){ fechar(); carregar(); } else alert(j.erro||"falha"); }
+async function testar(){ const r=await fetch("/api/rede/dispositivo",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({acao:"testar",alvo:atual.chave})}); const j=await r.json(); const el=document.getElementById("pTestes"); el.style.display="block"; el.textContent=(j.testes||[]).join("\n")||j.erro||"sem resultado"; }
+async function devolver(){ const r=await fetch("/api/rede/dispositivo",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({acao:"devolver",alvo:atual.chave})}); const j=await r.json(); if(j.ok){ fechar(); carregar(); } else alert(j.erro||"falha"); }
+async function gerenciar(){ const b=document.querySelector("header .acoes button"); b.disabled=true; b.textContent="Gerenciando..."; try{ const r=await fetch("/api/rede/dispositivo",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({acao:"gerenciar"})}); const j=await r.json(); if(!j.ok) alert(j.erro||"falha"); await carregar(); }finally{ b.disabled=false; b.textContent="YVAKOR gerenciar"; } }
+async function esquecer(){ if(!confirm("Remover este dispositivo do registro?")) return; const r=await fetch("/api/rede/dispositivo",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({acao:"esquecer",alvo:atual.chave})}); const j=await r.json(); if(j.ok){ fechar(); carregar(); } else alert(j.erro||"falha"); }
+async function escanear(){ const b=document.querySelector("header .acoes button"); b.disabled=true; b.textContent="Escaneando..."; try{ await fetch("/api/rede/escanear",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}); await carregar(); }finally{ b.disabled=false; b.textContent="Escanear rede"; } }
+carregar();
+</script></html>

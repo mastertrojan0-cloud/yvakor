@@ -1,0 +1,17 @@
+{
+  "servers": {},
+  "_exemplo": {
+    "filesystem": {
+      "enabled": false,
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "E:\\YVAKOR"],
+      "cwd": "E:\\YVAKOR\\yvakor"
+    },
+    "outro_servidor": {
+      "enabled": false,
+      "command": "python",
+      "args": ["-m", "meu_servidor_mcp"],
+      "env": {}
+    }
+  }
+}

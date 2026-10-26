@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "YVAKOR — Chat",
+  "version": "0.8.0",
+  "description": "Converse com o YVAKOR e acompanhe o processo das tarefas dentro do Chrome.",
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "tabs",
+    "audioCapture",
+    "scripting",
+    "activeTab",
+    "alarms"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:7777/*",
+    "http://*/*",
+    "https://*/*",
+    "<all_urls>"
+  ],
+  "action": {
+    "default_title": "Abrir YVAKOR"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "128": "icons/icon128.png"
+  }
+}

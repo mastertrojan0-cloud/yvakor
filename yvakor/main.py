@@ -12,9 +12,11 @@ from yvakor.orchestrator import Orchestrator
 
 BANNER = """
 ╔═══════════════════════════════════════════════════════╗
-║     YVAKOR — Agente Pessoal Evolutivo  v0.2          ║
-║     [perfil] [skill] [memoria] [cowork] [nova]       ║
-║     [conversas] [retomar] [apagar-conversa] | 'sair' ║
+║     YVAKOR — Agente Pessoal Evolutivo  v0.4           ║
+║     [perfil] [skill] [memoria] [cowork] [nova]        ║
+║     [cowork-status] [cowork-cancelar] [conversas]     ║
+║     [retomar] [apagar-conversa] | 'sair'              ║
+║     Navegador real: peça "abra o site X" no chat      ║
 ╚═══════════════════════════════════════════════════════╝
 """
 

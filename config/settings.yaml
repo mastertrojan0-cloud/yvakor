@@ -4,8 +4,18 @@
 agent:
   name: "YVAKOR"
   language: "pt-BR"
-  max_iterations: 8          # limite de ciclos por tarefa (anti-loop)
+  max_iterations: 25         # limite de ciclos por tarefa (navegar exige mais passos)
+  timeout_s: 180             # teto duro por execução do agente
   reflection_enabled: true   # loop de autoavaliação pós-tarefa
+  avaliar_auto: true         # avalia qualidade da resposta em segundo plano
+  ferramentas_nativas: false # opt-in: o provedor atual trava com tools; JSON é o padrão
+  router_ferramentas: true   # envia somente as ferramentas relevantes
+  max_ferramentas: 14        # teto por mensagem
+
+# Motor de contexto: seleciona o conteúdo relevante da página/arquivos.
+contexto:
+  max_caracteres: 5000       # orçamento do contexto no system prompt
+  max_blocos: 32             # seções/parágrafos mantidos por mensagem
 
 llm:
   # Provider padrão enquanto o local não está pronto
@@ -18,18 +28,19 @@ llm:
       api_key_env: "DEEPSEEK_API_KEY"
       temperature: 0.1             # 0.1 = mais determinístico e previsível para ferramentas
       max_tokens: 4096
-    # Ollama desativado (modo DeepSeek-only). Para usar IA local, descomente,
-    # instale o Ollama (https://ollama.com) e rode: ollama pull qwen2.5:7b
-    # ollama:
-    #   base_url: "http://localhost:11434"
-    #   model: "qwen2.5:7b"           # alternativas: llama3.1:8b, deepseek-r1:8b
-    #   temperature: 0.3
-    #   max_tokens: 4096
+    # Ollama local — fallback e tarefas simples (sem custo de API).
+    # Modelo 3B escolhido para esta máquina (4 núcleos, sem AVX2/GPU).
+    ollama:
+      base_url: "http://localhost:11434"
+      model: "qwen2.5:3b"
+      temperature: 0.2
+      max_tokens: 512
+      timeout_s: 50          # resposta local curta; acima disso cai para API
 
   # Roteador: que tipo de tarefa vai para qual provider.
   # Conforme skills ficam "estáveis", mova categorias para "local".
   routing:
-    local:    ["classificacao", "resumo_curto", "resposta_simples", "formatacao"]
+    local:    ["classificacao", "resumo_curto"]
     external: ["codigo", "arquitetura", "analise_complexa", "prospeccao", "pesquisa_sintese", "geracao_imagem"]
     fallback_order: ["deepseek", "ollama"]   # se um falhar, tenta o próximo
 
@@ -45,6 +56,10 @@ skills:
 
 tools:
   sandbox_dir: "data/sandbox"
+  # "total" = o agente tem os MESMOS privilégios da sua conta: lê, escreve,
+  # edita e apaga em qualquer pasta, roda shell, sem popup. Tudo vai para
+  # data/auditoria.jsonl. Use "protegido" para voltar a confirmar tudo.
+  privilegios: "total"
   # Modo automático: executa ações de trabalho (escrever/editar arquivo, shell,
   # python) SEM pedir confirmação. Coloque false para voltar a confirmar tudo.
   auto_approve: true
@@ -73,6 +88,117 @@ tools:
 
 cowork:
   max_concurrent_tasks: 3     # máximo de tarefas simultâneas em segundo plano
+  max_steps: 40               # passos de ferramenta por tarefa (navegação incluída)
+  workspace_dir: "data/cowork"  # uma pasta por tarefa: artefatos + resultado.md
+  auto_resume: true           # retoma tarefas interrompidas ao iniciar
+  fechar_abas: true           # ao concluir, fecha as abas do grupo da tarefa
+
+browser:
+  enabled: true               # controle do navegador (Playwright)
+  motor_padrao: "chrome"      # edge | chrome
+  headless: true              # navegador interno: a tela aparece na conversa
+  realismo: true              # ponteiro se movendo, destaque, digitação visível
+  digitar_ms: 35              # atraso por caractere ao digitar
+  viewport: {width: 1280, height: 800}
+  timeout_ms: 15000           # espera por elemento em cada ação
+  nav_timeout_ms: 45000       # espera por navegação/carregamento
+  snapshot_text_chars: 3000   # quanto texto da página vai para o modelo
+  max_elements: 120           # máximo de elementos interativos por snapshot
+  # Um motor por navegador, cada um com perfil persistente próprio.
+  # mode=launch abre o navegador real; mode=cdp anexa a um já aberto com
+  # --remote-debugging-port (use navegador_conectar para iniciar).
+  engines:
+    edge:
+      channel: "msedge"
+      profile_dir: "data/browser_profiles/edge"
+      mode: "launch"
+      cdp_url: "http://127.0.0.1:9223"
+    chrome:
+      channel: "chrome"
+      profile_dir: "data/browser_profiles/chrome-cdp"
+      mode: "cdp"
+      cdp_url: "http://127.0.0.1:9222"
+
+# --------------------------------------------------------------------- #
+# Rede local — alcance de dispositivos (câmeras, TVs, celulares, IoT)
+# Por padrão o agente só alcança as sub-redes DIRETAMENTE conectadas a esta
+# máquina. Nada de internet aberta: allow_public existe, mas é explícito.
+# --------------------------------------------------------------------- #
+rede:
+  habilitado: true
+  allowed_subnets: []         # vazio = detecta as sub-redes locais da máquina
+  allowed_hosts: []           # IPs/hostnames extras (ex.: "192.168.15.42")
+  allow_public: false         # true = permite alvos fora da rede local (assuma o risco)
+  max_hosts: 254              # teto de hosts por varredura
+  scan_timeout_ms: 650        # timeout da sondagem completa de portas
+  probe_timeout_ms: 350       # timeout da 1ª fase (achar hosts vivos)
+  concurrency: 256            # sondagens simultâneas
+  portas: [80, 443, 554, 1883, 3000, 3001, 5000, 8000, 8001, 8080,
+           8081, 8443, 8554, 9000, 9100, 37777, 62078]
+  ssdp_segundos: 3            # janela de descoberta UPnP/SSDP
+  mdns_segundos: 4            # janela de descoberta mDNS (Chromecast, ONVIF…)
+  ffmpeg: "ffmpeg"            # usado para snapshots RTSP de câmeras
+  rtsp_transport: "udp"       # tcp | udp (Yoosee costuma exigir udp)
+  monitoramento: true         # varredura contínua em segundo plano
+  intervalo_monitor_s: 180    # a cada 3 minutos
+  auto_gerenciar: true        # YVAKOR organiza/testa sozinho (manual tem prioridade)
+  adb: "adb"                  # usado para celulares Android (opcional)
+  mqtt:
+    host: ""                  # ex.: 192.168.15.10 (broker da casa)
+    port: 1883
+    user: ""
+    password: ""
+    tls: false
+
+# --------------------------------------------------------------------- #
+# Voz — falar e ouvir
+# --------------------------------------------------------------------- #
+notificacoes:
+  ativo: true
+  categorias: [rede, tarefa, camera, sistema, receita, dispositivo]
+  silencio: ["23:00", "07:00"]
+  intervalo_min_s: 8
+
+voz:
+  habilitado: true
+  idioma: "pt-BR"
+  idiomas: ["pt-BR", "es-ES"]
+  modelos:
+    pt-BR: "vosk-model-small-pt-0.3"
+    es-ES: "vosk-model-small-es-0.42"
+  stt: "auto"                 # auto | vosk | sapi
+  modelo_vosk: "vosk-model-small-pt-0.3"   # baixado sob demanda (~31 MB)
+  modelo_dir: "data/vosk"
+  tts: "auto"                 # auto | edge | sapi
+  voz_edge: "pt-BR-AntonioNeural"
+  vozes:
+    pt-BR: "pt-BR-AntonioNeural"
+    es-ES: "es-ES-AlvaroNeural"
+  voz_sapi: ""                # vazio = melhor voz masculina pt-BR instalada
+  velocidade: 0               # cadência natural
+  tom: "+0Hz"                 # sem deslocamento artificial de pitch
+  escuta_segundos: 7          # tempo máximo de uma fala
+  silencio_rms: 0.012         # abaixo disso conta como silêncio
+  silencio_fim_ms: 900        # silêncio contínuo que encerra a escuta
+  palavra_ativacao: "yvakor"  # vazio = desliga o modo por palavra-chave
+  sessao_segundos: 45         # segue a conversa sem repetir a palavra-chave
+  narrar: true                # fala o que está fazendo durante a tarefa
+
+# --------------------------------------------------------------------- #
+# Cérebro — vault markdown estilo Obsidian, indexado em SQLite/FTS5
+# Abra data/vault/ no Obsidian: notas com [[wikilinks]], tags e grafo.
+# --------------------------------------------------------------------- #
+cerebro:
+  habilitado: true
+  vault_dir: "data/vault"
+  exportar_conversas: true    # cada conversa vira uma nota (resumo + últimas msgs)
+  max_conversas: 50           # quantas conversas exportar por sincronização
+  max_memorias: 300           # quantos fatos viram notas
+  resposta_direta: true       # responde do cérebro sem IA quando souber
+  limiar_direto: 0.7          # confiança mínima p/ resposta sem IA
+  limiar_local: 0.65          # confiança mínima p/ usar o modelo local
+  receitas: true              # permite executar skills com receita aprovada
+  receitas_simular: false     # true = só mostra o plano, sem executar
 
 maintenance:
   enabled: true               # auto-manutenção em segundo plano
@@ -82,3 +208,9 @@ maintenance:
   auto_update_code: false     # true = faz 'git pull' sozinho quando houver versão nova
   git_remote: "origin"
   git_branch: "main"
+
+# Visão local (Ollama) para analisar imagens/telas sem API externa.
+visao:
+  ativa: true
+  modelo: "moondream"         # modelo de visão instalado no Ollama
+  timeout_s: 90

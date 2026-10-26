@@ -35,9 +35,13 @@ def _safe_print(msg: str) -> None:
 
 class ConfirmationGuard:
     def __init__(self, guarded_actions: list[str], auto_approve: bool = False,
-                 always_confirm: list[str] | None = None):
+                 always_confirm: list[str] | None = None,
+                 total: bool = False):
         self.guarded = set(guarded_actions)
         self.auto_approve = auto_approve
+        # Privilégios totais: o agente age como o próprio usuário (sem popup).
+        # Fica registrado em data/auditoria.jsonl para auditoria posterior.
+        self.total = bool(total)
         # Ações que NUNCA são auto-aprovadas (envio externo / destrutivas),
         # mesmo com auto_approve ligado.
         self.always_confirm = set(always_confirm or
@@ -47,6 +51,14 @@ class ConfirmationGuard:
         return action in self.guarded
 
     def confirm(self, action: str, detail: str) -> bool:
+        if self.total:
+            try:
+                from yvakor.arquivos import _auditar
+                _auditar("acao_sem_confirmacao", action, {"detalhe": detail[:200]})
+            except Exception:
+                pass
+            _safe_print(f"  • executado (privilégios totais): {action}")
+            return True
         # Modo automático: aprova ações de trabalho sem travar (registra rastro).
         # Exceção: ações realmente externas/destrutivas seguem exigindo confirmação.
         if self.auto_approve and action not in self.always_confirm:

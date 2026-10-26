@@ -58,7 +58,16 @@ if not exist ".env" (
     echo.
 )
 
-REM --- 5. Smoke test rapido ---------------------------------
+REM --- 5. Navegador controlado (Playwright) ----------------
+echo  [check] Verificando navegador para automacao...
+"%PY%" -m yvakor.browser.setup --check
+if errorlevel 1 (
+    echo  [aviso] Nenhum Chrome/Edge encontrado. Baixando Chromium do Playwright...
+    "%PY%" -m yvakor.browser.setup
+    if errorlevel 1 echo  [aviso] Sem navegador: as ferramentas navegador_* ficarao indisponiveis.
+)
+
+REM --- 6. Smoke test rapido ---------------------------------
 echo  [check] Testando integridade do nucleo...
 "%PY%" tests\test_smoke.py
 if errorlevel 1 (
@@ -67,23 +76,33 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM --- 6. Menu de inicializacao -----------------------------
+REM --- 7. Menu de inicializacao -----------------------------
+REM  Atalho: "INICIAR.bat 1" ja inicia a interface sem menu.
+if not "%~1"=="" set "OPC=%~1"
+if defined OPC goto decidir
+
 :menu
 echo.
 echo  ============================================
 echo    Como deseja iniciar o YVAKOR?
 echo  ============================================
-echo    [1] Interface 3D ^(navegador, http://localhost:7777^)
+echo    [1] Interface nativa YVAKOR ^(app desktop^)
 echo    [2] Terminal ^(modo chat no console^)
 echo    [3] Autoaprendizado ^(gera novas skills do seu perfil^)
 echo    [4] Apenas sair
+echo    [5] Interface web ^(navegador, http://localhost:7777^)
+echo  ============================================
+echo    Atalhos no app: conversas ^| tarefas ^| sistema ^| voz
+echo    Voz no terminal: python -m yvakor.voz
 echo  ============================================
 set /p OPC="  Escolha (1/2/3/4): "
 
-if "%OPC%"=="1" goto web
+:decidir
+if "%OPC%"=="1" goto app
 if "%OPC%"=="2" goto cli
 if "%OPC%"=="3" goto aprender
 if "%OPC%"=="4" exit /b 0
+if "%OPC%"=="5" goto web
 echo  Opcao invalida.
 goto menu
 
@@ -95,16 +114,29 @@ echo.
 pause
 goto menu
 
+:app
+echo.
+echo  Abrindo interface nativa YVAKOR...
+"%PY%" -m yvakor.desktop
+goto end
+
 :web
 echo.
-echo  Encerrando qualquer servidor antigo na porta 7777...
-powershell -NoProfile -Command "$c=Get-NetTCPConnection -LocalPort 7777 -State Listen -ErrorAction SilentlyContinue; if($c){$c.OwningProcess|Sort-Object -Unique|ForEach-Object{Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue}}"
+powershell -NoProfile -Command "try { $r=Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:7777/api/health' -TimeoutSec 3; if($r.StatusCode -eq 200){ Start-Process 'http://localhost:7777'; exit 10 } } catch {}; exit 0"
+if errorlevel 10 (
+    echo  [ok] YVAKOR ja esta em execucao na porta 7777. Interface aberta.
+    goto end
+)
 echo  Limpando cache Python (.pyc)...
 for /d /r "%~dp0yvakor" %%d in (__pycache__) do @if exist "%%d" rd /s /q "%%d"
-echo  Iniciando interface 3D... abrindo navegador.
+echo  Iniciando interface web... abrindo navegador.
 start "" "http://localhost:7777"
-"%PY%" -m yvakor.server
-goto end
+:servico
+"%PY%" -m yvakor.supervisor
+echo.
+echo  [aviso] O supervisor encerrou. Reiniciando em 5 segundos... (Ctrl+C para sair)
+timeout /t 5 >nul
+goto servico
 
 :cli
 echo.

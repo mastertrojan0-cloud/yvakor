@@ -49,9 +49,11 @@ class KnowledgeAbsorber:
         prompt = _load("01_extrator_de_fatos.md",
                        user_message=user_message, answer=answer)
         try:
-            raw = self.router.complete(task_type="classificacao",
-                                       system="Responda apenas JSON válido.",
-                                       user=prompt)
+            raw = self.router.complete_messages(
+                "analise_complexa",
+                [{"role": "system", "content": "Responda apenas JSON válido."},
+                 {"role": "user", "content": prompt}],
+                forcar="deepseek")
             data = _parse_json(raw) or {}
             facts = [f for f in data.get("fatos", []) if isinstance(f, str)]
             for f in facts:
@@ -92,9 +94,11 @@ class KnowledgeAbsorber:
         prompt = _load("04_autoavaliacao.md", user_message=user_message,
                        answer=answer, task_type=task_type)
         try:
-            raw = self.router.complete(task_type="classificacao",
-                                       system="Responda apenas JSON válido.",
-                                       user=prompt)
+            raw = self.router.complete_messages(
+                "analise_complexa",
+                [{"role": "system", "content": "Responda apenas JSON válido."},
+                 {"role": "user", "content": prompt}],
+                forcar="deepseek")
             return _parse_json(raw) or {}
         except Exception:
             return {}
@@ -136,27 +140,17 @@ class KnowledgeAbsorber:
     # 5. Consolidação semanal da memória semântica
     # ------------------------------------------------------------------ #
     def consolidate_memory(self) -> dict:
-        facts = self.semantic.search("", top_k=200) or []
-        if not self.semantic.jsonl.exists():
+        """Pede à IA uma versão limpa dos fatos e substitui no banco."""
+        fatos = self.semantic.todos(limite=300)
+        if not fatos:
             return {"removidos": 0}
-        all_facts = []
-        for line in self.semantic.jsonl.read_text(encoding="utf-8").splitlines():
-            try:
-                all_facts.append(json.loads(line)["fact"])
-            except Exception:
-                continue
-        if not all_facts:
-            return {"removidos": 0}
-        prompt = _load("05_consolidador_memoria.md", fatos="\n".join(all_facts))
+        prompt = _load("05_consolidador_memoria.md", fatos="\n".join(fatos))
         raw = self.router.complete(task_type="analise_complexa",
                                    system="Responda apenas JSON válido.",
                                    user=prompt)
         data = _parse_json(raw) or {}
         clean = data.get("fatos_limpos")
         if clean:
-            self.semantic.jsonl.write_text(
-                "\n".join(json.dumps(
-                    {"ts": datetime.now().isoformat(timespec="seconds"),
-                     "fact": f}, ensure_ascii=False) for f in clean) + "\n",
-                encoding="utf-8")
+            total = self.semantic.substituir(clean)
+            return {"consolidado": True, "fatos": total}
         return data

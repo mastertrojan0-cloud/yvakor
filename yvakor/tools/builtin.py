@@ -194,6 +194,17 @@ def editar_arquivo_local(caminho: str, busca: str, troca: str) -> dict:
 def executar_shell(comando: str, timeout: int = 25, cwd: str | None = None) -> dict:
     """Executa um comando no shell do sistema com timeout. GUARDED."""
     try:
+        import re
+        from yvakor.extensao_bridge import PONTE
+        if (not getattr(PONTE, "permitir_outro", False)
+                and re.search(r"\b(msedge|chrome|firefox|brave)\b", comando or "",
+                              re.I)):
+            return {"ok": False, "error":
+                    "Não abra navegador pelo shell. Use navegador_abrir para "
+                    "abrir na janela da extensão."}
+    except Exception:
+        pass
+    try:
         p = subprocess.run(comando, shell=True, capture_output=True, text=True,
                            timeout=timeout, cwd=cwd)
         return {"ok": p.returncode == 0, "stdout": p.stdout[-8000:],

@@ -119,15 +119,50 @@ class Maintenance:
     def run_cycle(self) -> dict:
         self.last["quando"] = datetime.now().isoformat(timespec="seconds")
         conhecimento = self.consolidate_knowledge()
+        banco = self.maintain_databases()
         codigo = self.check_code_update()
         try:
             self.o.episodic.log("manutencao", "ciclo automático",
                                 f"skills_estaveis={len(conhecimento['skills_estabilizadas'])}; "
+                                f"podados={banco.get('podados', {}).get('removidos', 0)}; "
                                 f"codigo={codigo.get('estado')}")
         except Exception:
             pass
-        return {"quando": self.last["quando"],
-                "conhecimento": conhecimento, "codigo": codigo}
+        return {"quando": self.last["quando"], "conhecimento": conhecimento,
+                "banco": banco, "codigo": codigo}
+
+    # ------------------------------------------------------------------ #
+    # 1b. Banco de dados (poda + índices + VACUUM incremental + cérebro)
+    # ------------------------------------------------------------------ #
+    def maintain_databases(self) -> dict:
+        res: dict = {}
+        try:
+            res["podados"] = self.o.episodic.podar(
+                dias=int(self.cfg.get("reter_operacionais_dias", 30)),
+                max_operacionais=int(self.cfg.get("max_operacionais", 20000)))
+        except Exception as e:
+            res["podados"] = {"erro": str(e)}
+        for nome, obj, metodo in (
+            ("episodico", self.o.episodic, "otimizar"),
+            ("semantico", self.o.semantic, "otimizar"),
+            ("skills", self.o.skills, "otimizar"),
+        ):
+            try:
+                res[nome] = getattr(obj, metodo)()
+            except Exception as e:
+                res[nome] = {"erro": str(e)}
+        if getattr(self.o, "cerebro", None) is not None:
+            try:
+                res["cerebro"] = self.o.cerebro.sincronizar()["status"]
+            except Exception as e:
+                res["cerebro"] = {"erro": str(e)}
+        res["tamanhos_mb"] = {
+            "episodico": res.get("episodico", {}).get("mb", 0),
+            "semantico": res.get("semantico", {}).get("mb", 0),
+            "cerebro": res.get("cerebro", {}).get("mb", 0),
+        }
+        self.last["banco"] = res
+        return res
 
     def start_background(self):
         if not self.cfg.get("enabled", False) or self._timer:

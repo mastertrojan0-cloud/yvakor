@@ -11,7 +11,10 @@ Fluxo por mensagem do usuário:
 """
 
 from __future__ import annotations
+import json
+import re as _re
 import threading
+import time
 from pathlib import Path
 from datetime import datetime
 
@@ -28,6 +31,15 @@ from yvakor.agent import AgentLoop
 from yvakor.cowork import CoworkManager
 from yvakor.maintenance import Maintenance
 from yvakor.config import load_settings
+from yvakor.browser import Navegadores, register_browser_tools
+from yvakor.rede import Rede
+from yvakor.rede.tools import register_rede_tools
+from yvakor.voz.assistente import AssistenteVoz
+from yvakor.voz.tools import register_voz_tools
+from yvakor.cerebro import Cerebro
+from yvakor.cerebro.tools import register_cerebro_tools
+from yvakor.arquivos import register_arquivos_tools
+from yvakor.telemetria import Telemetria
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -66,7 +78,7 @@ class ConfirmationBroker:
     def pending_for(self, sid: str) -> dict | None:
         with self._lock:
             p = self._pending.get(sid)
-            return dict(p) if p else None
+            return dict(p, session=sid) if p else None
 
     def resolve(self, sid: str, allow: bool) -> bool:
         with self._lock:
@@ -82,19 +94,131 @@ class Orchestrator:
     def __init__(self):
         self.settings = load_settings()
         self.router = LLMRouter(self.settings)
+        from yvakor.notificacoes import Notificador
+        self.notificador = Notificador(self.settings)
         self.episodic = EpisodicMemory(ROOT / self.settings["memory"]["episodic_db"])
         self.semantic = SemanticMemory(ROOT / self.settings["memory"]["semantic_index"])
         self.skills = SkillLibrary(ROOT / self.settings["skills"]["library_path"])
         self.reflection = ReflectionLoop(self.router, self.skills, self.episodic)
         self.absorber = KnowledgeAbsorber(self.router, self.semantic,
                                           self.skills, self.episodic)
+        self._abs_lock = threading.Lock()
+        self._avaliacao_lock = threading.Lock()
         self.tools = ToolRegistry(self.settings)
+        from yvakor.capacidades import register_capacidades_tools
+        register_capacidades_tools(self.tools, self.router)
+        from yvakor.projetos import GerenciadorProjetos, registrar_ferramentas
+        self.projetos = GerenciadorProjetos()
+        registrar_ferramentas(self.tools, self.projetos)
+        from yvakor.midia import Player, registrar_ferramentas as _reg_midia
+        self.midia = Player()
+        _reg_midia(self.tools, self.midia)
+        from yvakor.mcp import MCPManager
+        self.mcp = MCPManager(self.tools)
+        try:
+            self.mcp.iniciar()
+        except Exception as e:
+            print(f"  [aviso] MCP indisponível: {e}")
+        from yvakor.pesquisa import registrar_ferramentas as _reg_pesquisa
+        _reg_pesquisa(self.tools, self.router)
+        from yvakor.documentos import registrar_ferramentas as _reg_docs
+        _reg_docs(self.tools)
+        from yvakor.agenda import Agenda, registrar_ferramentas as _reg_agenda
+        self.agenda = Agenda(self)
+        _reg_agenda(self.tools, self.agenda)
+        from yvakor.colaboracao import registrar_ferramentas as _reg_colab
+        _reg_colab(self.tools, self.router)
+        from yvakor.entregaveis import registrar_ferramentas as _reg_entregas
+        _reg_entregas(self.tools)
+        from yvakor.visao import registrar_ferramentas as _reg_visao
+        _reg_visao(self.tools)
+        if self.projetos.precisa_escanear():
+            threading.Thread(target=self.projetos.escanear, daemon=True,
+                             name="yvakor-projetos").start()
+        from yvakor.notificacoes import register_notificacoes_tools
+        register_notificacoes_tools(self.tools, self.notificador)
         register_builtins(self.tools)
+        register_arquivos_tools(self.tools)   # acesso total ao sistema de arquivos
+        # Navegador real (controle de Edge/Chrome). Se o Playwright não estiver
+        # instalado, o agente continua funcionando — só sem as ferramentas web.
+        # Navegadores reais (Edge + Chrome), cada um com perfil próprio.
+        self.browser = None
+        self.navegadores: Navegadores | None = None
+        try:
+            self.navegadores = Navegadores(self.settings)
+            register_browser_tools(self.tools, self.navegadores)
+            self._usar_extensao_como_alvo()
+            self.browser = self.navegadores.sessao()   # compatibilidade
+        except Exception as e:
+            print(f"  [aviso] navegador indisponível: {e}")
         # Conectores: injeta as ferramentas dos serviços já conectados (e-mail,
         # WhatsApp, GitHub, Telegram…). O agente passa a usá-las quando precisar.
         self.connectors = ConnectorManager(self.tools, ROOT / "data" / "connectors.json")
+        # Rede local: descoberta e controle de câmeras, TVs, celulares e IoT.
+        self.rede: Rede | None = None
+        try:
+            self.rede = Rede(self.settings)
+            self.monitor_rede = None
+            from yvakor.rede.monitor import MonitorRede
+            self.rede.monitor = MonitorRede(self.rede, self.settings)
+            self.monitor_rede = self.rede.monitor
+            if self.settings.get("rede", {}).get("monitoramento", True):
+                self.monitor_rede.iniciar()
+            register_rede_tools(self.tools, self.rede)
+        except Exception as e:
+            print(f"  [aviso] rede local indisponível: {e}")
+        # Voz: STT local (Vosk) + TTS (edge/SAPI).
+        self.voz: AssistenteVoz | None = None
+        try:
+            self.voz = AssistenteVoz(self, self.settings)
+            register_voz_tools(self.tools, self.voz)
+            if self.notificador is not None:
+                self.notificador.configurar_voz(self.voz.tts)
+        except Exception as e:
+            print(f"  [aviso] voz indisponível: {e}")
+
+        # Se o processo anterior morreu no meio de uma tarefa, avisa ao subir.
+        try:
+            marca = ROOT / "data" / "tarefa_em_andamento.json"
+            if marca.exists():
+                dados = json.loads(marca.read_text(encoding="utf-8"))
+                self.notificador.emitir(
+                    "Reiniciei e interrompi a tarefa anterior: "
+                    + str(dados.get("texto", ""))[:100], "tarefa", 2)
+                marca.unlink()
+        except Exception:
+            pass
+        # Cérebro: vault markdown (Obsidian) indexado em FTS5.
+        self.cerebro: Cerebro | None = None
+        try:
+            self.cerebro = Cerebro(self.settings, self.episodic,
+                                   self.semantic, self.skills)
+            register_cerebro_tools(self.tools, self.cerebro)
+            self.cerebro.definir_executor(self.tools)
+            from yvakor.ambiente import (
+                aprender_equipamento, register_ambiente_tools)
+            register_ambiente_tools(self.tools, self.rede, self.cerebro)
+            if self.monitor_rede is not None:
+                def _aprender_auto(dev, _self=self):
+                    aprender_equipamento(_self.rede, _self.cerebro,
+                                         dev.get("ip"), sincronizar=True)
+                self.monitor_rede.aprendiz = _aprender_auto
+            # mantém o vault fresco logo no boot (sem bloquear a subida)
+            threading.Thread(target=self.cerebro.sincronizar, daemon=True,
+                             name="yvakor-vault-boot").start()
+        except Exception as e:
+            print(f"  [aviso] cérebro indisponível: {e}")
         self.agent = AgentLoop(self.router, self.tools,
-                               max_iterations=self.settings["agent"]["max_iterations"])
+                               max_iterations=self.settings["agent"]["max_iterations"],
+                               nativo=self.settings["agent"].get(
+                                   "ferramentas_nativas", False),
+                               roteador=self.settings["agent"].get(
+                                   "router_ferramentas", True),
+                               max_ferramentas=int(self.settings["agent"].get(
+                                   "max_ferramentas", 14)),
+                               timeout_s=int(self.settings["agent"].get(
+                                   "timeout_s", 180)))
+        self.ultimos_artefatos: list[dict] = []
         self.cowork = CoworkManager(self, self.settings)
         self.maintenance = Maintenance(self)
         self.identity_path = ROOT / "identity" / "core_identity.md"
@@ -104,6 +228,7 @@ class Orchestrator:
         self._prog_lock = threading.Lock()
         # Confirmação de ações protegidas via interface (popup no navegador)
         self.confirm_broker = ConfirmationBroker()
+        self.telemetria = Telemetria()
 
     # ------------------------------------------------------------------ #
     # Progresso ao vivo (a interface faz polling em /api/progress)
@@ -145,6 +270,36 @@ class Orchestrator:
             "converter_xlsx_para_json": "📊 convertendo",
             "gerar_proposta_html": "📝 gerando proposta",
             "extrair_log_docker": "🐳 logs docker",
+            "navegador_abrir": "🖥️ abrindo", "navegador_ir": "🖥️ navegando",
+            "navegador_ver": "👁️ vendo página", "navegador_clicar": "🖱️ clicando",
+            "navegador_preencher": "⌨️ preenchendo", "navegador_pesquisar": "🔍 buscando",
+            "navegador_extrair": "📑 extraindo", "navegador_captura": "📸 capturando",
+            "navegador_rolar": "🖱️ rolando", "navegador_esperar": "⏱️ esperando",
+            "navegador_abas": "🗂️ abas", "navegador_nova_aba": "🗂️ nova aba",
+            "navegador_trocar_aba": "🗂️ trocando aba",
+            "navegador_fechar_aba": "🗂️ fechando aba",
+            "navegador_fechar": "🖥️ fechando navegador",
+            "rede_escanear": "🌐 varrendo rede", "rede_dispositivos": "📋 inventário",
+            "rede_camera_snapshot": "📷 foto da câmera", "rede_camera_ptz": "🎯 movendo câmera",
+            "rede_camera_gravar": "🎥 gravando câmera", "rede_camera_info": "📷 info da câmera",
+            "rede_camera_descobrir": "📷 procurando câmeras",
+            "rede_cast": "📺 Chromecast", "rede_tv": "📺 TV",
+            "rede_telefone_tela": "📱 print do celular", "rede_telefone_acao": "📱 celular",
+            "rede_telefone_conectar": "📱 conectando celular",
+            "rede_telefone_dispositivos": "📱 celulares",
+            "rede_http_dispositivo": "🔌 aparelho HTTP", "rede_mqtt_publicar": "📡 MQTT",
+            "rede_mqtt_ler": "📡 lendo MQTT", "rede_wol": "⏻ ligando por rede",
+            "voz_falar": "🔊 falando", "voz_ouvir": "🎙️ ouvindo",
+            "voz_transcrever": "🎙️ transcrevendo",
+            "cerebro_buscar": "🧠 buscando no cérebro",
+            "cerebro_sincronizar": "🧠 sincronizando cérebro",
+            "cerebro_nota": "🧠 lendo nota", "cerebro_grafo": "🧠 grafo",
+            "cerebro_escrever": "🧠 escrevendo nota",
+            "arquivos_listar": "📂 listando", "arquivos_ler": "📄 lendo",
+            "arquivos_escrever": "✍️ escrevendo", "arquivos_editar": "✏️ editando",
+            "arquivos_buscar": "🔎 buscando arquivos", "arquivos_apagar": "🗑️ apagando",
+            "arquivos_mover": "📦 movendo", "arquivos_copiar": "📋 copiando",
+            "arquivos_zipar": "🗜️ compactando", "arquivos_extrair": "📦 extraindo",
         }
         base = icones.get(nome, f"🔧 {nome}")
         return f"{base} {det}".strip()
@@ -152,19 +307,186 @@ class Orchestrator:
     # ------------------------------------------------------------------ #
     # Contexto
     # ------------------------------------------------------------------ #
-    def build_system_prompt(self, user_message: str) -> str:
-        identity = self.identity_path.read_text(encoding="utf-8")
-        principles = self.principles_path.read_text(encoding="utf-8")
-        relevant_skills = self.skills.find_relevant(user_message, top_k=2)
-        memories = self.semantic.search(user_message,
-                                        top_k=self.settings["memory"]["semantic_top_k"])
+    def _usar_extensao_como_alvo(self) -> None:
+        """Abas padrão na janela do Chrome onde a extensão está aberta."""
+        from yvakor.extensao_bridge import PONTE
 
-        parts = [identity, principles]
+        def alvo_ext(navegador: str) -> bool:
+            msg = getattr(self, "_msg_atual", "") or ""
+            if _re.search(r"\b(edge|firefox|outro navegador|outra janela|"
+                          r"playwright)\b", msg, _re.I):
+                return False
+            return True
+
+        def chamar(tipo: str, _orig, **kw) -> dict:
+            r = PONTE.comando(tipo, kw)
+            if r.get("ok"):
+                r["engine"] = "chrome (extensão)"
+            return r
+
+        # Operações de navegador no mesmo Chrome da extensão.
+        mapa = {
+            "navegador_ir": ("goto", ("url",)),
+            "navegador_ver": ("snapshot", ()),
+            "navegador_extrair": ("extract", ("selector", "max_chars")),
+            "navegador_clicar": ("click", ("alvo",)),
+            "navegador_preencher": ("fill", ("alvo", "valor", "enviar")),
+            "navegador_pressionar": ("press", ("tecla", "alvo")),
+            "navegador_rolar": ("scroll", ("direcao", "vezes")),
+            "navegador_abas": ("tabs", ()),
+            "navegador_pesquisar": ("search", ("termo",)),
+            "navegador_trocar_aba": ("switch_tab", ("indice",)),
+            "navegador_fechar_aba": ("close_tab", ("indice",)),
+        }
+        for nome, (tipo, campos) in mapa.items():
+            original = self.tools.tools.get(nome)
+            if original is None:
+                continue
+            spec = self.tools.specs.get(nome, {})
+
+            def wrapper(*_args, _orig=original, _tipo=tipo,
+                        _campos=campos, **kwargs):
+                navegador = kwargs.get("navegador", "")
+                if alvo_ext(navegador):
+                    dados = {k: kwargs.get(k) for k in _campos
+                             if kwargs.get(k) is not None}
+                    return chamar(_tipo, _orig, **dados)
+                return _orig(*_args, **kwargs)
+
+            self.tools.register(nome, wrapper,
+                                (spec.get("desc") or "Navegador.") +
+                                " Usa a janela do Chrome da extensão.",
+                                spec.get("args") or {})
+
+        for nome, comando_tipo in (("navegador_abrir", "open"),
+                                   ("navegador_nova_aba", "newtab")):
+            original = self.tools.tools.get(nome)
+            if original is None:
+                continue
+            spec = self.tools.specs.get(nome, {})
+
+            def wrapper(url: str = "", navegador: str = "",
+                        _orig=original, _tipo=comando_tipo):
+                if alvo_ext(navegador):
+                    r = PONTE.comando(_tipo, {"url": url or "",
+                                              "ativo": True})
+                    if r.get("ok"):
+                        r["engine"] = "chrome (extensão)"
+                        return r
+                    return {"ok": False, "error": r.get("erro") or
+                            "a extensão não abriu a aba"}
+                return _orig(url=url, navegador=navegador)
+
+            self.tools.register(
+                nome, wrapper,
+                (spec.get("desc") or "Abre aba no navegador.") +
+                " Prioriza a janela do Chrome onde a extensão está aberta; "
+                "use navegador='edge' para outro navegador.",
+                {"url": "str", "navegador": "str?"})
+
+        # O modelo às vezes tenta abrir navegador via shell; isso furaria a
+        # ordem de usar somente o Chrome da extensão. Redireciona para a ponte.
+        shell_original = self.tools.tools.get("executar_shell")
+        if shell_original is not None:
+            def shell_wrapper(comando: str = "", timeout: int = 25,
+                              cwd: str | None = None, _orig=shell_original):
+                msg = getattr(self, "_msg_atual", "") or ""
+                if _re.search(r"\b(edge|firefox|outro navegador|outra janela|"
+                              r"playwright)\b", msg, _re.I):
+                    return _orig(comando, timeout, cwd)
+                if _re.search(r"\b(msedge|chrome|firefox|brave)\b", comando or "",
+                              _re.I) or _re.search(r"\bstart\s+https?://",
+                                                   comando or "", _re.I):
+                    return {"ok": False, "error":
+                            "Não abra navegador pelo shell. Use navegador_abrir "
+                            "para abrir na janela da extensão."}
+                return _orig(comando, timeout, cwd)
+            self.tools.register("executar_shell", shell_wrapper,
+                                "Executa shell. Bloqueia abrir navegador fora "
+                                "da janela da extensão.",
+                                {"comando": "str", "timeout": "int?",
+                                 "cwd": "str?"})
+
+    def build_system_prompt(self, user_message: str,
+                            extra_context: str | None = None) -> str:
+        identity = self.identity_path.read_text(encoding="utf-8")[:5000]
+        principles = self.principles_path.read_text(encoding="utf-8")[:3000]
+        relevant_skills = self.skills.find_relevant(user_message, top_k=2)
+        memories = self.semantic.search(user_message, top_k=3)
+
+        regras = (
+            "## REGRAS DE RESPOSTA\n"
+            "- Use o contexto apenas se ele responder DIRETAMENTE à pergunta; "
+            "ignore o que for tangencial.\n"
+            "- Se não houver informação suficiente, diga que não sabe. "
+            "Nunca invente fatos, caminhos, resultados ou passos executados.\n"
+            "- Para pedidos de ação, execute a ferramenta; não responda com "
+            "instruções genéricas.\n"
+            "- Seja autônomo: assuma o objetivo e execute até o fim. Não peça "
+            "permissão para ler, pesquisar, navegar, gerar arquivo, gráfico ou "
+            "imagem. Só confirme ações destrutivas/irreversíveis.\n"
+            "- Se uma ferramenta falhar, tente uma alternativa sozinho (outra "
+            "fonte, outro formato, fallback) antes de desistir.\n"
+            "- Não pare no primeiro obstáculo nem entregue só um plano: "
+            "entregue o resultado concreto.\n"
+            "- Se o pedido estiver claro, aja imediatamente; não termine com "
+            "“posso fazer?” nem peça autorização para o óbvio.\n"
+            "- Só afirme que fez algo se houver observação de ferramenta "
+            "confirmando.\n"
+            "- Em conversa simples, responda em no máximo 3 frases. Não "
+            "cumprimente, não repita a pergunta e não explique o que vai fazer.\n"
+            "- Em análise/entrega, use no máximo 5 tópicos curtos + conclusão; "
+            "detalhes vão no arquivo, não no chat.\n"
+            "- Não termine com ofertas (“se quiser”, “posso...”, “fico à "
+            "disposição”) nem faça perguntas que o usuário não pediu.\n"
+            "- Quando pedirem foto, gráfico, planilha, relatório, documento ou "
+            "arquivo, GERE o entregável com a ferramenta e entregue o link; não "
+            "apenas descreva o que seria possível.\n"
+            "- Você TEM a ferramenta buscar_foto para fotos reais; use-a em vez "
+            "de dizer que não consegue buscar imagens. Se não houver foto, ela "
+            "gera uma imagem de fallback.\n"
+            "- Em entregas, feche com um resumo do que foi gerado e o link.\n"
+            "- Conversa contínua: em mensagens curtas de continuação "
+            "(“e agora?”, “isso”, “ele”, “sim”, “não”, “faça”), use os turnos "
+            "anteriores; não peça ao usuário para repetir o contexto.")
+        parts = [identity, principles, regras]
         if relevant_skills:
             parts.append("## SKILLS RELEVANTES (siga estes procedimentos)\n"
-                         + "\n---\n".join(relevant_skills))
+                         + "\n---\n".join(s[:1200] for s in relevant_skills))
         if memories:
-            parts.append("## MEMÓRIAS RELEVANTES\n" + "\n".join(f"- {m}" for m in memories))
+            parts.append("## MEMÓRIAS RELEVANTES\n"
+                         + "\n".join(f"- {m[:300]}" for m in memories))
+        if extra_context:
+            orcamento = int(self.settings.get("contexto", {}).get(
+                "max_caracteres", 9000))
+            parts.append(extra_context[:orcamento])
+            if "PÁGINA ATUAL DO CHROME" in extra_context:
+                parts.append(
+                    "## COMO RESPONDER SOBRE A PÁGINA\n"
+                    "- Baseie a resposta no conteúdo acima; não invente o que "
+                    "não está nele.\n"
+                    "- Cite a seção/título quando ajudar a localizar a informação.\n"
+                    "- Se a resposta não estiver na página, diga claramente e "
+                    "ofereça o próximo passo.\n"
+                    "- A página já foi lida automaticamente. NUNCA peça print, "
+                    "screenshot ou para o usuário colar o conteúdo; analise o "
+                    "contexto recebido.")
+        if _re.search(r"\b(abre|abra|navegue|acesse|clique|preencha|pesquise|"
+                      r"digite|site|p[aá]gina|navegador|chrome|youtube)\b",
+                      user_message or "", _re.I):
+            parts.append(
+                "## MODO NAVEGADOR\n"
+                "- Execute a intenção INTEIRA (abrir + pesquisar + clicar + "
+                "preencher), não pare na primeira ação.\n"
+                "- Depois de cada ação, use navegador_ver ou leia o retorno para "
+                "confirmar URL, título e conteúdo.\n"
+                "- A interação é visível: cursor, clique e digitação acontecem "
+                "na página.\n"
+                "- Nunca use executar_shell para abrir navegador; use "
+                "navegador_abrir. O padrão é a janela da extensão; só use Edge "
+                "se o usuário pedir.\n"
+                "- Só finalize quando o objetivo estiver confirmado; se um "
+                "caminho falhar, tente outro sozinho.")
         # O histórico da conversa NÃO entra mais aqui como texto truncado: agora
         # é enviado ao modelo como turnos user/assistant reais (ver process()).
         parts.append(f"## DATA ATUAL\n{datetime.now().strftime('%Y-%m-%d %H:%M')}")
@@ -202,9 +524,14 @@ class Orchestrator:
             r = self.maintenance.run_cycle()
             est = r["conhecimento"]["skills_estabilizadas"]
             cod = r["codigo"]
+            banco = r.get("banco", {})
+            tamanhos = banco.get("tamanhos_mb", {})
             return ("🔧 Manutenção concluída.\n"
                     f"- Skills promovidas a estáveis: {', '.join(est) or 'nenhuma'}\n"
                     f"- Memória: {r['conhecimento'].get('memoria', {})}\n"
+                    f"- Banco: {banco.get('podados', {}).get('removidos', 0)} "
+                    f"registros podados · "
+                    f"índices otimizados ({', '.join(f'{k} {v} MB' for k, v in tamanhos.items())})\n"
                     f"- Código: {cod.get('estado')} — {cod.get('motivo')}")
 
         if low.startswith("[cowork-resultado]"):
@@ -215,14 +542,23 @@ class Orchestrator:
             tid = msg.split("]", 1)[1].strip() or None
             return self.cowork.status(tid)
 
+        if low.startswith("[cowork-cancelar]"):
+            tid = msg.split("]", 1)[1].strip()
+            if not tid:
+                return "Uso: [cowork-cancelar] <id-da-tarefa>"
+            r = self.cowork.cancel(tid)
+            return ("⏹ Cancelamento solicitado." if r.get("ok")
+                    else f"❌ {r.get('erro')}")
+
         if low.startswith("[cowork]"):
             desc = msg.split("]", 1)[1].strip()
             if not desc:
                 return "Uso: [cowork] <descrição da tarefa>"
-            tid = self.cowork.submit(desc)
-            return (f"🚀 Tarefa cowork disparada: {tid}\n"
+            t = self.cowork.submit(desc)
+            return (f"🚀 Tarefa cowork disparada: {t['id']}\n"
                     f"   Descrição: {desc}\n"
-                    f"   Use [cowork-status] para acompanhar.")
+                    f"   Workspace: {t.get('workspace')}\n"
+                    f"   Use [cowork-status] {t['id']} para acompanhar.")
 
         # ---- Gestão de conversas ----
         if low.startswith("[nova]"):
@@ -307,25 +643,266 @@ class Orchestrator:
     # ------------------------------------------------------------------ #
     # Loop principal
     # ------------------------------------------------------------------ #
-    def process(self, user_message: str) -> str:
-        special = self.handle_special(user_message)
-        if special is not None:
-            return special
+    def process(self, user_message: str, session_id: str | None = None,
+                should_stop=None, extra_context: str | None = None,
+                on_event=None, private: bool = False,
+                history_override: list[dict] | None = None) -> str:
+        """Processa uma mensagem; `private` não grava nada no histórico."""
+        try:
+            self.episodic.modo_privado(private)
+            return self._process_impl(
+                user_message, session_id=session_id, should_stop=should_stop,
+                extra_context=extra_context, on_event=on_event,
+                private=private, history_override=history_override)
+        finally:
+            try:
+                self.episodic.modo_privado(False)
+            except Exception:
+                pass
 
-        system = self.build_system_prompt(user_message)
+    def _process_impl(self, user_message: str, session_id: str | None = None,
+                      should_stop=None, extra_context: str | None = None,
+                      on_event=None, private: bool = False,
+                      history_override: list[dict] | None = None) -> str:
+        """Processa uma mensagem.
+
+        session_id: sessão onde ler/gravar o histórico. None = conversa ativa.
+                    Tarefas cowork passam a própria sessão (isolada).
+        should_stop: callable → True interrompe entre passos (cancelamento).
+        extra_context: texto extra injetado no system prompt (ex.: workspace
+                    e orçamento de passos de uma tarefa cowork).
+        """
+        # Comandos especiais só fazem sentido na conversa interativa.
+        if session_id is None and not private:
+            special = self.handle_special(user_message)
+            if special is not None:
+                return special
+
+        sid = session_id or getattr(self.episodic, "active_id", "default")
+        inicio = time.time()
+        self._msg_atual = user_message
+        from yvakor.extensao_bridge import PONTE as _ponte
+        _ponte.permitir_outro = bool(_re.search(
+            r"\b(edge|firefox|outro navegador|outra janela|playwright)\b",
+            user_message or "", _re.I))
+        passos = {"n": 0}
+        self.ultimos_artefatos = []
+
+        # Chamada pelo nome: responde na hora; com pedido junto, remove o nome.
+        from yvakor.nome import separar as _separar_nome
+        _chamou, _resto = _separar_nome(user_message)
+        if _chamou:
+            if not _resto:
+                resposta = "Estou aqui. Pode falar."
+                self.episodic.log("conversa", user_message, resposta,
+                                  session_id=sid)
+                return resposta
+            user_message = _resto
+
+        # Intenções diretas de texto (hora, data, status…), sem IA.
+        from yvakor.voz.diretos import detectar as _dd, executar as _de
+        _int = _dd(user_message)
+        if _int:
+            _resp = _de(self, _int, getattr(self, "ultima_resposta", ""))
+            self.ultima_resposta = _resp
+            self.episodic.log("conversa", user_message, _resp, session_id=sid)
+            return _resp
+
+        # Navegação direta: abrir site/diagnosticar navegador, sem IA.
+        try:
+            from yvakor.voz.navegacao import detectar as _dn, executar as _en
+            _int_nav = _dn(user_message)
+            if _int_nav:
+                _resp = _en(self, _int_nav)
+                self.ultima_resposta = _resp
+                self.episodic.log("conversa", user_message, _resp,
+                                  session_id=sid)
+                return _resp
+        except Exception:
+            pass
+
+        # Comando de rede por texto: executa direto (sem IA), como na voz.
+        try:
+            from yvakor.voz.rede import detectar as _dr, executar as _er
+            if _dr(user_message):
+                _r = _er(self, user_message)
+                _resp = _r.get("fala") or "Comando de rede executado."
+                self.episodic.log("conversa", user_message, _resp,
+                                  session_id=sid)
+                try:
+                    self.telemetria.registrar(
+                        "rede", (time.time() - inicio) * 1000,
+                        detalhe=_r.get("acao", ""))
+                except Exception:
+                    pass
+                return _resp
+        except Exception:
+            pass
+
+        # Aprendiz de entorno por texto (mapear/ficha), direto.
+        try:
+            from yvakor.voz.ambiente import detectar as _da, executar as _ea
+            if _da(user_message):
+                _ra = _ea(self, user_message)
+                _resp = _ra.get("fala") or "Ambiente atualizado."
+                self.episodic.log("conversa", user_message, _resp,
+                                  session_id=sid)
+                return _resp
+        except Exception:
+            pass
+
+        # Desenvolvimento completo: gera, salva e abre o projeto.
+        try:
+            from yvakor.voz.desenvolvimento import detectar as _dd, executar as _ed
+            if _dd(user_message):
+                _rd = _ed(self, user_message)
+                _resp = _rd.get("fala") or "Projeto gerado."
+                self.episodic.log("conversa", user_message, _resp,
+                                  session_id=sid)
+                return _resp
+        except Exception:
+            pass
+
+        # ---- Cérebro primeiro: conhecimento antes de gastar IA ----
+        decisao = None
+        try:
+            from yvakor.conversa import eh_continuacao
+            continuacao = eh_continuacao(user_message)
+        except Exception:
+            continuacao = False
+        tem_anexos = bool(extra_context and (
+            "ANEXOS ENVIADOS" in extra_context
+            or "PÁGINA ATUAL DO CHROME" in extra_context))
+        quer_memoria = bool(_re.search(
+            r"\b(lembra|lembrar|mem[oó]ria|recorda|anterior|conversa|sess[aã]o|"
+            r"nota|skill|receita|projeto|falamos|sabe sobre|o que você sabe)\b",
+            user_message or "", _re.I))
+        if (not continuacao and not private and not tem_anexos and quer_memoria
+                and self.cerebro is not None
+                and self.settings.get("cerebro", {}).get("resposta_direta", True)):
+            try:
+                decisao = self.cerebro.decidir(user_message)
+            except Exception:
+                decisao = None
+
+        if decisao and decisao.get("modo") == "cerebro":
+            resposta = decisao["resposta"]
+            self._prog_start(sid)
+            self._prog_step(sid, "🧠 respondido pelo cérebro (sem IA)")
+            self._prog_done(sid)
+            self.episodic.log("conversa", user_message, resposta, session_id=sid)
+            try:
+                self.cerebro.registrar_origem("cerebro")
+                self._sincronizar_cerebro_async()
+            except Exception:
+                pass
+            try:
+                self.telemetria.registrar(
+                    "cerebro", (time.time() - inicio) * 1000,
+                    detalhe="resposta direta do vault/memória")
+            except Exception:
+                pass
+            return resposta
+
+        if decisao and decisao.get("modo") == "receita":
+            receita = decisao["receita"]
+            simular = bool(self.settings.get("cerebro", {}).get(
+                "receitas_simular", False))
+            r = self.cerebro.executar_receita(receita, user_message, simular)
+            if r.get("ok"):
+                if r.get("simulado"):
+                    resposta = (f"🧪 Simulação da receita **{receita.nome}** "
+                                f"(nada foi executado):\n```json\n"
+                                f"{json.dumps(r.get('plano'), ensure_ascii=False, indent=2)[:1500]}\n```")
+                else:
+                    ultimo = (r.get("resultados") or [{}])[-1]
+                    resposta = (f"✅ Receita **{receita.nome}** executada em "
+                                f"{r.get('passos')} passo(s).\n\n"
+                                f"```json\n{json.dumps(ultimo, ensure_ascii=False)[:1200]}\n```")
+            else:
+                detalhe = r.get("erro") or "; ".join(r.get("erros") or [])
+                resposta = f"⚠️ Receita **{receita.nome}** não executou: {detalhe}"
+            self._prog_start(sid)
+            self._prog_step(sid, f"⚙️ receita: {receita.nome}")
+            self._prog_done(sid)
+            self.episodic.log("conversa", user_message, resposta, session_id=sid)
+            try:
+                self.cerebro.registrar_origem("receita")
+                self._sincronizar_cerebro_async()
+            except Exception:
+                pass
+            try:
+                self.telemetria.registrar(
+                    "receita", (time.time() - inicio) * 1000,
+                    ferramentas=len(receita.passos),
+                    detalhe=receita.nome)
+            except Exception:
+                pass
+            return resposta
+
+        contexto_cerebro = decisao.get("contexto") if decisao else None
+        forcar = "ollama" if (decisao and decisao.get("modo") == "local") else None
+
+        # Caminho local rápido: prompt curto, sem ferramentas. O 3B em CPU não
+        # aguenta o prompt completo do agente (travava 4-6 minutos).
+        if forcar == "ollama":
+            try:
+                foco = (contexto_cerebro or "")[:1500]
+                sistema_local = (
+                    "Você é o YVAKOR, agente local. Responda em português, "
+                    "direto e curto. Não use JSON, ferramentas nem comandos.")
+                if foco:
+                    sistema_local += "\n\nContexto conhecido:\n" + foco
+                self._prog_start(sid)
+                resposta_local = self.router.complete_messages(
+                    "resposta_simples",
+                    [{"role": "system", "content": sistema_local},
+                     {"role": "user", "content": user_message}],
+                    forcar="ollama").strip()
+                if resposta_local:
+                    self._prog_done(sid)
+                    self.episodic.log("conversa", user_message, resposta_local,
+                                      session_id=sid)
+                    if self.cerebro is not None:
+                        try:
+                            self.cerebro.registrar_origem("local")
+                        except Exception:
+                            pass
+                    try:
+                        self.telemetria.registrar(
+                            "local", (time.time() - inicio) * 1000,
+                            provedor="ollama", ferramentas=0)
+                    except Exception:
+                        pass
+                    self._sincronizar_cerebro_async()
+                    return resposta_local
+                self._prog_done(sid)
+                forcar = None
+            except Exception:
+                self._prog_done(sid)
+                forcar = None
+
+        system = self.build_system_prompt(
+            user_message, self._juntar_contexto(extra_context, contexto_cerebro))
         task_type = self.router.classify(user_message)
-        sid = getattr(self.episodic, "active_id", "default")
         self._prog_start(sid)
 
         # Loop de agente: a IA decide e executa ferramentas (Claude Code-like).
         # A continuidade vem do histórico REAL da conversa (turnos user/assistant),
         # não mais de um resumo truncado no system prompt.
         def _trace(tipo, dado):
+            if on_event is not None:
+                try:
+                    on_event(tipo, dado)
+                except Exception:
+                    pass
             if tipo == "ferramenta":
+                passos["n"] += 1
                 label = self._rotulo_passo(dado)
                 self._prog_step(sid, label)
                 self.episodic.log("ferramenta", dado.get("nome", ""),
-                                  str(dado.get("args", ""))[:500])
+                                  str(dado.get("args", ""))[:500],
+                                  session_id=sid)
                 # Feedback ao vivo no terminal (CLI)
                 try:
                     print(f"\n  {label}", flush=True)
@@ -340,26 +917,203 @@ class Orchestrator:
                     except Exception:
                         pass
 
-        history = self.episodic.history_messages(
-            self.settings["memory"]["episodic_context_last_n"])
+        history = (list(history_override) if history_override is not None
+                   else self.episodic.history_messages(
+                       self.settings["memory"]["episodic_context_last_n"],
+                       session_id=sid))
         history.append({"role": "user", "content": user_message})
 
         # Ações protegidas pedem confirmação via interface (popup no navegador),
-        # roteadas pelo broker para ESTA conversa.
+        # roteadas pelo broker para ESTA sessão (conversa ou tarefa cowork).
         from yvakor.tools.guard import set_thread_confirmer, clear_thread_confirmer
         set_thread_confirmer(
             lambda action, detail: self.confirm_broker.request(sid, action, detail))
         try:
-            answer = self.agent.run(system, history=history, on_event=_trace)
+            answer = self.agent.run(system, history=history, on_event=_trace,
+                                    should_stop=should_stop,
+                                    forcar_provider=forcar)
+            self.ultimos_artefatos = list(getattr(self.agent, "artefatos", []))
+            answer = self._completar_entregaveis(answer, self.ultimos_artefatos)
+            answer = self._podar_resposta(answer, user_message, task_type,
+                                          self.ultimos_artefatos)
         finally:
             clear_thread_confirmer()
             self._prog_done(sid)
 
-        self.episodic.log("conversa", user_message, answer)
-        self.episodic.maybe_autotitle(user_message)   # título estilo Claude
+        self.episodic.log("conversa", user_message, answer, session_id=sid)
+        # Título automático só na conversa do usuário (sessões de tarefa têm
+        # nome próprio e não devem ser renomeadas).
+        if sid == self.episodic.active_id:
+            self.episodic.maybe_autotitle(user_message)
 
         # Absorção automática: extrai fatos + destila skills da IA principal
-        if self.settings["agent"]["reflection_enabled"]:
-            self.absorber.after_response(user_message, answer, task_type)
+        if self.settings["agent"]["reflection_enabled"] and not private:
+            threading.Thread(target=self._absorver_fundo,
+                             args=(user_message, answer, task_type),
+                             daemon=True, name="yvakor-absorver").start()
+        if self.settings["agent"].get("avaliar_auto") and not private:
+            threading.Thread(target=self._avaliar_fundo,
+                             args=(user_message, answer),
+                             daemon=True, name="yvakor-avaliar").start()
 
+        if self.cerebro is not None:
+            try:
+                self.cerebro.registrar_origem("local" if forcar else "api")
+            except Exception:
+                pass
+        try:
+            self.telemetria.registrar(
+                "local" if forcar else "api",
+                (time.time() - inicio) * 1000,
+                provedor="ollama" if forcar else "deepseek",
+                ferramentas=passos["n"])
+        except Exception:
+            pass
+        # Obsidian quase em tempo real: sincroniza no máximo a cada 2 min.
+        self._sincronizar_cerebro_async()
         return answer
+
+    def _podar_resposta(self, texto: str, pergunta: str, task_type: str,
+                        artefatos: list[dict]) -> str:
+        """Remove preâmbulo/ofertas e limita resposta simples."""
+        import re
+        t = (texto or "").strip()
+        if not t:
+            return t
+        t = re.sub(r"^(?:claro|certamente|com certeza|perfeito|ótimo|otimo)"
+                   r"[!,.]?\s*", "", t, flags=re.I)
+        t = re.sub(r"^(?:vou|vamos|aqui está|aqui esta|segue)\b[^\n.!?]*[.!?]\s*",
+                   "", t, flags=re.I)
+        t = re.sub(r"\n+(?:se quiser|caso (?:queira|precise)|posso (?:também|"
+                   r"tambem|ajudar)|quer que eu|fico à disposição|fico a "
+                   r"disposicao)[\s\S]*$", "", t, flags=re.I).rstrip()
+        complexo = (bool(artefatos) or len(pergunta or "") > 180
+                    or task_type in ("analise_complexa", "codigo", "código",
+                                     "arquitetura", "pesquisa_sintese",
+                                     "redacao", "redação"))
+        if not complexo and "```" not in t:
+            frases = re.split(r"(?<=[.!?])\s+", t)
+            if len(frases) > 3:
+                t = " ".join(frases[:3]).strip()
+            if len(t) > 620:
+                corte = t[:620]
+                ponto = max(corte.rfind(". "), corte.rfind("! "),
+                            corte.rfind("? "))
+                t = (corte[:ponto + 1] if ponto > 300 else corte).strip()
+        return t
+
+    def _completar_entregaveis(self, texto: str, artefatos: list[dict]) -> str:
+        """Garante que a resposta cite todo arquivo/imagem produzido."""
+        if not artefatos:
+            return texto
+        faltando = []
+        for a in artefatos:
+            url = str(a.get("url") or "")
+            titulo = str(a.get("titulo") or a.get("nome") or "")
+            if url and url in (texto or ""):
+                continue
+            if titulo and titulo in (texto or ""):
+                continue
+            faltando.append(a)
+        if not faltando:
+            return texto
+        linhas = []
+        for a in faltando[:8]:
+            titulo = a.get("titulo") or a.get("nome") or a.get("tipo") or "arquivo"
+            linhas.append(f"- [{titulo}]({a.get('url')})")
+        return ((texto or "").rstrip() +
+                "\n\n**Entregáveis gerados:**\n" + "\n".join(linhas))
+
+    def _avaliar_fundo(self, pergunta: str, resposta: str) -> None:
+        try:
+            from yvakor.colaboracao import avaliar_resposta
+            r = avaliar_resposta(self.router, pergunta, resposta)
+            if not r.get("ok"):
+                return
+            r.update({"ts": datetime.now().isoformat(timespec="seconds"),
+                      "pergunta": (pergunta or "")[:600],
+                      "resposta": (resposta or "")[:1200]})
+            arq = ROOT / "data" / "avaliacoes.jsonl"
+            arq.parent.mkdir(parents=True, exist_ok=True)
+            with self._avaliacao_lock:
+                with arq.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+    def _absorver_fundo(self, pergunta: str, resposta: str, task_type: str) -> None:
+        if not self._abs_lock.acquire(blocking=False):
+            return
+        try:
+            self.absorber.after_response(pergunta, resposta, task_type)
+        except Exception:
+            pass
+        finally:
+            self._abs_lock.release()
+
+    @staticmethod
+    def _juntar_contexto(*partes) -> str | None:
+        blocos = [p for p in partes if p]
+        return "\n\n".join(blocos) if blocos else None
+
+    def _sincronizar_cerebro_async(self) -> None:
+        if self.cerebro is None:
+            return
+        agora = time.time()
+        if agora - getattr(self, "_ultimo_sync_vault", 0.0) < 120:
+            return
+        self._ultimo_sync_vault = agora
+        threading.Thread(target=self.cerebro.sincronizar, daemon=True,
+                         name="yvakor-vault-sync").start()
+
+    # ------------------------------------------------------------------ #
+    # Encerramento
+    # ------------------------------------------------------------------ #
+    def shutdown(self) -> None:
+        """Fecha navegador, mídia e tarefas em curso (usado ao desligar)."""
+        try:
+            self.mcp.parar()
+        except Exception:
+            pass
+        try:
+            self.agenda.parar()
+        except Exception:
+            pass
+        try:
+            self.cowork.shutdown()
+        except Exception:
+            pass
+        try:
+            if self.navegadores is not None:
+                self.navegadores.shutdown()
+            elif self.browser is not None:
+                self.browser.shutdown()
+        except Exception:
+            pass
+        try:
+            if self.monitor_rede is not None:
+                self.monitor_rede.parar()
+            if self.rede is not None:
+                self.rede.shutdown()
+        except Exception:
+            pass
+        # Fecha conexões SQLite com checkpoint/optimize (dados consistentes).
+        for obj in (self.cerebro, self.skills, self.semantic, self.episodic):
+            try:
+                if obj is not None:
+                    obj.fechar()
+            except Exception:
+                pass
+        try:
+            self.telemetria.fechar()
+        except Exception:
+            pass
+
+    def avisar(self, texto: str) -> None:
+        """Fala um aviso curto (usado por tarefas de segundo plano)."""
+        try:
+            if self.voz is not None and self.settings.get("voz", {}).get(
+                    "avisar_cowork", False):
+                self.voz.falar(texto)
+        except Exception:
+            pass

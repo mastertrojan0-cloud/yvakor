@@ -1,0 +1,39 @@
+<!doctype html><html lang="pt-BR"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YVAKOR · Galeria</title>
+<style>
+:root{--agua:#3fbfae;--sol:#d9a441;--bg:#070d12;--card:#0c1a22;--linha:#1b2b35;--txt:#dceaf0;--dim:#7f96a3}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(120% 90% at 50% 0,#0d1a22,#050a0e 70%);color:var(--txt);font-family:"Segoe UI",system-ui,sans-serif}
+header{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--linha);background:#08121a}
+header h1{margin:0;font-size:17px}header .dot{width:9px;height:9px;border-radius:50%;background:var(--agua);box-shadow:0 0 10px var(--agua)}
+header .dir{margin-left:auto;color:var(--dim);font-size:12px}
+main{padding:16px 18px 30px}h2{font-size:14px;color:var(--sol);text-transform:uppercase;letter-spacing:.08em;margin:18px 0 10px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--linha);border-radius:12px;overflow:hidden;transition:transform .12s,border-color .15s}
+.card:hover{transform:translateY(-2px);border-color:var(--agua)}
+.card img,.card object{width:100%;height:170px;object-fit:contain;background:#050b0f;display:block}
+.card .meta{padding:8px 10px;font-size:11px;color:var(--dim);word-break:break-all}
+.card a{color:var(--txt);text-decoration:none}.vazio{color:var(--dim);font-size:13px}
+</style>
+<header><span class="dot"></span><h1>Galeria de capacidades</h1><span class="dir" id="contagem"></span>
+<a href="/api/galeria/zip?tipo=graficos" style="margin-left:10px;color:#3fbfae;font-size:12px">ZIP gráficos</a>
+<a href="/api/galeria/zip?tipo=imagens" style="margin-left:10px;color:#3fbfae;font-size:12px">ZIP imagens</a></header>
+<main>
+  <h2>Gráficos</h2><div id="graficos" class="grid"><div class="vazio">carregando…</div></div>
+  <h2>Imagens</h2><div id="imagens" class="grid"><div class="vazio">carregando…</div></div>
+</main>
+<script>
+function esc(s){return String(s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+async function carregar(){
+  try{
+    const r=await fetch("/api/galeria"); const j=await r.json();
+    const g=j.itens.filter(i=>i.tipo==="graficos"), im=j.itens.filter(i=>i.tipo==="imagens");
+    document.getElementById("contagem").textContent=`${g.length} gráficos · ${im.length} imagens`;
+    const card=(i,suf)=>`<div class="card"><a href="${i.url}" target="_blank">${suf===".svg"?`<object data="${i.url}" type="image/svg+xml"></object>`:`<img src="${i.url}" loading="lazy">`}</a><div class="meta"><a href="${i.url}" target="_blank">${esc(i.nome)}</a><br>${i.kb} KB · ${esc(i.quando)} · <a href="#" onclick="apagar('${i.tipo}','${esc(i.nome)}');return false" style="color:#ff9c9c">apagar</a></div></div>`;
+    document.getElementById("graficos").innerHTML=g.length?g.map(i=>card(i,i.nome.slice(-4))).join(""):'<div class="vazio">nenhum gráfico ainda</div>';
+    document.getElementById("imagens").innerHTML=im.length?im.map(i=>card(i,i.nome.slice(-4))).join(""):'<div class="vazio">nenhuma imagem ainda</div>';
+  }catch(e){document.getElementById("graficos").innerHTML='<div class="vazio">falha ao listar</div>';}
+}
+carregar();
+async function apagar(tipo,nome){ if(!confirm("Apagar "+nome+"?"))return; const r=await fetch("/api/galeria/apagar",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({tipo,nome})}); const j=await r.json(); if(j.ok) carregar(); else alert(j.erro||"falha"); }
+</script></html>

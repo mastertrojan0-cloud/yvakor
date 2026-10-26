@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YVAKOR</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <header class="topo">
+    <div class="marca">Y</div>
+    <div class="marca-texto">
+      <h1>YVAKOR</h1>
+      <p id="assinatura">para Chrome</p>
+    </div>
+    <span id="status" class="pill">conectando</span>
+    <button id="voz" title="Ativar voz">🔇</button>
+    <button id="nova" title="Nova conversa">+</button>
+  </header>
+
+  <div class="contexto" id="contexto">
+    <span class="ctx-dot"></span>
+    <span id="ctx-titulo">Lendo a página…</span>
+  </div>
+
+  <main class="painel">
+    <div class="chat" id="chat">
+      <div class="vazio" id="vazio">
+        <div class="simbolo">Y</div>
+        <h2>Como posso ajudar?</h2>
+        <p>Peça para navegar, explicar a página, pesquisar ou executar uma
+           tarefa no Chrome.</p>
+      </div>
+    </div>
+    <section id="processo" class="processo oculto">
+      <div class="proc-topo"><span>PROCESSO</span><span id="proc-status">—</span></div>
+      <div id="passos" class="passos"></div>
+    </section>
+  </main>
+
+  <footer class="composer">
+    <textarea id="entrada" rows="2" placeholder="Pergunte ou peça uma ação…"></textarea>
+    <button id="mic" title="Ditar">🎙</button>
+    <button id="enviar">Enviar</button>
+  </footer>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

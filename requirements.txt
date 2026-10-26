@@ -1,9 +1,36 @@
 # Núcleo (mínimo para rodar em qualquer máquina)
 pyyaml>=6.0
 
+# Controle do navegador (ferramentas navegador_*)
+# Usa o Edge/Chrome já instalado; se não houver, rode uma vez:
+#   python -m playwright install chromium
+playwright>=1.40
+
+# Rede local — descoberta e controle de dispositivos
+zeroconf>=0.130          # mDNS (Chromecast, ONVIF, impressoras, Shelly)
+paho-mqtt>=2.0           # MQTT (Tasmota, ESPHome, Zigbee2MQTT)
+websocket-client>=1.7    # TVs Samsung (8001) e LG webOS (3000/3001)
+pychromecast>=14.0       # Chromecast / Google TV / Nest
+
+# Voz — reconhecimento e síntese
+vosk>=0.3.45             # STT local (modelo pt-BR baixado no 1º uso)
+sounddevice>=0.4.6       # captura de microfone
+edge-tts>=6.1            # vozes neurais (precisa de internet)
+
+# Documentos e mídia
+pymupdf>=1.24            # PDF (texto + render para OCR)
+pypdf>=4.0               # leitura de PDF alternativa
+python-vlc>=3.0          # player embutido (câmeras/vídeos)
+openpyxl>=3.1            # planilhas XLSX
+python-docx>=1.1         # relatórios DOCX
+
+# Análise de cripto (scripts/analise_cripto.py)
+matplotlib>=3.8
+requests>=2.31
+tradingview-ta>=3.3
+
+# Externo (não é pip): ffmpeg no PATH — snapshots RTSP, conversão de áudio,
+# gravação de clipes. Já vem em muitas máquinas; instale com winget/choco.
+
 # Opcional — memória semântica vetorial (recomendado, mas o YVAKOR roda sem)
 # chromadb>=0.5
-
-# Opcional — futuras ferramentas
-# requests          # http_client / web_search
-# playwright        # automação web

@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yvakor"
+version = "0.8.0"
+description = "YVAKOR — agente pessoal autônomo com navegador, voz, memória e rede"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{name = "Antonio Jose Cordero Martinez / ACM Digital"}]
+license = {file = "LICENSE"}
+dependencies = [
+  "pyyaml>=6.0",
+  "playwright>=1.40",
+  "zeroconf>=0.130",
+  "paho-mqtt>=2.0",
+  "websocket-client>=1.7",
+  "pychromecast>=14.0",
+  "vosk>=0.3.45",
+  "sounddevice>=0.4.6",
+  "edge-tts>=6.1",
+  "pymupdf>=1.24",
+  "pypdf>=4.0",
+  "python-vlc>=3.0",
+  "openpyxl>=3.1",
+  "python-docx>=1.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pyinstaller>=6.0"]
+
+[project.scripts]
+yvakor = "yvakor.main:main"
+yvakor-server = "yvakor.server:main"
+
+[tool.setuptools.packages.find]
+include = ["yvakor*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
