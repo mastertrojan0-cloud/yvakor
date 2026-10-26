@@ -848,6 +848,16 @@ class Orchestrator:
         contexto_cerebro = decisao.get("contexto") if decisao else None
         forcar = "ollama" if (decisao and decisao.get("modo") == "local") else None
 
+        # Local PRIMEIRO: mensagens simples (sem verbo de ação, curtas, sem
+        # palavra-chave de tarefa profunda) são respondidas pelo modelo local.
+        # Tarefas profundas (código, análise, pesquisa) e qualquer coisa que
+        # exija ferramentas vão para o loop do agente no DeepSeek. Se o local
+        # falhar/vier vazio, o bloco abaixo zera 'forcar' e cai no agente.
+        _tipo_simples = self.router.classify(user_message)
+        if forcar is None and _tipo_simples in (
+                "resposta_simples", "resumo_curto", "classificacao"):
+            forcar = "ollama"
+
         # Caminho local rápido: prompt curto, sem ferramentas. O 3B em CPU não
         # aguenta o prompt completo do agente (travava 4-6 minutos).
         if forcar == "ollama":

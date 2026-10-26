@@ -51,10 +51,16 @@ class LLMRouter:
         return "resposta_simples"
 
     def pick_provider(self, task_type: str):
-        if task_type in self.routing.get("local", []) and "ollama" in self.providers:
-            order = ["ollama"] + self.routing["fallback_order"]
+        # Política: LOCAL primeiro; DeepSeek só para tarefas mais profundas
+        # (código, arquitetura, análise complexa, pesquisa, prospecção — e o
+        # loop de ferramentas do agente, que usa 'analise_complexa'). Em ambos
+        # os casos o outro provider entra como fallback.
+        profundas = set(self.routing.get("external", []))
+        if task_type in profundas:
+            order = self.routing["fallback_order"]            # deepseek primeiro
         else:
-            order = self.routing["fallback_order"]
+            resto = [n for n in self.routing["fallback_order"] if n != "ollama"]
+            order = ["ollama"] + resto                        # local primeiro
         for name in order:
             if name in self.providers:
                 return self.providers[name]

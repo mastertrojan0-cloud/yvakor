@@ -37,10 +37,15 @@ llm:
       max_tokens: 512
       timeout_s: 50          # resposta local curta; acima disso cai para API
 
-  # Roteador: que tipo de tarefa vai para qual provider.
-  # Conforme skills ficam "estáveis", mova categorias para "local".
+  # Roteador: LOCAL primeiro, DeepSeek para tarefas mais profundas.
+  # - Tudo que NÃO está em 'external' é respondido pelo modelo local primeiro
+  #   (conversa simples, resumo, classificação), com DeepSeek de reforço.
+  # - As categorias em 'external' (código, arquitetura, análise complexa,
+  #   pesquisa, prospecção) e o loop de ferramentas do agente vão direto ao
+  #   DeepSeek, com o local de reforço. Mova categorias p/ fora de 'external'
+  #   conforme o modelo local der conta delas.
   routing:
-    local:    ["classificacao", "resumo_curto"]
+    local:    ["classificacao", "resumo_curto", "resposta_simples"]
     external: ["codigo", "arquitetura", "analise_complexa", "prospeccao", "pesquisa_sintese", "geracao_imagem"]
     fallback_order: ["deepseek", "ollama"]   # se um falhar, tenta o próximo
 
