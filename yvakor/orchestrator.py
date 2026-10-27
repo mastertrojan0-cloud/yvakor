@@ -1127,8 +1127,14 @@ class Orchestrator:
         # conteúdo completo → vai para o agente (DeepSeek), não para o 3B local,
         # que aqui responderia sem ver a página.
         # No modo "deepseek" o usuário pediu a nuvem primeiro: sem atalho local.
+        # Pedido de AÇÃO no navegador (pesquisar, clicar, preencher…) precisa do
+        # loop com ferramentas e de um modelo forte: nunca pega o atalho do 3B,
+        # que só conversa. (No modo "local" o usuário escolheu o local de qualquer
+        # forma — o roteador não chama a nuvem.)
+        _acao_navegador = bool(AgentLoop._INTENCAO_NAVEGADOR.search(user_message))
         if (forcar is None and not extra_context
                 and self.router.modo != "deepseek"
+                and not (_acao_navegador and self.router.modo == "auto")
                 and _tipo_simples in (
                     "resposta_simples", "resumo_curto", "classificacao")):
             forcar = "ollama"

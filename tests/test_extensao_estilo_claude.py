@@ -629,3 +629,14 @@ def test_upload_pergunta_sempre_e_esta_no_seletor_e_no_background():
     assert '"enviar_arquivo"' in bg and 'c.tipo === "upload"' in bg
     pg = (EXT / "pagina.js").read_text(encoding="utf-8")
     assert "envia um arquivo do seu computador" in pg and "enviar_arquivo," in pg
+
+
+def test_modo_auto_nao_deixa_pedido_de_navegador_no_atalho_do_modelo_local():
+    from yvakor.agent import AgentLoop
+    for frase in ("pesquise gatos no google", "clique em entrar", "preencha o campo nome",
+                  "abra o youtube", "role a página até o fim"):
+        assert AgentLoop._INTENCAO_NAVEGADOR.search(frase), frase
+    for frase in ("quem é você?", "bom dia", "o que é uma API?"):
+        assert not AgentLoop._INTENCAO_NAVEGADOR.search(frase), frase
+    src = (ROOT / "yvakor" / "orchestrator.py").read_text(encoding="utf-8")
+    assert "not (_acao_navegador and self.router.modo == \"auto\")" in src
