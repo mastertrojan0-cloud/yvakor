@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>YVAKOR — Núcleo</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
 <style>
   @font-face{
     font-family:'Inter';
@@ -28,8 +27,8 @@
   :root{
     --noite:#060D12; --rio:#10212B; --solimoes:#D9A441;
     --agua:#3FBFAE; --areia:#EAE4D3;
-    --linha:rgba(234,228,211,.12);
-    --vidro:rgba(16,33,43,.55);
+    --linha:rgba(var(--vel),.12);
+    --vidro:rgba(var(--sup-rgb),.55);
   }
   /* pilha tipografica com fallback do sistema (funciona offline) */
   :root{
@@ -67,7 +66,7 @@
     display:flex; flex-direction:row; flex-wrap:wrap; align-items:center;
     gap:8px 20px; font-size:11px;
     padding:9px 15px; border-radius:12px;
-    border:1px solid var(--linha); background:rgba(6,13,18,.3);
+    border:1px solid var(--linha); background:rgba(var(--fundo-rgb),.3);
     backdrop-filter:blur(10px);
     transition:left .3s cubic-bezier(.2,.8,.2,1);
   }
@@ -88,7 +87,7 @@
     position:fixed; top:32px; right:36px; bottom:36px; z-index:2;
     width:min(460px, 92vw);
     display:flex; flex-direction:column;
-    background:linear-gradient(180deg, rgba(16,33,43,.66), rgba(10,20,27,.58));
+    background:linear-gradient(180deg, rgba(var(--sup-rgb),.66), rgba(var(--sup-rgb),.58));
     backdrop-filter:blur(16px);
     border:1px solid var(--linha); border-radius:16px;
     box-shadow:0 24px 60px rgba(0,0,0,.38);
@@ -139,10 +138,10 @@
   @keyframes subir{from{opacity:0; transform:translateY(7px)} to{opacity:1; transform:none}}
   .msg.voce{align-self:flex-end; color:var(--areia);
     border-right:2px solid var(--solimoes); padding:6px 12px 6px 10px;
-    text-align:right; background:rgba(217,164,65,.055); border-radius:12px 4px 12px 12px}
+    text-align:right; background:rgba(var(--acento-rgb),.055); border-radius:12px 4px 12px 12px}
   .msg.yvakor{align-self:flex-start; opacity:.95;
     border-left:2px solid var(--agua); padding:8px 12px;
-    background:rgba(234,228,211,.035); border-radius:4px 12px 12px 12px}
+    background:rgba(var(--vel),.035); border-radius:4px 12px 12px 12px}
   .msg.sistema{align-self:center; font-size:11px; opacity:.5;
     letter-spacing:.08em; text-align:center}
   .msg .quem{display:block; font-size:9px; letter-spacing:.28em;
@@ -163,7 +162,7 @@
   .msg.md strong{font-weight:600; color:var(--areia)}
   .msg.md em{font-style:italic}
   .msg.md code{font-family:ui-monospace,Consolas,"Courier New",monospace;
-    font-size:12px; background:rgba(234,228,211,.09); padding:1.5px 5px;
+    font-size:12px; background:rgba(var(--vel),.09); padding:1.5px 5px;
     border-radius:4px; color:#f0d9a8}
   .msg.md pre{background:#08121a; border:1px solid var(--linha);
     border-radius:9px; padding:12px 14px; overflow:auto; margin:11px 0;
@@ -171,12 +170,12 @@
   .msg.md pre .copiar{
     position:absolute; top:7px; right:7px; font-family:var(--fonte-texto);
     font-size:10.5px; letter-spacing:.04em; padding:3px 9px; border-radius:6px;
-    background:rgba(234,228,211,.08); color:var(--areia); cursor:pointer;
+    background:rgba(var(--vel),.08); color:var(--areia); cursor:pointer;
     border:1px solid var(--linha); opacity:0; transition:.15s;
   }
   .msg.md pre:hover .copiar{opacity:.85}
   .msg.md pre .copiar:hover{opacity:1; border-color:var(--solimoes)}
-  .msg.md pre .copiar.feito{color:var(--agua); border-color:rgba(63,191,174,.5); opacity:1}
+  .msg.md pre .copiar.feito{color:var(--agua); border-color:rgba(var(--ok-rgb),.5); opacity:1}
   .msg.md pre code{background:none; padding:0; color:#cfe8e3; font-size:12px;
     line-height:1.55; display:block; white-space:pre}
   .msg.md blockquote{border-left:3px solid var(--solimoes); margin:9px 0;
@@ -186,19 +185,19 @@
     width:100%; display:block; overflow-x:auto}
   .msg.md th,.msg.md td{border:1px solid var(--linha); padding:6px 10px;
     text-align:left; vertical-align:top}
-  .msg.md th{background:rgba(217,164,65,.12); font-weight:600; white-space:nowrap}
+  .msg.md th{background:rgba(var(--acento-rgb),.12); font-weight:600; white-space:nowrap}
 
   .entrada{
     border-top:1px solid var(--linha); padding:12px 14px; display:flex; gap:8px;
-    background:rgba(6,13,18,.25);
+    background:rgba(var(--fundo-rgb),.25);
   }
-  .entrada:focus-within{background:rgba(6,13,18,.38)}
+  .entrada:focus-within{background:rgba(var(--fundo-rgb),.38)}
   .entrada textarea{
     flex:1; background:transparent; border:none; outline:none; resize:none;
     color:var(--areia); font-family:var(--fonte-texto); font-size:13.5px;
     line-height:1.5; max-height:120px; padding:6px 0;
   }
-  .entrada textarea::placeholder{color:rgba(234,228,211,.3)}
+  .entrada textarea::placeholder{color:rgba(var(--vel),.3)}
   .entrada{position:relative; align-items:flex-end}
   #enviar{
     align-self:flex-end; background:linear-gradient(180deg,#E6B95C,#D9A441);
@@ -206,7 +205,7 @@
     border:none; border-radius:10px; padding:10px 20px; cursor:pointer;
     font-family:var(--fonte-texto); font-size:12px; font-weight:600;
     letter-spacing:.06em; transition:filter .2s, transform .1s;
-    box-shadow:0 4px 14px rgba(217,164,65,.22);
+    box-shadow:0 4px 14px rgba(var(--acento-rgb),.22);
   }
   #enviar:hover{filter:brightness(1.06)}
   #enviar:active{transform:translateY(1px)}
@@ -233,14 +232,14 @@
     font-family:var(--fonte-texto); font-size:13px; padding:8px 10px;
     border-radius:7px; cursor:pointer; opacity:.85;
   }
-  .menu-cmd button:hover{background:rgba(234,228,211,.07); opacity:1}
+  .menu-cmd button:hover{background:rgba(var(--vel),.07); opacity:1}
   .menu-cmd .menu-sep{height:1px; background:var(--linha); margin:5px 4px}
 
   /* ---------- barra lateral de conversas (redesenhada) ---------- */
   .conversas{
     position:fixed; left:36px; top:150px; bottom:36px; z-index:3;
     width:300px; display:flex; flex-direction:column;
-    background:linear-gradient(180deg, rgba(16,33,43,.74), rgba(10,20,27,.6));
+    background:linear-gradient(180deg, rgba(var(--sup-rgb),.74), rgba(var(--sup-rgb),.6));
     backdrop-filter:blur(16px);
     border:1px solid var(--linha); border-radius:14px; overflow:hidden;
     box-shadow:0 18px 46px rgba(0,0,0,.35);
@@ -252,7 +251,7 @@
   .cv-topo{
     padding:13px 14px 10px; display:flex; flex-direction:column; gap:9px;
     border-bottom:1px solid var(--linha);
-    background:linear-gradient(180deg, rgba(217,164,65,.055), transparent);
+    background:linear-gradient(180deg, rgba(var(--acento-rgb),.055), transparent);
   }
   .cv-titulo{display:flex; align-items:center; justify-content:space-between}
   .cv-titulo h2{
@@ -261,8 +260,8 @@
   }
   .cv-cont{
     font-size:9px; letter-spacing:.04em; padding:1px 7px; border-radius:999px;
-    background:rgba(63,191,174,.13); color:var(--agua);
-    border:1px solid rgba(63,191,174,.25);
+    background:rgba(var(--ok-rgb),.13); color:var(--agua);
+    border:1px solid rgba(var(--ok-rgb),.25);
   }
   .cv-nova{
     background:transparent; border:1px solid var(--linha); color:var(--solimoes);
@@ -270,7 +269,7 @@
     padding:4px 10px; border-radius:999px; cursor:pointer; opacity:.9;
     transition:.15s;
   }
-  .cv-nova:hover{opacity:1; border-color:var(--solimoes); background:rgba(217,164,65,.08)}
+  .cv-nova:hover{opacity:1; border-color:var(--solimoes); background:rgba(var(--acento-rgb),.08)}
   .cv-busca{position:relative; display:flex; align-items:center}
   .cv-lupa{position:absolute; left:10px; font-size:13px; opacity:.4;
     pointer-events:none}
@@ -281,7 +280,7 @@
     transition:border-color .15s;
   }
   .cv-busca input:focus{border-color:var(--solimoes)}
-  .cv-busca input::placeholder{color:rgba(234,228,211,.32)}
+  .cv-busca input::placeholder{color:rgba(var(--vel),.32)}
   .cv-busca input::-webkit-search-cancel-button{display:none}
   .cv-busca kbd{
     position:absolute; right:8px; font-family:var(--fonte-texto); font-size:8.5px;
@@ -297,12 +296,12 @@
   }
   .cv-filtros button:hover{opacity:.85}
   .cv-filtros button.on{
-    opacity:1; color:var(--solimoes); background:rgba(234,228,211,.06);
+    opacity:1; color:var(--solimoes); background:rgba(var(--vel),.06);
     border-color:var(--linha);
   }
   .cv-lista{
     flex:1; overflow-y:auto; padding:6px 8px 10px;
-    scrollbar-width:thin; scrollbar-color:rgba(234,228,211,.16) transparent;
+    scrollbar-width:thin; scrollbar-color:rgba(var(--vel),.16) transparent;
   }
   .cv-lista ul{list-style:none; display:flex; flex-direction:column; gap:2px}
   .cv-grupo{
@@ -315,10 +314,10 @@
     padding:9px 8px 9px 12px; border-radius:10px; cursor:pointer;
     border:1px solid transparent; transition:background .15s, border-color .15s;
   }
-  .cv-item:hover{background:rgba(234,228,211,.05)}
+  .cv-item:hover{background:rgba(var(--vel),.05)}
   .cv-item.ativa{
-    background:linear-gradient(90deg, rgba(217,164,65,.14), rgba(217,164,65,.02));
-    border-color:rgba(217,164,65,.22);
+    background:linear-gradient(90deg, rgba(var(--acento-rgb),.14), rgba(var(--acento-rgb),.02));
+    border-color:rgba(var(--acento-rgb),.22);
   }
   .cv-item.ativa::before{
     content:""; position:absolute; left:3px; top:9px; bottom:9px; width:2px;
@@ -339,7 +338,7 @@
   }
   .cv-badge{
     font-size:8.5px; min-width:16px; text-align:center; padding:1px 4px;
-    border-radius:999px; background:rgba(234,228,211,.08); opacity:.55;
+    border-radius:999px; background:rgba(var(--vel),.08); opacity:.55;
     flex:0 0 auto;
   }
   .cv-acoes{display:flex; gap:1px; opacity:0; transition:opacity .15s;
@@ -351,7 +350,7 @@
     border-radius:5px;
   }
   .cv-acoes .ic:hover{opacity:1; color:var(--solimoes);
-    background:rgba(234,228,211,.08)}
+    background:rgba(var(--vel),.08)}
   .cv-acoes .ic.del:hover{color:#e0567a}
   .cv-vazio{
     opacity:.4; font-size:11px; text-align:center; padding:26px 16px;
@@ -398,7 +397,7 @@
   #confirmar{
     position:fixed; inset:0; z-index:50; display:none;
     align-items:center; justify-content:center;
-    background:rgba(6,13,18,.72); backdrop-filter:blur(4px);
+    background:rgba(var(--fundo-rgb),.72); backdrop-filter:blur(4px);
   }
   #confirmar.aberto{display:flex}
   #confirmar .caixa{
@@ -414,7 +413,7 @@
   #confirmar .acao{color:var(--solimoes); font-weight:500}
   #confirmar .detalhe{
     margin:12px 0 20px; padding:12px 14px; border-radius:10px;
-    background:rgba(234,228,211,.05); border:1px solid var(--linha);
+    background:rgba(var(--vel),.05); border:1px solid var(--linha);
     font-size:12px; line-height:1.5; word-break:break-word;
     max-height:160px; overflow:auto; opacity:.85;
   }
@@ -435,7 +434,7 @@
   #conectores{
     position:fixed; inset:0; z-index:55; display:none;
     align-items:center; justify-content:center;
-    background:rgba(6,13,18,.72); backdrop-filter:blur(4px);
+    background:rgba(var(--fundo-rgb),.72); backdrop-filter:blur(4px);
   }
   #conectores.aberto{display:flex}
   .cx-caixa{
@@ -452,7 +451,7 @@
   .cx-sub{font-size:12px; opacity:.6; margin:4px 0 16px}
   .cx-item{
     border:1px solid var(--linha); border-radius:11px; padding:14px 16px;
-    margin-bottom:12px; background:rgba(234,228,211,.03);
+    margin-bottom:12px; background:rgba(var(--vel),.03);
   }
   .cx-cab{display:flex; align-items:center; gap:10px; cursor:pointer}
   .cx-ic{font-size:20px}
@@ -463,8 +462,8 @@
     font-size:10px; letter-spacing:.12em; text-transform:uppercase;
     padding:3px 9px; border-radius:20px; border:1px solid var(--linha);
   }
-  .cx-tag.on{color:var(--agua); border-color:rgba(63,191,174,.5);
-    background:rgba(63,191,174,.08)}
+  .cx-tag.on{color:var(--agua); border-color:rgba(var(--ok-rgb),.5);
+    background:rgba(var(--ok-rgb),.08)}
   .cx-tag.off{opacity:.5}
   .cx-form{display:none; margin-top:14px; gap:10px; flex-direction:column}
   .cx-form.aberto{display:flex}
@@ -516,7 +515,7 @@
     position:fixed; top:32px; bottom:36px; z-index:40;
     right:510px; width:min(520px, calc(100vw - 580px));
     display:flex; flex-direction:column;
-    background:linear-gradient(180deg, rgba(16,33,43,.78), rgba(10,20,27,.7));
+    background:linear-gradient(180deg, rgba(var(--sup-rgb),.78), rgba(var(--sup-rgb),.7));
     backdrop-filter:blur(18px);
     border:1px solid var(--linha); border-radius:16px;
     transform:translateX(calc(100% + 80px)); opacity:0;
@@ -544,7 +543,7 @@
   }
   .dr-linha{display:flex; gap:8px; align-items:stretch}
   .dr-linha input{
-    flex:1; min-width:0; background:rgba(6,13,18,.5); color:var(--areia);
+    flex:1; min-width:0; background:rgba(var(--fundo-rgb),.5); color:var(--areia);
     border:1px solid var(--linha); border-radius:3px; padding:8px 10px;
     font-family:var(--fonte-texto); font-size:12.5px; outline:none;
   }
@@ -589,7 +588,7 @@
   .nv-grupos{display:flex; flex-wrap:wrap; gap:5px}
   .nv-chip{display:inline-flex; align-items:center; gap:4px; font-size:10px;
     padding:3px 8px; border:1px solid var(--linha); border-radius:999px;
-    background:rgba(234,228,211,.04); opacity:.85}
+    background:rgba(var(--vel),.04); opacity:.85}
   .nv-chip button{background:none; border:none; color:var(--areia); cursor:pointer;
     font-size:11px; line-height:1; opacity:.55; padding:0 2px}
   .nv-chip button:hover{opacity:1; color:var(--solimoes)}
@@ -598,7 +597,7 @@
   /* tarefas cowork */
   .cw-form{display:flex; flex-direction:column; gap:8px}
   .cw-form textarea{
-    background:rgba(6,13,18,.5); color:var(--areia); resize:vertical;
+    background:rgba(var(--fundo-rgb),.5); color:var(--areia); resize:vertical;
     border:1px solid var(--linha); border-radius:3px; padding:8px 10px;
     font-family:var(--fonte-texto); font-size:12.5px; line-height:1.5;
     outline:none; min-height:52px;
@@ -606,7 +605,7 @@
   .cw-form textarea:focus{border-color:var(--solimoes)}
   .cw-card{
     border:1px solid var(--linha); border-left:3px solid var(--linha);
-    border-radius:8px; padding:9px 11px; background:rgba(234,228,211,.03);
+    border-radius:8px; padding:9px 11px; background:rgba(var(--vel),.03);
   }
   .cw-card.executando{border-left-color:var(--solimoes)}
   .cw-card.concluida{border-left-color:var(--agua)}
@@ -635,7 +634,7 @@
   /* rede local */
   .rd-card{
     border:1px solid var(--linha); border-left:3px solid var(--linha);
-    border-radius:8px; padding:9px 11px; background:rgba(234,228,211,.03);
+    border-radius:8px; padding:9px 11px; background:rgba(var(--vel),.03);
   }
   .rd-card.camera{border-left-color:var(--agua)}
   .rd-card.tv{border-left-color:var(--solimoes)}
@@ -657,7 +656,6 @@
 </head>
 <body>
 
-<canvas id="scene" aria-hidden="true"></canvas>
 
 <div id="confirmar" role="dialog" aria-modal="true" aria-labelledby="cf-titulo">
   <div class="caixa">
@@ -738,6 +736,7 @@
       <button id="btn-cowork" title="Tarefas em segundo plano">🧩</button>
       <button id="btn-rede" title="Dispositivos da rede">🌐</button>
       <button id="btn-falar" title="Falar as respostas em voz alta">🔊</button>
+      <button id="btn-tema" title="Alternar tema (claro/escuro)">◐</button>
     </nav>
     <em id="hd-provider"></em>
     <select id="sel-modelo" class="sel-modelo" title="Modelo de IA: Local, Automático ou DeepSeek" aria-label="Modo do modelo de IA"></select>
@@ -746,6 +745,7 @@
   <div id="fluxo">
     <div class="msg sistema">As duas águas se encontram. O núcleo está ativo.</div>
   </div>
+  <div id="boas-vindas"><h2><span class="estrela">✻</span><span id="bv-saudacao">Olá</span></h2></div>
   <div class="entrada">
     <button id="btn-cmd" class="cmd-toggle" title="Comandos e ferramentas">+</button>
     <div id="menu-cmd" class="menu-cmd" hidden>
@@ -764,7 +764,13 @@
       aria-label="Mensagem para o YVAKOR"></textarea>
     <button id="btn-mic" class="cmd-toggle" title="Falar (voz)">🎙</button>
     <button id="btn-escuta" class="cmd-toggle" title="Escuta contínua: diga YVAKOR">👂</button>
-    <button id="enviar">Enviar</button>
+    <button id="enviar" title="Enviar (Enter)" aria-label="Enviar">↑</button>
+  </div>
+  <div id="chips">
+    <button data-p="Resuma a página que estou vendo">Resumir a página</button>
+    <button data-p="Pesquise na web sobre ">Pesquisar na web</button>
+    <button data-p="Preencha o formulário desta página com ">Preencher formulário</button>
+    <button data-p="Explique de forma simples: ">Explicar algo</button>
   </div>
 </section>
 
@@ -838,7 +844,6 @@
   </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 /* =====================================================================
    NÚCLEO 3D — "Encontro das Águas"
@@ -848,105 +853,8 @@
    Estados: idle (fluxo lento) | thinking (vórtice acelera e contrai)
 ===================================================================== */
 const reduzMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-const canvas = document.getElementById('scene');
-const renderer = new THREE.WebGLRenderer({canvas, antialias:true, alpha:true});
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-const cena = new THREE.Scene();
-cena.fog = new THREE.FogExp2(0x060D12, 0.055);
-const cam = new THREE.PerspectiveCamera(50, 1, .1, 100);
-cam.position.set(0, 1.2, 11);
-
-const N = 2600;                       // partículas por rio
-let modo = 0;                         // 0 = idle | 1 = thinking
-let energia = 0;                      // interpolação suave entre modos
-
-function rio(corA, corB, fase){
-  const geo = new THREE.BufferGeometry();
-  const pos = new Float32Array(N*3);
-  const cor = new Float32Array(N*3);
-  const seed = new Float32Array(N*2);  // [t da curva, raio próprio]
-  const cA = new THREE.Color(corA), cB = new THREE.Color(corB);
-  for(let i=0;i<N;i++){
-    seed[i*2]   = Math.random()*Math.PI*2;
-    seed[i*2+1] = .25 + Math.random()*1.15;
-    const c = cA.clone().lerp(cB, Math.random());
-    cor.set([c.r,c.g,c.b], i*3);
-  }
-  geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
-  geo.setAttribute('color',    new THREE.BufferAttribute(cor,3));
-  const mat = new THREE.PointsMaterial({
-    size:.045, vertexColors:true, transparent:true, opacity:.85,
-    blending:THREE.AdditiveBlending, depthWrite:false
-  });
-  const pts = new THREE.Points(geo, mat);
-  pts.userData = {seed, fase};
-  cena.add(pts);
-  return pts;
-}
-
-/* Rio Negro: petróleo → verde-água | Solimões: dourado → areia */
-const rioNegro  = rio(0x0E2A33, 0x3FBFAE, 0);
-const solimoes  = rio(0x8A5E1E, 0xD9A441, Math.PI);
-
-/* fundo: leito de estrelas-sedimento, bem discreto */
-(function leito(){
-  const g = new THREE.BufferGeometry();
-  const p = new Float32Array(700*3);
-  for(let i=0;i<700;i++){
-    p[i*3]=(Math.random()-.5)*60; p[i*3+1]=(Math.random()-.5)*34;
-    p[i*3+2]=-14-Math.random()*26;
-  }
-  g.setAttribute('position', new THREE.BufferAttribute(p,3));
-  cena.add(new THREE.Points(g, new THREE.PointsMaterial(
-    {color:0xEAE4D3, size:.03, transparent:true, opacity:.22})));
-})();
-
-/* Curva-mãe: cada rio percorre um "oito" 3D defasado — eles se cruzam
-   no centro (o Encontro) mas mantêm identidade. */
-function curva(t, fase, aperto){
-  const a = t + fase;
-  const r = 2.6 - aperto*1.1;
-  return [
-    Math.sin(a)*r,
-    Math.sin(a*2)*(.9 - aperto*.35),
-    Math.cos(a)*r*.78
-  ];
-}
-
-let t0 = performance.now();
-function frame(now){
-  requestAnimationFrame(frame);
-  const dt = Math.min((now-t0)/1000, .05); t0 = now;
-  energia += ((modo? 1:0) - energia) * dt * 2.2;
-  const vel = (reduzMotion? .05 : .14) + energia*.55;
-
-  for(const pts of [rioNegro, solimoes]){
-    const {seed, fase} = pts.userData;
-    const pos = pts.geometry.attributes.position.array;
-    const tempo = now*.001*vel;
-    for(let i=0;i<N;i++){
-      const t = seed[i*2] + tempo;
-      const raio = seed[i*2+1]*(1-energia*.45);
-      const [x,y,z] = curva(t, fase, energia);
-      const orb = t*3.1 + i;
-      pos[i*3]   = x + Math.cos(orb)*raio*.34;
-      pos[i*3+1] = y + Math.sin(orb*1.3)*raio*.3;
-      pos[i*3+2] = z + Math.sin(orb)*raio*.34;
-    }
-    pts.geometry.attributes.position.needsUpdate = true;
-    pts.rotation.y += dt*(.05 + energia*.4);
-    pts.material.opacity = .75 + energia*.25;
-  }
-  cam.position.x = Math.sin(now*.00012)*1.4;
-  cam.lookAt(0,0,0);
-  renderer.render(cena, cam);
-}
-function ajustar(){
-  renderer.setSize(innerWidth, innerHeight, false);
-  cam.aspect = innerWidth/innerHeight; cam.updateProjectionMatrix();
-}
-addEventListener('resize', ajustar); ajustar();
-requestAnimationFrame(frame);
+/* (cena 3D removida: visual no estilo Claude, sem custo de GPU) */
+let modo = 0;
 
 /* =====================================================================
    CANAL DE COMANDO — conversa com o backend (/api/chat)
@@ -1335,7 +1243,7 @@ async function mandar(){
     clearInterval(poll); removerPensando();
     add('sistema', null, 'Falha de conexão com o núcleo: '+e.message);
   }
-  enviar.disabled = false; enviar.textContent = 'Enviar';
+  enviar.disabled = false; enviar.textContent = '↑';
   setEstado('em escuta', false);
   texto.focus();
 }
@@ -2262,8 +2170,8 @@ async function trocarModelo(corpo){
   body::before{
     content:""; position:fixed; inset:-20%; z-index:0; pointer-events:none;
     background:
-      radial-gradient(38% 42% at 30% 62%, rgba(63,191,174,.13), transparent 70%),
-      radial-gradient(42% 46% at 72% 38%, rgba(217,164,65,.10), transparent 72%);
+      radial-gradient(38% 42% at 30% 62%, rgba(var(--ok-rgb),.13), transparent 70%),
+      radial-gradient(42% 46% at 72% 38%, rgba(var(--acento-rgb),.10), transparent 72%);
     animation: deriva 22s ease-in-out infinite alternate;
     will-change: transform;
   }
@@ -2274,7 +2182,7 @@ async function trocarModelo(corpo){
   body::after{
     content:""; position:fixed; inset:0; z-index:1; pointer-events:none;
     background: radial-gradient(120% 90% at 50% 40%, transparent 55%,
-              rgba(4,9,12,.55) 100%);
+              rgba(var(--fundo-rgb),.55) 100%);
   }
   #scene{ will-change: transform; }
 
@@ -2311,7 +2219,7 @@ async function trocarModelo(corpo){
   /* desempenho: em máquinas fracas, desliga o que é caro */
   body.baixa-performance .painel,
   body.baixa-performance .conversas,
-  body.baixa-performance .drawer{ backdrop-filter:none; background:rgba(10,20,27,.92); }
+  body.baixa-performance .drawer{ backdrop-filter:none; background:rgba(var(--sup-rgb),.92); }
   body.baixa-performance::before{ animation:none; }
   body.aba-oculta *{ animation-play-state: paused !important; }
 
@@ -2322,5 +2230,225 @@ async function trocarModelo(corpo){
   }
   body.sem-animacao *{ animation:none !important; transition:none !important; }
 </style>
+<style id="tema-claude">
+/* ===== TEMA CLAUDE — paleta, layout (barra lateral + coluna central + compositor em cartão)
+   e tipografia (respostas/títulos em Lora, interface em Inter). Vem POR ÚLTIMO. ===== */
+:root{
+  --noite:#faf9f5; --rio:#ffffff; --solimoes:#c96442; --agua:#4d8a5f; --areia:#1f1e1d;
+  --linha:rgba(31,30,29,.11); --linha-forte:rgba(31,30,29,.2); --vidro:rgba(250,249,245,.9);
+  --vel:31,30,29; --fundo-rgb:250,249,245; --sup-rgb:255,255,255;
+  --acento-rgb:201,100,66; --ok-rgb:77,138,95;
+  --lateral:#f5f4ee; --papel:#ffffff; --usuario:#f0eee6;
+  --codigo:#f5f4ee; --codigo-txt:#8a3a1d; --sombra:rgba(0,0,0,.07);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-tema="light"]){
+    --noite:#262624; --rio:#30302e; --solimoes:#d97757; --agua:#7fbf8f; --areia:#faf9f5;
+    --linha:rgba(250,249,245,.11); --linha-forte:rgba(250,249,245,.2); --vidro:rgba(38,38,36,.9);
+    --vel:250,249,245; --fundo-rgb:38,38,36; --sup-rgb:48,48,46;
+    --acento-rgb:217,119,87; --ok-rgb:127,191,143;
+    --lateral:#1f1e1d; --papel:#30302e; --usuario:#393937;
+    --codigo:#1f1e1d; --codigo-txt:#f0b9a3; --sombra:rgba(0,0,0,.3);
+    color-scheme:dark;
+  }
+}
+:root[data-tema="dark"]{
+  --noite:#262624; --rio:#30302e; --solimoes:#d97757; --agua:#7fbf8f; --areia:#faf9f5;
+  --linha:rgba(250,249,245,.11); --linha-forte:rgba(250,249,245,.2); --vidro:rgba(38,38,36,.9);
+  --vel:250,249,245; --fundo-rgb:38,38,36; --sup-rgb:48,48,46;
+  --acento-rgb:217,119,87; --ok-rgb:127,191,143;
+  --lateral:#1f1e1d; --papel:#30302e; --usuario:#393937;
+  --codigo:#1f1e1d; --codigo-txt:#f0b9a3; --sombra:rgba(0,0,0,.3);
+  color-scheme:dark;
+}
+
+body{background:var(--noite); color:var(--areia); font-size:15px}
+body::before,body::after,.painel::before,#scene{display:none !important}
+.estado{display:none !important}
+.painel,.conversas,.drawer{contain:none}
+
+/* marca (topo da barra lateral) */
+.brand{top:13px; left:18px; z-index:5}
+.brand h1{font-family:var(--fonte-titulo); font-weight:500; font-size:21px;
+  letter-spacing:-.01em; text-indent:0}
+.brand h1 b{color:var(--solimoes); font-weight:500}
+.brand p{display:none}
+
+/* barra lateral */
+.conversas{left:0; top:0; bottom:0; width:272px; border:none; border-radius:0;
+  border-right:1px solid var(--linha); background:var(--lateral);
+  box-shadow:none; backdrop-filter:none}
+body.lateral-fechada .conversas{transform:translateX(-100%)}
+.cv-topo{padding:54px 12px 8px; background:none; border-bottom:none; gap:8px}
+.cv-titulo h2{font-size:12px; letter-spacing:0; text-transform:none; opacity:.65; font-weight:500}
+.cv-cont{background:none; border:none; color:inherit; opacity:.6; padding:0}
+.cv-nova{background:rgba(var(--acento-rgb),.1); color:var(--solimoes); border-color:transparent;
+  font-size:12px; letter-spacing:0; font-weight:500; padding:6px 12px; border-radius:8px}
+.cv-nova:hover{background:rgba(var(--acento-rgb),.18); border-color:transparent}
+.cv-busca input{background:var(--papel); border:1px solid var(--linha); border-radius:10px;
+  font-size:13px; padding:8px 54px 8px 30px; color:var(--areia)}
+.cv-busca input:focus{border-color:rgba(var(--acento-rgb),.55)}
+.cv-filtros button{font-size:12px; letter-spacing:0; border-radius:8px; color:var(--areia)}
+.cv-filtros button.on{color:var(--areia); background:rgba(var(--vel),.07); border-color:transparent}
+.cv-grupo{font-size:11.5px; letter-spacing:0; text-transform:none; opacity:.55;
+  font-weight:500; backdrop-filter:none; background:var(--lateral); padding:12px 8px 4px}
+.cv-item{border-radius:8px; padding:8px 8px 8px 10px}
+.cv-item:hover{background:rgba(var(--vel),.06); transform:none}
+.cv-item.ativa{background:rgba(var(--vel),.09); border-color:transparent}
+.cv-item.ativa::before{display:none}
+.cv-item.ativa .cv-tit{color:inherit; font-weight:500}
+.cv-tit{font-size:13.5px}
+.cv-prev{font-size:11.5px}
+.cv-rodape{font-size:11px; letter-spacing:0; opacity:.45; border-top:1px solid var(--linha)}
+#btn-abrir-lateral{left:146px; top:12px; background:none; backdrop-filter:none; border:none;
+  font-size:13px; letter-spacing:0; text-transform:none; padding:6px 10px; border-radius:8px}
+#btn-abrir-lateral:hover{background:rgba(var(--vel),.07); border-color:transparent; color:var(--areia)}
+
+/* coluna central */
+.painel{left:272px; right:0; top:0; bottom:0; width:auto; border:none; border-radius:0;
+  background:transparent; box-shadow:none; backdrop-filter:none;
+  transition:left .3s cubic-bezier(.2,.8,.2,1); align-items:stretch}
+body.lateral-fechada .painel{left:0}
+.painel header{position:absolute; top:0; left:0; right:0; z-index:4; border:none; padding:10px 18px 28px;
+  background:linear-gradient(var(--noite) 0, var(--noite) 50px, transparent); justify-content:flex-end; gap:8px}
+.painel header span,.painel header .estado-canal{letter-spacing:0; text-transform:none; font-size:12px; opacity:.6}
+.painel header em{color:var(--areia); opacity:.55; font-size:12px; letter-spacing:0}
+.painel header .estado-canal{margin-right:auto}
+.painel header .sel-modelo{background:none; color:var(--areia); border:1px solid var(--linha-forte);
+  border-radius:8px; font-size:12.5px; padding:4px 8px; opacity:.85}
+.painel header .sel-modelo option{background:var(--papel); color:var(--areia)}
+.atalhos{margin:0 4px}
+.atalhos button{border:none; border-radius:8px; width:32px; height:30px; font-size:15px; opacity:.65; color:var(--areia)}
+.atalhos button:hover,.atalhos button.on{background:rgba(var(--vel),.07); opacity:1; transform:none}
+
+#fluxo{padding:64px max(18px, calc((100% - 768px) / 2)) 28px; gap:24px; align-items:stretch;
+  scrollbar-color:rgba(var(--vel),.2) transparent}
+.msg{max-width:100%; font-size:15px; line-height:1.7; animation:none}
+.msg .quem{display:none}
+.msg.voce{align-self:flex-end; max-width:82%; background:var(--usuario); border:none;
+  border-radius:18px; padding:10px 16px; text-align:left; color:var(--areia)}
+.msg.yvakor{align-self:stretch; border:none; background:none; padding:0; border-radius:0; opacity:1;
+  font-family:var(--fonte-titulo); font-size:16.5px; line-height:1.72}
+.msg.sistema{align-self:center; font-size:12.5px; opacity:.5; letter-spacing:0}
+.msg.pensando{border-left:none; padding-left:0; color:rgba(var(--vel),.65)}
+.msg.pensando .dot{background:var(--solimoes)}
+.msg.pensando .passo{font-family:var(--fonte-texto); font-size:13px}
+
+/* markdown */
+.msg.md h1,.msg.md h2,.msg.md h3{color:var(--areia); font-weight:600}
+.msg.md li::marker{color:var(--solimoes)}
+.msg.md a{color:var(--solimoes)}
+.msg.md strong{color:inherit}
+.msg.md code{background:rgba(var(--vel),.08); color:var(--codigo-txt); border-radius:6px; font-size:13px}
+.msg.md pre{background:var(--codigo); border:1px solid var(--linha); border-radius:12px}
+.msg.md pre code{color:var(--areia); background:none}
+.msg.md pre .copiar{color:var(--areia); background:var(--papel); border-radius:8px}
+.msg.md blockquote{border-left-color:rgba(var(--vel),.25); opacity:.85}
+.msg.md th{background:rgba(var(--vel),.06)}
+
+/* compositor em cartão */
+.entrada{margin:0 auto 22px; width:min(768px, calc(100% - 36px)); border:1px solid var(--linha-forte);
+  border-radius:24px; background:var(--papel); box-shadow:0 2px 14px var(--sombra);
+  padding:9px 11px; gap:6px; position:relative}
+.entrada:focus-within{background:var(--papel); border-color:rgba(var(--acento-rgb),.55);
+  box-shadow:0 2px 18px var(--sombra), 0 0 0 3px rgba(var(--acento-rgb),.12)}
+.entrada textarea{font-size:15.5px; color:var(--areia); padding:7px 4px; max-height:200px}
+.entrada textarea::placeholder{color:rgba(var(--vel),.42)}
+.cmd-toggle{border:none; border-radius:50%; width:34px; height:34px; opacity:.6; font-size:18px}
+.cmd-toggle:hover{background:rgba(var(--vel),.07); opacity:1; color:var(--areia)}
+#enviar{width:34px; height:34px; padding:0; border-radius:50%; font-size:18px; font-weight:600;
+  line-height:1; background:var(--solimoes); color:#fff; box-shadow:none; letter-spacing:0;
+  display:grid; place-items:center}
+#enviar:hover{filter:brightness(1.08)}
+#enviar:disabled{opacity:.4}
+.menu-cmd{left:10px; bottom:62px; background:var(--papel); border:1px solid var(--linha-forte);
+  border-radius:14px; box-shadow:0 10px 34px var(--sombra); padding:6px}
+.menu-cmd button{color:var(--areia); border-radius:8px; font-size:13.5px}
+.menu-cmd button:hover{background:rgba(var(--vel),.07)}
+
+/* tela inicial (conversa vazia) */
+#boas-vindas,#chips{display:none}
+body.vazio #fluxo{display:none}
+body.vazio .painel{justify-content:center}
+body.vazio #boas-vindas{display:flex; justify-content:center; align-items:center;
+  margin:0 auto 26px; padding:0 20px}
+#boas-vindas h2{font-family:var(--fonte-titulo); font-weight:400; font-size:clamp(28px,4vw,40px);
+  letter-spacing:-.015em; color:var(--areia); text-align:center}
+#boas-vindas .estrela{color:var(--solimoes); font-size:.9em; margin-right:10px}
+body.vazio #chips{display:flex; flex-wrap:wrap; justify-content:center; gap:8px;
+  width:min(768px, calc(100% - 36px)); margin:14px auto 0}
+#chips button{background:none; border:1px solid var(--linha-forte); color:var(--areia);
+  border-radius:999px; padding:7px 14px; font-family:var(--fonte-texto); font-size:13px;
+  cursor:pointer; opacity:.8; transition:background .15s, opacity .15s}
+#chips button:hover{background:rgba(var(--vel),.06); opacity:1}
+
+/* gavetas (navegador, tarefas, rede) */
+.drawer{top:0; bottom:0; right:0; left:auto; width:min(460px,100vw); border:none; border-radius:0;
+  border-left:1px solid var(--linha); background:var(--noite); backdrop-filter:none;
+  box-shadow:-12px 0 40px var(--sombra); z-index:60}
+.drawer header{background:none; padding:14px 18px}
+.drawer header h3{font-family:var(--fonte-titulo); font-size:16px; letter-spacing:0;
+  text-transform:none; font-weight:500; opacity:1}
+.drawer header .x{color:var(--areia)}
+.dr-btn{border-radius:8px; letter-spacing:0; font-size:12.5px; color:var(--areia)}
+.dr-btn:hover{border-color:var(--linha-forte); background:rgba(var(--vel),.05)}
+.dr-btn.ok{background:var(--solimoes); border-color:var(--solimoes); color:#fff}
+.dr-linha input,.cw-form textarea{border-radius:8px; background:var(--papel); color:var(--areia)}
+.nv-tela,.rd-thumb,.nv-tela img{background:var(--lateral)}
+@media (max-width:1250px){.drawer{left:auto; right:0; top:0; bottom:0; width:min(460px,100vw)}}
+
+/* janelas */
+#confirmar,#conectores{background:rgba(0,0,0,.4); backdrop-filter:none}
+#confirmar .caixa,.cx-caixa{background:var(--papel); border:1px solid var(--linha); border-radius:16px;
+  box-shadow:0 20px 60px var(--sombra)}
+#confirmar h3{font-weight:500; letter-spacing:0; font-size:18px}
+#confirmar button,.cx-botoes button{border-radius:10px; color:var(--areia)}
+#confirmar button.ok,.cx-botoes button.ok{background:var(--solimoes); border-color:var(--solimoes); color:#fff}
+.cx-campo input{background:var(--noite); color:var(--areia); border-radius:8px}
+.cx-erro{color:#c0392b}
+
+/* telas pequenas */
+@media (max-width:1180px){
+  .brand{z-index:80}
+  .conversas{z-index:70; box-shadow:12px 0 40px var(--sombra)}
+  .painel,body.lateral-fechada .painel{left:0}
+}
+@media (max-width:760px){
+  .painel{top:0; left:0; right:0; bottom:0; height:auto}
+  #btn-abrir-lateral{top:12px; bottom:auto; left:130px}
+}
+</style>
+<script>
+/* ====== tema Claude: claro/escuro, saudação e tela inicial ====== */
+(function(){
+  const raiz=document.documentElement, fluxo=document.getElementById('fluxo');
+  function aplicar(t){ if(t==='light'||t==='dark') raiz.setAttribute('data-tema',t); else raiz.removeAttribute('data-tema'); }
+  try{ aplicar(localStorage.getItem('yv_tema')); }catch(e){}
+  const bt=document.getElementById('btn-tema');
+  if(bt) bt.onclick=function(){
+    const escuro = raiz.getAttribute('data-tema')==='dark' ||
+      (!raiz.getAttribute('data-tema') && matchMedia('(prefers-color-scheme: dark)').matches);
+    const novo = escuro ? 'light' : 'dark'; aplicar(novo);
+    try{ localStorage.setItem('yv_tema', novo); }catch(e){}
+  };
+  try{ if(innerWidth<1180 && localStorage.getItem('yvk-lateral')===null) document.body.classList.add('lateral-fechada'); }catch(e){}
+  const h=new Date().getHours();
+  const sd=document.getElementById('bv-saudacao');
+  if(sd) sd.textContent = h<5?'Boa madrugada':h<12?'Bom dia':h<18?'Boa tarde':'Boa noite';
+  function checar(){
+    const tem = !!fluxo.querySelector('.msg.voce, .msg.yvakor, .msg.pensando');
+    document.body.classList.toggle('vazio', !tem);
+  }
+  new MutationObserver(checar).observe(fluxo,{childList:true});
+  checar();
+  document.querySelectorAll('#chips button').forEach(function(b){
+    b.onclick=function(){
+      const t=document.getElementById('texto'); t.value=b.getAttribute('data-p'); t.focus();
+      t.dispatchEvent(new Event('input',{bubbles:true}));
+    };
+  });
+})();
+</script>
 </body>
 </html>
