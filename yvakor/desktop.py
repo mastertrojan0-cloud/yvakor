@@ -3209,8 +3209,17 @@ class App:
         anexos = list(self._anexos)
         if not texto and not anexos:
             return
+        mensagem = texto
+        if texto.startswith("/"):
+            from yvakor import atalhos as _atalhos
+            ex = _atalhos.expandir(texto)
+            if ex.get("erro"):
+                self.add("system", ex["erro"])
+                return
+            if ex.get("ok"):
+                mensagem = ex["prompt"]
         if not texto:
-            texto = "Analise o anexo enviado."
+            texto = mensagem = "Analise o anexo enviado."
         if sid in self._envios:
             self.set_status("já existe um envio nesta conversa", GOLD)
             return
@@ -3234,7 +3243,7 @@ class App:
 
         def trabalho():
             try:
-                corpo = {"message": texto, "session": sid}
+                corpo = {"message": mensagem, "session": sid}
                 if anexos:
                     corpo["attachments"] = anexos
                 if self._privado:

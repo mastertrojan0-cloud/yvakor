@@ -675,3 +675,31 @@ def test_interface_web_tem_as_funcoes_do_claude():
     assert "THREE.WebGLRenderer" not in html            # sem a cena 3D
     sp = (EXT / "sidepanel.js").read_text(encoding="utf-8")
     assert "function barraAcoes" in sp and "/api/feedback" in sp
+
+
+def test_atalhos_python_espelham_os_do_javascript():
+    """O app nativo usa yvakor/atalhos.py; não pode divergir de atalhos.js."""
+    import shutil
+    import subprocess
+    from yvakor import atalhos
+    node = shutil.which("node")
+    if not node:
+        import pytest
+        pytest.skip("node não instalado")
+    js = subprocess.run(
+        [node, "-e", "const A=require(process.argv[1]);"
+         "console.log(JSON.stringify(A.PADRAO.map(a=>[a.comando,a.prompt,a.exige||null])))",
+         str(EXT / "atalhos.js")],
+        capture_output=True, text=True, encoding="utf-8", timeout=30)
+    assert js.returncode == 0, js.stderr[:200]
+    esperado = json.loads(js.stdout)
+    assert [[a["comando"], a["prompt"], a.get("exige")] for a in atalhos.PADRAO] == esperado
+    # mesmo comportamento nos casos principais
+    assert atalhos.expandir("/pesquisar gatos")["prompt"].startswith("Pesquise na web sobre: gatos.")
+    assert "Use: /pesquisar" in atalhos.expandir("/pesquisar")["erro"]
+    assert "Selecione um texto" in atalhos.expandir("/explicar")["erro"]
+    assert atalhos.expandir("/explicar", ctx={"selecao": "x"})["ok"]
+    assert "não existe" in atalhos.expandir("/naoexiste")["erro"]
+    assert atalhos.expandir("/usr/bin/python").get("nao_atalho")
+    assert atalhos.expandir("oi").get("nao_atalho")
+    assert "Informação adicional: foco" in atalhos.expandir("/resumir foco")["prompt"]
