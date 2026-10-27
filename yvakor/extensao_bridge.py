@@ -9,6 +9,8 @@ import uuid
 class PonteExtensao:
     def __init__(self):
         self._lock = threading.RLock()
+        # Acorda quem faz long-poll em pendentes() assim que um comando entra.
+        self._cond = threading.Condition(self._lock)
         self._ultimo_ping = 0.0
         self._inicio = time.time()
         self._comandos: dict[str, dict] = {}
@@ -72,6 +74,7 @@ class PonteExtensao:
                                    "args": args or {},
                                    "criado": time.time()}
             self._eventos[cid] = ev
+            self._cond.notify_all()          # acorda o long-poll da extensão
         try:
             ok = ev.wait(espera)
         except Exception:
@@ -88,8 +91,13 @@ class PonteExtensao:
             self._eventos.pop(cid, None)
         return r
 
-    def pendentes(self, tipo: str | None = None) -> list[dict]:
+    def pendentes(self, tipo: str | None = None, espera: float = 0.0) -> list[dict]:
         """Entrega cada comando UMA única vez.
+
+        `espera` > 0 = long-poll: segura a chamada até aparecer um comando (ou o
+        tempo acabar). Antes a extensão consultava a cada 1,2s, então cada
+        comando esperava em média meio ciclo (~0,6s); com isso a entrega é
+        quase instantânea e há bem menos requisições.
 
         Antes um comando era reentregue se ainda não tivesse resultado após
         10s. Só que open/snapshot/goto levam mais que isso (esperam a página
@@ -98,17 +106,21 @@ class PonteExtensao:
         extensão não responder, `comando()` expira com erro claro e o agente
         decide se repete (gerando um comando novo).
         """
-        with self._lock:
-            saida = []
-            for c in self._comandos.values():
-                if tipo and c.get("tipo") != tipo:
-                    continue
-                if c.get("_entregue"):
-                    continue
-                c["_entregue"] = time.time()
-                item = {k: v for k, v in c.items() if not k.startswith("_")}
-                saida.append(item)
-            return saida
+        fim = time.time() + max(0.0, float(espera or 0.0))
+        with self._cond:
+            while True:
+                saida = []
+                for c in self._comandos.values():
+                    if tipo and c.get("tipo") != tipo:
+                        continue
+                    if c.get("_entregue"):
+                        continue
+                    c["_entregue"] = time.time()
+                    saida.append({k: v for k, v in c.items() if not k.startswith("_")})
+                resto = fim - time.time()
+                if saida or resto <= 0:
+                    return saida
+                self._cond.wait(min(resto, 1.0))
 
     def resultado(self, cid: str, ok: bool, erro: str = "",
                   tab_id: int | None = None, titulo: str = "",

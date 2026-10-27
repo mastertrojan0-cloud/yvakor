@@ -419,3 +419,73 @@ def test_background_e_motor_expoem_o_procurar():
     assert 'c.tipo === "find"' in bg and 'acaoPagina("procurar"' in bg
     pagina = (EXT / "pagina.js").read_text(encoding="utf-8")
     assert "procurar }" in pagina.split("window.__yvakorAcoes =")[-1]
+
+
+# --------------------------------------------------------------------------- #
+# Etapa D — ponte rápida (long-poll)
+# --------------------------------------------------------------------------- #
+def test_longpoll_entrega_o_comando_assim_que_ele_chega():
+    from yvakor.extensao_bridge import PonteExtensao
+    p = PonteExtensao()
+    saida = {}
+
+    def consumir():
+        t0 = time.time()
+        saida["cmds"] = p.pendentes(espera=5)
+        saida["dt"] = time.time() - t0
+    t = threading.Thread(target=consumir)
+    t.start()
+    time.sleep(0.3)                                    # o consumidor já está esperando
+    produtor = threading.Thread(target=lambda: p.comando("click", {"alvo": "e1"}, espera=3))
+    produtor.start()
+    t.join(5)
+    assert [c["tipo"] for c in saida["cmds"]] == ["click"]
+    assert saida["dt"] < 1.5, saida["dt"]              # ~0,3s (a espera), não 5s
+    assert p.pendentes() == []                         # entregue uma única vez
+    p.cancelar_pendentes()
+    produtor.join(5)
+
+
+def test_longpoll_sem_comando_devolve_vazio_no_prazo_e_sem_espera_nao_bloqueia():
+    from yvakor.extensao_bridge import PonteExtensao
+    p = PonteExtensao()
+    t0 = time.time()
+    assert p.pendentes(espera=0.4) == []
+    assert 0.3 <= time.time() - t0 < 1.5
+    t0 = time.time()
+    assert p.pendentes() == [] and time.time() - t0 < 0.2     # comportamento antigo intacto
+
+
+def test_endpoint_comandos_limita_e_valida_o_parametro_espera():
+    import yvakor.server as S
+    from unittest import mock
+    from yvakor.extensao_bridge import PONTE
+    visto = []
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), S.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    def get(qs):
+        c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=5)
+        c.request("GET", "/api/ext/comandos" + qs,
+                  headers={"Host": "127.0.0.1:7777", "X-YVAKOR-Token": S.TOKEN})
+        r = c.getresponse()
+        return r.status, json.loads(r.read())
+    try:
+        with mock.patch.object(PONTE, "pendentes",
+                               lambda tipo=None, espera=0.0: visto.append(espera) or []):
+            assert get("")[0] == 200
+            get("?espera=999")                          # limitado a 25s
+            get("?espera=abc")                          # inválido → 0
+            get("?espera=-5")                           # negativo → 0
+            get("?espera=12.5")
+        assert visto == [0.0, 25.0, 0.0, 0.0, 12.5]
+    finally:
+        srv.shutdown()
+
+
+def test_extensao_usa_laco_de_longpoll_e_nao_o_polling_de_1_2s():
+    bg = (EXT / "background.js").read_text(encoding="utf-8")
+    assert "iniciarLacoPonte" in bg and "/api/ext/comandos?espera=" in bg
+    assert "ponteComandos(20)" in bg                    # < 30s de ociosidade do service worker
+    assert "setInterval(ponteComandos" not in bg        # o polling antigo saiu
+    assert "AbortSignal.timeout" in bg                  # nenhuma volta pode pendurar

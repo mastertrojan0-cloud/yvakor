@@ -426,22 +426,29 @@ async function executarBG(c) {
 }
 
 let ponteOcupada = false;
-async function ponteComandos() {
-  // Sem reentrância: o setInterval e o alarme podem disparar enquanto um
-  // comando lento (open/snapshot) ainda roda; sem a trava, o mesmo comando
-  // podia ser pego duas vezes.
-  if (ponteOcupada) return;
+
+// Busca (e executa) comandos. espera > 0 = long-poll: o núcleo segura a
+// requisição até aparecer um comando — entrega quase instantânea, em vez de
+// esperar em média meio ciclo de um polling de 1,2s. Devolve quantos comandos
+// tratou (o laço usa isso para não girar à toa).
+async function ponteComandos(espera = 0) {
+  // Sem reentrância: o laço e o alarme podem coincidir; sem a trava, o mesmo
+  // comando podia ser pego duas vezes.
+  if (ponteOcupada) return -1;
   ponteOcupada = true;
+  let tratados = 0;
   try {
     // Chamar uma API de extensão reinicia o timer de ociosidade (~30s) do
     // service worker do MV3 — mantém a ponte viva sem depender do painel.
     try { chrome.runtime.getPlatformInfo(() => {}); } catch (e) {}
     if (!TOKEN) await obterToken();
-    const r = await fetch(BASE + "/api/ext/comandos", {
-      cache: "no-store", headers: TOKEN ? { "X-YVAKOR-Token": TOKEN } : {} });
-    if (r.status === 403) { await obterToken(); return; }
+    const r = await fetch(BASE + "/api/ext/comandos?espera=" + espera, {
+      cache: "no-store", headers: TOKEN ? { "X-YVAKOR-Token": TOKEN } : {},
+      signal: AbortSignal.timeout((espera + 10) * 1000) });
+    if (r.status === 403) { await obterToken(); return 0; }
     const j = await r.json();
     for (const c of (j.comandos || [])) {
+      tratados++;
       try {
         const dados = await executarBG(c);
         await responderBG(c, true, dados);
@@ -449,19 +456,39 @@ async function ponteComandos() {
         await responderBG(c, false, {}, e.message || "falha");
       }
     }
-  } catch (e) { /* sem comando */ }
+  } catch (e) { /* núcleo fora ou sem comando */ }
   finally { ponteOcupada = false; }
+  return tratados;
+}
+
+// Laço contínuo de long-poll (substitui o setInterval de 1,2s). Cada volta dura
+// até 20s (< 30s de ociosidade do service worker). Se o núcleo está fora ou é
+// uma versão antiga que ignora `espera` (volta na hora, vazio), descansa antes
+// de repetir — nunca gira a 100%.
+let lacoAtivo = false;
+async function iniciarLacoPonte() {
+  if (lacoAtivo) return;
+  lacoAtivo = true;
+  try {
+    for (;;) {
+      const t0 = Date.now();
+      const n = await ponteComandos(20);
+      if (n === -1) await dormirBG(300);                    // outra volta em curso
+      else if (n === 0 && Date.now() - t0 < 1500) await dormirBG(1200);
+    }
+  } finally { lacoAtivo = false; }
 }
 
 pontePing();
 setInterval(pontePing, 10000);
-setInterval(ponteComandos, 1200);
+iniciarLacoPonte();
 try {
   chrome.alarms.create("yvakor-bridge", { periodInMinutes: 0.5 });
 } catch (e) { /* versões antigas exigem >=1 min */ }
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === "yvakor-bridge") {
-    pontePing(); ponteComandos();
+    pontePing();
+    iniciarLacoPonte();          // vigia: se o service worker reiniciou, retoma o laço
     if (ultimaAcao && Date.now() - ultimaAcao > 120000) indicadorDesligar();
   }
 });

@@ -944,9 +944,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(403, {"error": "token ausente ou inválido"})
             from yvakor.extensao_bridge import PONTE
             from urllib.parse import parse_qs, urlparse
-            tipo = (parse_qs(urlparse(self.path).query).get("tipo") or [None])[0]
+            q = parse_qs(urlparse(self.path).query)
+            tipo = (q.get("tipo") or [None])[0]
+            try:   # long-poll: a extensão pede para esperar até N s (máx. 25)
+                espera = max(0.0, min(25.0, float((q.get("espera") or ["0"])[0])))
+            except ValueError:
+                espera = 0.0
+            PONTE.ping()   # a própria consulta prova que a extensão está viva
             return self._json(200, {"ok": True,
-                                    "comandos": PONTE.pendentes(tipo)})
+                                    "comandos": PONTE.pendentes(tipo, espera)})
         if self.path == "/api/ext/status":
             from yvakor.extensao_bridge import PONTE
             return self._json(200, {"ok": True, **PONTE.status()})
