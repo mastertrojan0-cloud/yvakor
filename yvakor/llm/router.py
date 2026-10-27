@@ -2,6 +2,7 @@
 É aqui que a independência de IA externa acontece gradualmente:
 mova categorias de 'external' para 'local' no settings.yaml."""
 from __future__ import annotations
+import inspect
 import json
 import logging
 import re
@@ -10,6 +11,7 @@ import time
 
 from yvakor import seguro
 from yvakor.config import ROOT
+from yvakor.llm import economia
 from yvakor.llm.adapter import build_provider
 
 # Modos de uso do modelo (escolhidos pelo usuário, salvos em preferencias.json).
@@ -56,6 +58,10 @@ ACOES = ("abra", "abrir", "crie", "criar", "list", "edit", "apag", "mova",
          "organiz", "corrija", "refator", "implement")
 
 
+class _SemProvedor(Exception):
+    """Reservada: sinaliza falha total que não deve cair no caminho original."""
+
+
 class LLMRouter:
     def __init__(self, settings: dict):
         self.settings = settings
@@ -64,6 +70,15 @@ class LLMRouter:
                           for name, cfg in llm["providers"].items()}
         self.routing = llm["routing"]
         self.default = llm["default_provider"]
+        # Otimizador de consumo (cache, compressão, cascata local→nuvem, orçamento).
+        # Se não puder iniciar, o roteador segue no caminho original.
+        self.otim = None
+        try:
+            cfg_otim = llm.get("otimizacao") or {}
+            if cfg_otim.get("ativo", True):
+                self.otim = economia.Otimizador(cfg_otim, self.providers)
+        except Exception as exc:                         # pragma: no cover
+            _log.warning("otimizador de consumo desativado: %s", exc)
         # Circuit breaker por provider: nome -> instante até o qual é pulado.
         self._cooldown: dict[str, float] = {}
         self._probe_ok_ate = 0.0
@@ -175,8 +190,10 @@ class LLMRouter:
 
     def _falhou(self, nome: str, exc: Exception) -> None:
         fatal = self._fatal(exc)
-        ate = time.time() + (self.COOLDOWN_FATAL if fatal
-                             else self.COOLDOWN_TRANSITORIO)
+        espera = getattr(exc, "espera_s", None)      # Retry-After da própria API
+        ate = time.time() + (self.COOLDOWN_FATAL if fatal else
+                             max(self.COOLDOWN_TRANSITORIO, min(float(espera), 300))
+                             if espera else self.COOLDOWN_TRANSITORIO)
         with self._lock:
             era_novo = not self._em_cooldown(nome)
             self._cooldown[nome] = ate
@@ -248,11 +265,24 @@ class LLMRouter:
         return vivos or ordem      # todos em cooldown: tenta mesmo assim
 
     def complete(self, task_type: str, system: str, user: str) -> str:
+        if self.otim is not None and self.otim.ativo:
+            return self.complete_messages(task_type, [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user}])
         return self._dispatch(task_type, lambda p: p.chat(system, user))
 
     def complete_messages(self, task_type: str, messages: list[dict],
                           forcar: str | None = None,
                           timeout: float | None = None) -> str:
+        if self.otim is not None and self.otim.ativo:
+            try:
+                return self._completar_otimizado(task_type, messages, forcar, timeout)
+            except _SemProvedor:
+                raise
+            except Exception as exc:                     # otimizador falhou: caminho original
+                if isinstance(exc, RuntimeError) and "Todos os provedores" in str(exc):
+                    raise
+                _log.warning("otimizador falhou (%s) — caminho original", exc)
         if timeout is None:
             call = lambda p: p.chat_messages(messages)
         else:
@@ -263,15 +293,120 @@ class LLMRouter:
                        tools: list[dict], forcar: str | None = None):
         """Function calling nativo; devolve (provider, mensagem)."""
         ultimo = None
-        for p in self._ordem(task_type, forcar):
+        plano = None
+        ordem = self._ordem(task_type, forcar)
+        if self.otim is not None and self.otim.ativo:
             try:
-                msg = p.chat_tools(messages, tools)
+                plano = self.otim.planejar(task_type, messages, ordem, self.modo, forcar)
+                ordem = plano.ordem
+            except Exception as exc:
+                _log.warning("otimizador (tools) falhou: %s", exc)
+                plano = None
+        for p in ordem:
+            try:
+                msgs = (plano.mensagens.get(p.name) if plano else None) or messages
+                kw = ({"max_tokens": plano.max_tokens[p.name]}
+                      if plano and p.name in plano.max_tokens
+                      and "max_tokens" in inspect.signature(p.chat_tools).parameters else {})
+                t0 = time.time()
+                msg = p.chat_tools(msgs, tools, **kw)
                 self._ok(p.name)
+                if plano is not None:
+                    try:
+                        q = 0.9 if (msg or {}).get("tool_calls") else economia.avaliar(
+                            (msg or {}).get("content") or "", task_type)
+                        self.otim.registrar_chamada(plano, p, msgs, str((msg or {}).get("content") or ""),
+                                                    (time.time() - t0) * 1000,
+                                                    getattr(p, "ultimo_uso", None), q)
+                    except Exception:
+                        pass
                 return p.name, msg
             except Exception as exc:
                 self._falhou(p.name, exc)
                 ultimo = exc
         raise ultimo or RuntimeError("nenhum provider disponível")
+
+    @staticmethod
+    def _chamar(p, msgs: list[dict], timeout: float | None, max_tokens: int | None) -> str:
+        kw = {}
+        if timeout is not None:
+            kw["timeout"] = timeout
+        if max_tokens and "max_tokens" in inspect.signature(p.chat_messages).parameters:
+            kw["max_tokens"] = max_tokens
+        return p.chat_messages(msgs, **kw)
+
+    def _completar_otimizado(self, task_type: str, messages: list[dict],
+                             forcar: str | None, timeout: float | None) -> str:
+        o = self.otim
+        plano = o.planejar(task_type, messages, self._ordem(task_type, forcar),
+                           self.modo, forcar)
+        hit = o.cache_buscar(plano)
+        if hit:
+            o.registrar_cache(plano, hit)
+            return hit["resposta"]
+        chave = plano.cache_chave if plano.cacheavel else None
+        ev, dono = o.voo_unico(chave)
+        try:
+            if not dono:                                  # outra thread já pagou por isto
+                hit = o.cache_buscar(plano)
+                if hit:
+                    o.registrar_cache(plano, hit)
+                    return hit["resposta"]
+            return self._percorrer(plano, messages, timeout)
+        finally:
+            if dono:
+                o.voo_fim(chave, ev)
+
+    def _percorrer(self, plano, messages: list[dict], timeout: float | None) -> str:
+        o = self.otim
+        erros, fatais = [], 0
+        melhor: tuple[float, str] | None = None
+        ordem = plano.ordem
+        for i, p in enumerate(ordem):
+            msgs = plano.mensagens.get(p.name) or messages
+            t0 = time.time()
+            try:
+                r = self._chamar(p, msgs, timeout, plano.max_tokens.get(p.name))
+            except Exception as exc:
+                # "resposta vazia" é falha de QUALIDADE (o modelo não deu conta), não queda do
+                # provedor: não o põe em cooldown — só escalona para o próximo.
+                if "resposta vazia" not in str(exc):
+                    self._falhou(p.name, exc)
+                erros.append(f"{p.name}: {exc}")
+                fatais += 1 if self._fatal(exc) else 0
+                try:
+                    o.registrar_chamada(plano, p, msgs, "", (time.time() - t0) * 1000,
+                                        getattr(p, "ultimo_uso", None), 0.0, ok=False,
+                                        detalhe=str(exc)[:120])
+                except Exception:
+                    pass
+                continue
+            if not (r or "").strip():                    # vazio = falha (como no adapter)
+                erros.append(f"{p.name}: resposta vazia")
+                try:
+                    o.registrar_chamada(plano, p, msgs, "", (time.time() - t0) * 1000,
+                                        getattr(p, "ultimo_uso", None), 0.0, ok=False,
+                                        detalhe="resposta vazia")
+                except Exception:
+                    pass
+                continue
+            uso = getattr(p, "ultimo_uso", None)
+            q = economia.avaliar(r, plano.tarefa, (uso or {}).get("finish"))
+            info = o.registrar_chamada(plano, p, msgs, r, (time.time() - t0) * 1000, uso, q)
+            self._ok(p.name)
+            proximo = ordem[i + 1] if i + 1 < len(ordem) else None
+            if o.deve_escalar(q, p, proximo):             # o local não convenceu: sobe para a nuvem
+                if melhor is None or q > melhor[0]:
+                    melhor = (q, r)
+                continue
+            o.cache_guardar(plano, r, info["tok_in"], info["tok_out"], q)
+            return r
+        if melhor is not None:                            # a nuvem falhou depois: fica o melhor que houve
+            return melhor[1]
+        dica = (" — recarregue o saldo do provedor externo (HTTP 402) ou "
+                "confira a chave" if fatais else "")
+        raise RuntimeError("Todos os provedores de IA falharam — "
+                           + " | ".join(erros) + dica)
 
     def _dispatch(self, task_type: str, call, forcar: str | None = None) -> str:
         erros = []

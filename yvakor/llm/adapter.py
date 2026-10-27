@@ -4,6 +4,7 @@ import os
 import re
 import json
 import urllib.error
+import threading
 import urllib.request
 
 
@@ -13,10 +14,11 @@ class ProviderErro(RuntimeError):
     para pular o provider por um bom tempo em vez de errar a cada passo."""
 
     def __init__(self, msg: str, codigo: int | None = None,
-                 fatal: bool = False):
+                 fatal: bool = False, espera_s: float | None = None):
         super().__init__(msg)
         self.codigo = codigo
         self.fatal = fatal
+        self.espera_s = espera_s      # Retry-After do HTTP 429/503, se a API informou
 
 
 class LLMProvider:
@@ -27,7 +29,7 @@ class LLMProvider:
                  api_key: str | None = None,
                  temperature: float = 0.3, max_tokens: int = 4096,
                  timeout: float = 120, num_thread: int | None = None,
-                 keep_alive: str = "5m"):
+                 keep_alive: str = "5m", num_ctx: int | None = None):
         self.name = name
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -40,6 +42,31 @@ class LLMProvider:
         # `num_thread`, então com isso definido usamos a API nativa /api/chat.
         self.num_thread = num_thread
         self.keep_alive = keep_alive
+        # Janela de contexto do Ollama: o padrão (2048/4096) CORTA o começo do
+        # prompt em silêncio (some o system). Fixar evita isso.
+        self.num_ctx = num_ctx
+        self._tl = threading.local()
+
+    @property
+    def ultimo_uso(self) -> dict | None:
+        """Tokens REAIS da última chamada desta thread: {prompt, saida, cache, finish}."""
+        return getattr(self._tl, "uso", None)
+
+    def _anotar_uso(self, data: dict) -> None:
+        u = data.get("usage") or {}
+        if not u and "prompt_eval_count" in data:          # Ollama nativo
+            self._tl.uso = {"prompt": int(data.get("prompt_eval_count") or 0),
+                            "saida": int(data.get("eval_count") or 0), "cache": 0,
+                            "finish": data.get("done_reason")}
+            return
+        ch = (data.get("choices") or [{}])[0]
+        self._tl.uso = {
+            "prompt": int(u.get("prompt_tokens") or 0),
+            "saida": int(u.get("completion_tokens") or 0),
+            # DeepSeek: prompt_cache_hit_tokens; OpenAI: prompt_tokens_details.cached_tokens
+            "cache": int(u.get("prompt_cache_hit_tokens")
+                         or (u.get("prompt_tokens_details") or {}).get("cached_tokens") or 0),
+            "finish": ch.get("finish_reason")}
 
     def _url(self) -> str:
         return (f"{self.base_url}/v1/chat/completions"
@@ -67,9 +94,16 @@ class LLMProvider:
                 corpo = exc.read().decode("utf-8", "replace")[:300]
             except Exception:
                 pass
+            espera = None
+            try:
+                ra = exc.headers.get("Retry-After") if exc.headers else None
+                espera = float(ra) if ra else None
+            except (TypeError, ValueError):
+                espera = None
             raise ProviderErro(
                 f"{self.name} HTTP {exc.code}: {corpo or exc.reason}",
-                codigo=exc.code, fatal=exc.code in (401, 402, 403)) from exc
+                codigo=exc.code, fatal=exc.code in (401, 402, 403),
+                espera_s=espera) from exc
         except urllib.error.URLError as exc:
             raise ProviderErro(f"{self.name} indisponível: {exc.reason}") from exc
         except TimeoutError as exc:
@@ -95,6 +129,7 @@ class LLMProvider:
         data = self._post_bruto(self._url(), payload, timeout)
         if not (data.get("choices")):
             raise ProviderErro(f"{self.name}: resposta sem 'choices'")
+        self._anotar_uso(data)
         return data
 
     def _chat_ollama_nativo(self, messages: list[dict], timeout: float | None,
@@ -106,9 +141,12 @@ class LLMProvider:
         data = self._post_bruto(f"{self.base_url}/api/chat", {
             "model": self.model, "messages": messages, "stream": False,
             "keep_alive": self.keep_alive,
-            "options": {"temperature": self.temperature,
-                        "num_predict": max_tokens or self.max_tokens,
-                        "num_thread": self.num_thread}}, timeout)
+            "options": {k: v for k, v in {
+                "temperature": self.temperature,
+                "num_predict": max_tokens or self.max_tokens,
+                "num_thread": self.num_thread,
+                "num_ctx": self.num_ctx}.items() if v is not None}}, timeout)
+        self._anotar_uso(data)
         return (data.get("message") or {}).get("content") or ""
 
     def chat(self, system: str, user: str) -> str:
@@ -118,10 +156,11 @@ class LLMProvider:
         ])
 
     def chat_tools(self, messages: list[dict], tools: list[dict],
-                   tool_choice: str = "auto") -> dict:
+                   tool_choice: str = "auto", max_tokens: int | None = None) -> dict:
         """Chamada com function calling nativo; devolve a mensagem do modelo."""
+        self._tl.uso = None
         data = self._post({"model": self.model, "temperature": self.temperature,
-                           "max_tokens": self.max_tokens, "messages": messages,
+                           "max_tokens": max_tokens or self.max_tokens, "messages": messages,
                            "tools": tools, "tool_choice": tool_choice})
         return data["choices"][0]["message"]
 
@@ -130,6 +169,7 @@ class LLMProvider:
         """Completa a partir de uma lista de mensagens (multi-turno).
         `timeout`/`max_tokens` sobrescrevem o padrão do provider só nesta chamada
         (ex.: o agente local precisa de muito mais tempo que a resposta rápida)."""
+        self._tl.uso = None
         if self.num_thread:
             conteudo = self._chat_ollama_nativo(messages, timeout, max_tokens)
         else:
@@ -161,6 +201,7 @@ def build_provider(name: str, cfg: dict) -> LLMProvider:
         timeout=float(cfg.get("timeout_s", 120)),
         num_thread=(_threads_ollama(cfg) if _eh_ollama(name, cfg) else None),
         keep_alive=str(cfg.get("keep_alive", "5m")),
+        num_ctx=(int(cfg["num_ctx"]) if cfg.get("num_ctx") else None),
     )
 
 

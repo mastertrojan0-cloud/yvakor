@@ -52,6 +52,21 @@ llm:
       # Use um número fixo, ou 0 para desligar (volta ao endpoint /v1 padrão).
       num_thread: "auto"
       keep_alive: "5m"       # quanto o modelo fica na RAM após a última chamada
+      num_ctx: 4096          # janela fixa: o padrão do Ollama CORTA o início do prompt em silêncio
+
+  # Otimizador de consumo (yvakor/llm/economia.py): cache, roteamento aprendido
+  # local→nuvem, compressão de prompt, teto de saída adaptativo, verificação de
+  # qualidade e orçamento. Relatório em GET /api/consumo.
+  otimizacao:
+    ativo: true
+    orcamento:                       # 0 = sem limite. Zonas: 70% econômico · 90% crítico · 100% bloqueado
+      diario_usd: 0.50
+      mensal_usd: 8.0
+      diario_tokens: 600000
+    # Preços em USD por 1 milhão de tokens — CONFIRA na página de preços da API.
+    precos_usd_por_milhao:
+      deepseek: {entrada: 0.28, cache: 0.028, saida: 0.42}
+    orcamento_prompt_tokens: {local: 1800, nuvem: 7000}
 
   # Roteador: LOCAL primeiro, DeepSeek para tarefas mais profundas.
   # - Tudo que NÃO está em 'external' é respondido pelo modelo local primeiro

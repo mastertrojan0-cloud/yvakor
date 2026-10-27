@@ -681,6 +681,17 @@ class Handler(BaseHTTPRequestHandler):
                 self.close_connection = True
                 return self._json(403, {"error": "host não autorizado"})
             return self._json(200, {"token": TOKEN})
+        if self.path.startswith("/api/consumo"):
+            o = getattr(get_agent().router, "otim", None)
+            if o is None:
+                return self._json(200, {"ok": False, "ativo": False})
+            try:
+                dias = int(urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                           .get("dias", ["7"])[0])
+            except ValueError:
+                dias = 7
+            return self._json(200, {"ok": True, **o.relatorio(max(1, min(dias, 90)))})
+
         if self.path == "/api/banco":
             from yvakor import banco
             saude = {p.name: banco.verificar(p) for p in banco.descobrir()}
@@ -1391,6 +1402,18 @@ class Handler(BaseHTTPRequestHandler):
                 for p in banco.descobrir():
                     banco.fazer_backup(p, forcar=bool(data.get("forcar_backup", True)))
                 return self._json(200, {"ok": True, **banco.ciclo_periodico()})
+
+            # Orçamento de API: {"diario_usd":0.5,"mensal_usd":8,"diario_tokens":600000} (0 = sem limite)
+            if self.path == "/api/consumo/orcamento":
+                o = getattr(ag.router, "otim", None)
+                if o is None:
+                    return self._json(400, {"error": "otimizador desativado"})
+                try:
+                    novo = o.definir_orcamento(**{k: data.get(k) for k in
+                                                  ("diario_usd", "mensal_usd", "diario_tokens")})
+                except (TypeError, ValueError):
+                    return self._json(400, {"error": "valores inválidos"})
+                return self._json(200, {"ok": True, "orcamento": novo, "zona": o.zona()})
 
             if self.path == "/api/chat/cancelar":
                 alvos = ag.cancelar(str(data.get("session") or "") or None)
