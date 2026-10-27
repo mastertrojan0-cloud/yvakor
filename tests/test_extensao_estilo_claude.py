@@ -765,3 +765,96 @@ def test_pedido_composto_abre_agora_e_entrega_o_resto_ao_agente():
 def test_aba_inventada_pelo_modelo_nao_trava_e_o_aviso_chega_ao_agente():
     bg = (EXT / "background.js").read_text(encoding="utf-8")
     assert "abaEstrita" in bg and "usei a aba atual" in bg
+
+
+def _registro_navegador_fake(chamadas):
+    from yvakor.config import load_settings
+    from yvakor.tools.registry import ToolRegistry
+    reg = ToolRegistry(load_settings())
+    for n in ("navegador_ver", "navegador_ir", "navegador_extrair",
+              "navegador_pesquisar", "navegador_clicar", "navegador_digitar"):
+        reg.register(n, (lambda nome: lambda **k: chamadas.append(nome) or
+                         {"ok": True, "titulo": "Caixa de entrada - Gmail"})(n),
+                     "Navegador.", {"aba": "int?"})
+    return reg
+
+
+def test_modelo_que_desiste_sem_tentar_e_obrigado_a_usar_o_navegador(monkeypatch):
+    """Os prints: 'a extensão não está respondendo' com 0 ferramentas chamadas —
+    o modelo só repetia falhas antigas do histórico."""
+    from yvakor import agent as ag
+    from yvakor.agent import AgentLoop, desistiu_sem_tentar
+    monkeypatch.setattr(ag, "_extensao_conectada", lambda: True)
+    chamadas = []
+
+    class Router:
+        def __init__(self):
+            self.n = 0
+            self.vistos = []
+
+        def complete_tools(self, task, msgs, tools, forcar=None):
+            self.n += 1
+            self.vistos.append(msgs[-1]["content"])
+            if self.n == 1:
+                return "fake", {"content": "Não consigo: a extensão do YVAKOR no Chrome "
+                                           "não está respondendo. Abra o painel."}
+            if self.n == 2:
+                return "fake", {"content": "", "tool_calls": [
+                    {"id": "1", "function": {"name": "navegador_ver", "arguments": "{}"}}]}
+            return "fake", {"content": "Você tem 1 e-mail da SEFAZ Amazonas."}
+
+        def complete_messages(self, *a, **k):
+            return "ok"
+
+    r = Router()
+    loop = AgentLoop(r, _registro_navegador_fake(chamadas), max_iterations=5,
+                     nativo=True, roteador=True)
+    saida = loop.run("teste", [{"role": "user",
+                                "content": "verifica email spam no meu gmail"}])
+    assert chamadas == ["navegador_ver"], chamadas
+    assert "SEFAZ" in saida and r.vistos[1] == ag.INSISTIR_NAVEGADOR
+    # insiste UMA vez só, e nunca depois de ferramentas já terem rodado
+    assert not desistiu_sem_tentar("não consigo abrir", ["navegador_ver"], 1)
+    assert not desistiu_sem_tentar("não consigo abrir", ["arquivos_ler"], 0)
+    assert not desistiu_sem_tentar("Pronto, abri o Gmail.", ["navegador_ver"], 0)
+
+
+def test_gmail_email_e_voo_recebem_ferramentas_de_navegador():
+    from yvakor.tools.router import selecionar
+    reg = _registro_navegador_fake([])
+    for frase in ("verifica email spam no meu gmail", "verifica email bloqueados",
+                  "busca um voo para boa vista e valores", "olha minha caixa de entrada"):
+        assert "navegador_ver" in selecionar(reg, frase), frase
+
+
+def test_continuacao_de_conversa_de_navegador_mantem_as_ferramentas(monkeypatch):
+    from yvakor import agent as ag
+    from yvakor.agent import AgentLoop
+    monkeypatch.setattr(ag, "_extensao_conectada", lambda: True)
+    reg = _registro_navegador_fake([])
+    reg.register("cap_resumir", lambda **k: {"ok": True}, "Resume texto.", {"t": "str"})
+    loop = AgentLoop(None, reg, roteador=True)
+    hist = [{"role": "user", "content": "abre o gmail"},
+            {"role": "assistant", "content": "Abri o Gmail."},
+            {"role": "user", "content": "resume isso"}]
+    assert "navegador_ver" in loop._selecionar(hist)
+    monkeypatch.setattr(ag, "_extensao_conectada", lambda: False)
+    assert loop._selecionar([{"role": "user", "content": "resume isso"}]) is not None
+
+
+def test_historico_com_falha_antiga_da_extensao_e_saneado(monkeypatch):
+    from yvakor.extensao_bridge import PONTE
+    from yvakor.orchestrator import Orchestrator
+    hist = [{"role": "user", "content": "verifica email"},
+            {"role": "assistant", "content": "Não consigo verificar — a extensão do "
+                                             "YVAKOR no Chrome não está respondendo."},
+            {"role": "assistant", "content": "Abri o YouTube."}]
+    monkeypatch.setattr(PONTE, "disponivel", lambda *a, **k: True)
+    saida = Orchestrator._sanear_falhas_antigas(SimpleNamespace(
+        _FALHA_EXTENSAO=Orchestrator._FALHA_EXTENSAO,
+        NOTA_FALHA_ANTIGA=Orchestrator.NOTA_FALHA_ANTIGA), hist)
+    assert saida[1]["content"] == Orchestrator.NOTA_FALHA_ANTIGA
+    assert saida[0] == hist[0] and saida[2] == hist[2]
+    assert "não está respondendo" in hist[1]["content"]      # não muta o original
+    monkeypatch.setattr(PONTE, "disponivel", lambda *a, **k: False)
+    assert Orchestrator._sanear_falhas_antigas(SimpleNamespace(), hist) is hist

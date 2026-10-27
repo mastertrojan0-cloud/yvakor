@@ -22,7 +22,8 @@ GRUPOS = {
         "prefixos": ("navegador_",),
         "palavras": ("site", "pagina", "página", "url", "navegar", "navegue",
                      "clique", "login", "web", "http", "pesquis", "baixar",
-                     "download", "formulario", "formulário", "link", "aba"),
+                     "download", "formulario", "formulário", "link", "aba",
+                     "voo", "voos", "preco", "precos", "caixa"),
         # Radicais: casam por INÍCIO da palavra. A lista acima só casava a
         # palavra inteira ("pesquis" nunca casava "pesquise"), então "pesquise
         # gatos no google" e "escreva olá no campo" não recebiam NENHUMA
@@ -33,7 +34,11 @@ GRUPOS = {
                      "chrome", "edge", "campo", "seleci", "marc", "espere",
                      "aguard", "volt", "recarreg", "avanc", "pagin", "site",
                      "link", "aba", "tecla", "enter", "login", "entrar", "anex", "upload",
-                     "acess", "screenshot", "print", "captur"),
+                     "acess", "screenshot", "print", "captur",
+                     # serviços que o usuário usa logado no Chrome
+                     "gmail", "email", "mail", "inbox", "outlook", "hotmail",
+                     "spam", "whatsapp", "instagr", "facebook", "linkedin",
+                     "passage", "aeroport", "hotel", "amazon", "mercadoliv"),
         # Ordem de importância: o limite de ferramentas corta pelo FIM, e a
         # ordem de registro punha navegador_pesquisar na 11ª posição.
         "prioridade": ("navegador_ver", "navegador_procurar", "navegador_pesquisar",

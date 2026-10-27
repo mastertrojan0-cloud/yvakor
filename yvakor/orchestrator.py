@@ -737,6 +737,19 @@ class Orchestrator:
                 "se o usuário pedir.\n"
                 "- Só finalize quando o objetivo estiver confirmado; se um "
                 "caminho falhar, tente outro sozinho.")
+        try:
+            from yvakor.extensao_bridge import PONTE as _ponte_st
+            if _ponte_st.disponivel():
+                parts.append(
+                    "## ESTADO DO NAVEGADOR (agora)\n"
+                    "- A extensão YVAKOR do Chrome está CONECTADA: você controla o "
+                    "Chrome do usuário, com os logins dele (Gmail, bancos de dados "
+                    "web, redes sociais…), pelas ferramentas navegador_*.\n"
+                    "- Nunca diga que a extensão não responde sem ter chamado uma "
+                    "ferramenta NESTA resposta; falhas de mensagens antigas já "
+                    "foram resolvidas.")
+        except Exception:
+            pass
         # O histórico da conversa NÃO entra mais aqui como texto truncado: agora
         # é enviado ao modelo como turnos user/assistant reais (ver process()).
         parts.append(f"## DATA ATUAL\n{datetime.now().strftime('%Y-%m-%d %H:%M')}")
@@ -1255,6 +1268,7 @@ class Orchestrator:
                    else self.episodic.history_messages(
                        self.settings["memory"]["episodic_context_last_n"],
                        session_id=sid))
+        history = self._sanear_falhas_antigas(history)
         history.append({"role": "user", "content": user_message})
         if modo_local:
             history = history[-5:]   # prompt menor = passo bem mais rápido no 3B
@@ -1323,6 +1337,33 @@ class Orchestrator:
         # Obsidian quase em tempo real: sincroniza no máximo a cada 2 min.
         self._sincronizar_cerebro_async()
         return answer
+
+    _FALHA_EXTENSAO = _re.compile(
+        r"extens[aã]o[^\n]{0,80}(n[aã]o (est[aá] )?respond|sem responder|"
+        r"n[aã]o respondeu|continua sem|n[aã]o conect|desconect)|"
+        r"n[aã]o tenho (nenhuma )?ferramenta de navegador", _re.I)
+    NOTA_FALHA_ANTIGA = ("(Resposta antiga omitida: naquele momento o navegador "
+                         "falhou. Isso já foi resolvido — a extensão está "
+                         "conectada agora; use as ferramentas de navegador.)")
+
+    def _sanear_falhas_antigas(self, history: list[dict]) -> list[dict]:
+        """Com a extensão conectada, respostas antigas do tipo "a extensão não
+        está respondendo" viram uma nota curta. Antes o modelo lia essas
+        respostas no histórico e as repetia sem chamar nenhuma ferramenta."""
+        try:
+            from yvakor.extensao_bridge import PONTE as _p
+            if not _p.disponivel():
+                return history
+        except Exception:
+            return history
+        saida = []
+        for item in history:
+            texto = item.get("content")
+            if (item.get("role") == "assistant" and isinstance(texto, str)
+                    and self._FALHA_EXTENSAO.search(texto)):
+                item = {**item, "content": self.NOTA_FALHA_ANTIGA}
+            saida.append(item)
+        return saida
 
     # ------------------------------------------------------------------ #
     # Caminho local (modelo pequeno): prompt e controle de qualidade

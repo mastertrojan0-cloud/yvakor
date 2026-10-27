@@ -195,6 +195,41 @@ PROTOCOLO_COMPACTO = """## FERRAMENTAS
 
 from yvakor.textos import sem_json_de_ferramenta  # noqa: E402
 
+# Resposta que "desiste" sem ter tentado: o modelo via no histórico uma falha
+# antiga da extensão ("não está respondendo") e repetia isso SEM chamar
+# nenhuma ferramenta — a extensão estava conectada e nunca foi acionada.
+_DESISTENCIA = re.compile(
+    r"(n[aã]o (consigo|consegui|posso|tenho como)|sem (acesso|ferramenta)|"
+    r"n[aã]o tenho (nenhuma )?(ferramenta|acesso)|indispon[ií]ve|"
+    r"n[aã]o (est[aá] )?respond|sem responder|reative|reativ[ae]|"
+    r"abra o painel|clique no [ií]cone)", re.I)
+INSISTIR_NAVEGADOR = (
+    "Você respondeu sem chamar NENHUMA ferramenta. As ferramentas de navegador "
+    "estão disponíveis agora e a extensão do Chrome está conectada; falhas "
+    "citadas em mensagens antigas desta conversa já foram resolvidas e não "
+    "valem para agora. Chame a ferramenta adequada (ex.: navegador_ver para "
+    "ler a página atual, navegador_ir para abrir um site) e só responda depois "
+    "da observação.")
+
+
+def desistiu_sem_tentar(texto: str, nomes: list[str] | None,
+                        ferramentas_usadas: int) -> bool:
+    """True se a resposta final alega não conseguir usar o navegador sem que
+    nenhuma ferramenta tenha rodado nesta execução, tendo navegador_* à mão."""
+    if ferramentas_usadas or not texto:
+        return False
+    if not any(n.startswith("navegador_") for n in (nomes or [])):
+        return False
+    return bool(_DESISTENCIA.search(texto))
+
+
+def _extensao_conectada() -> bool:
+    try:
+        from yvakor.extensao_bridge import PONTE
+        return bool(PONTE.disponivel())
+    except Exception:
+        return False
+
 
 def _extrair_resposta_final(raw: str) -> str:
     """Se o modelo respondeu no formato JSON {"acao":"responder", ...} em vez
@@ -362,7 +397,28 @@ class AgentLoop:
         if limite is not None:           # modo compacto (modelo local)
             self.ultima_selecao = self._limitar_compacto(
                 self.ultima_selecao, mensagem, limite)
+        elif self._conversa_de_navegador(history) and _extensao_conectada():
+            # Continuação de uma conversa sobre o navegador ("analisa a
+            # página", "e o spam?"): sem isto o modelo ficava sem navegador_*.
+            nucleo = [n for n in self.NUCLEO_NAVEGADOR
+                      if n in self.registry.tools and n not in self.ultima_selecao]
+            self.ultima_selecao = nucleo + list(self.ultima_selecao)
         return self.ultima_selecao
+
+    NUCLEO_NAVEGADOR = ("navegador_ver", "navegador_extrair", "navegador_ir",
+                        "navegador_pesquisar", "navegador_clicar",
+                        "navegador_digitar")
+
+    def _conversa_de_navegador(self, history: list[dict]) -> bool:
+        """A mensagem atual ou um dos turnos recentes envolve o navegador."""
+        for item in history[-5:]:
+            texto = item.get("content") or ""
+            if isinstance(texto, str) and (
+                    self._INTENCAO_NAVEGADOR.search(texto)
+                    or re.search(r"\b(gmail|e-?mail|extens[aã]o|navegador)\b",
+                                 texto, re.I)):
+                return True
+        return False
 
     COMPACTO_MAX_FERRAMENTAS_NAVEGADOR = 8
     # Pedido que envolve o navegador (pesquisar, digitar, clicar, abrir site…).
@@ -571,6 +627,8 @@ class AgentLoop:
                     if compacto else self.timeout_s)
         kw_modelo = ({"timeout": self.COMPACTO_TIMEOUT_CHAMADA_S}
                      if compacto else {})
+        usadas = 0
+        insistiu = False
         for _ in range(max_passos):
             if should_stop is not None and should_stop():
                 return "⏹ Tarefa interrompida a pedido do usuário."
@@ -601,9 +659,15 @@ class AgentLoop:
                     except Exception:
                         pass
                     return aviso
+                if not insistiu and desistiu_sem_tentar(texto, nomes, usadas):
+                    insistiu = True
+                    messages.append({"role": "assistant", "content": raw})
+                    messages.append({"role": "user", "content": INSISTIR_NAVEGADOR})
+                    continue
                 return texto or "(sem resposta do modelo)"
 
             messages.append({"role": "assistant", "content": raw})
+            usadas += len(acoes)
             for acao in acoes:
                 nome = acao.get("ferramenta", "")
                 args = acao.get("args", {}) or {}
@@ -639,6 +703,8 @@ class AgentLoop:
         msgs = list(messages)
         esquemas = self.registry.schemas(nomes)
         inicio_run = time.time()
+        usadas = 0
+        insistiu = False
         for _ in range(self.max_iterations):
             if should_stop is not None and should_stop():
                 return "⏹ Tarefa interrompida a pedido do usuário."
@@ -650,6 +716,11 @@ class AgentLoop:
             chamadas = msg.get("tool_calls") or []
             if not chamadas:
                 texto = (msg.get("content") or "").strip()
+                if not insistiu and desistiu_sem_tentar(texto, nomes, usadas):
+                    insistiu = True
+                    msgs.append({"role": "assistant", "content": texto})
+                    msgs.append({"role": "user", "content": INSISTIR_NAVEGADOR})
+                    continue
                 if texto:
                     return _extrair_resposta_final(texto)
                 return "(sem resposta do modelo)"
@@ -668,6 +739,7 @@ class AgentLoop:
                     on_event("ferramenta", {"nome": nome, "args": args})
                 if estado is not None:
                     estado["ferramentas"] += 1
+                usadas += 1
                 resultado = self.registry.run(nome, **args)
                 self._coletar(resultado)
                 if on_event:
