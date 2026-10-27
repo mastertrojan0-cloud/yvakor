@@ -52,7 +52,8 @@ def sem_json_de_ferramenta(texto: str) -> str:
             i = j + 1
             continue
         if isinstance(obj, dict) and (
-                "acao" in obj or ("ferramenta" in obj and "args" in obj)):
+                "acao" in obj or (("ferramenta" in obj or "tool" in obj)
+                                  and ("args" in obj or "arguments" in obj))):
             saida.append(texto[i:j])
         else:
             saida.append(texto[i:j + fim])

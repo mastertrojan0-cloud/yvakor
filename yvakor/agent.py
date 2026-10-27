@@ -253,6 +253,30 @@ def _extrair_resposta_final(raw: str) -> str:
     return sem_json_de_ferramenta(raw)
 
 
+# Nomes que o modelo inventa com frequência → a ferramenta real equivalente.
+_ALIAS_FERRAMENTA = {
+    "navegador_ler": "navegador_extrair", "navegador_texto": "navegador_extrair",
+    "navegador_navegar": "navegador_ir", "navegador_buscar": "navegador_pesquisar",
+    "navegador_screenshot": "navegador_captura", "navegador_scroll": "navegador_rolar",
+    "navegador_click": "navegador_clicar", "navegador_type": "navegador_digitar",
+}
+# Argumentos com nome trocado ("query" em vez de "termo", "tab_id" em vez de
+# "aba"): o coagir descartava e a ferramenta falhava por falta de argumento.
+_ALIAS_ARGS = {"query": "termo", "q": "termo", "busca": "termo", "texto_busca": "termo",
+               "tab_id": "aba", "tab": "aba", "tabId": "aba", "link": "url"}
+
+
+def _alias_args(registry, ferramenta: str, args: dict) -> dict:
+    esperados = ((getattr(registry, "specs", {}) or {}).get(ferramenta) or {}).get("args") or {}
+    if not esperados:
+        return args
+    novo = dict(args)
+    for de, para in _ALIAS_ARGS.items():
+        if de in novo and de not in esperados and para in esperados and para not in novo:
+            novo[para] = novo.pop(de)
+    return novo
+
+
 def _parse_acao(raw: str, registry=None) -> dict | None:
     """Detecta uma chamada de ferramenta. Aceita 3 formatos:
     1) {"acao":"usar_ferramenta","ferramenta":"X","args":{...},"motivo":"..."}
@@ -271,8 +295,20 @@ def _parse_acao(raw: str, registry=None) -> dict | None:
         if not isinstance(obj, dict):
             continue
         acao = obj.get("acao", "")
-        ferramenta = obj.get("ferramenta", "")
-        args = obj.get("args")
+        # {"tool": "x", "arguments": {...}} (formato de outros modelos)
+        ferramenta = obj.get("ferramenta") or obj.get("tool") or obj.get("name") or ""
+        args = next((obj[k] for k in ("args", "arguments", "parametros")
+                     if k in obj), None)
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except Exception:
+                args = None
+        if ferramenta and registry is not None and ferramenta not in registry.tools:
+            ferramenta = _ALIAS_FERRAMENTA.get(ferramenta, ferramenta)
+        if isinstance(args, dict) and ferramenta and registry is not None:
+            args = _alias_args(registry, ferramenta, args)
+        obj = {**obj, "ferramenta": ferramenta, "args": args}
         if acao == "usar_ferramenta" and ferramenta:
             if registry and ferramenta not in registry.tools:
                 continue  # ferramenta inventada: ignora, vai para texto
@@ -300,7 +336,8 @@ _DSML_PARAM = re.compile(
     r"</[^>\n]*DSML[^>\n]*parameter>", re.S | re.I)
 
 
-_MARCACAO_FERRAMENTA = re.compile(r"DSML|\"usar_ferramenta\"")
+_MARCACAO_FERRAMENTA = re.compile(
+    r"DSML|\"usar_ferramenta\"|\"(ferramenta|tool)\"\s*:\s*\"")
 
 
 def _parse_acoes(raw: str, registry=None) -> list[dict]:
@@ -632,6 +669,7 @@ class AgentLoop:
                      if compacto else {})
         usadas = 0
         insistiu = False
+        correcoes = 0
         for _ in range(max_passos):
             if should_stop is not None and should_stop():
                 return "⏹ Tarefa interrompida a pedido do usuário."
@@ -652,14 +690,24 @@ class AgentLoop:
             # Nenhuma ferramenta reconhecida → resposta final (ou erro claro).
             if not acoes:
                 texto = _extrair_resposta_final(raw)
-                if "DSML" in raw and not insistiu:
-                    insistiu = True       # marcação quebrada/ferramenta inventada
+                if _MARCACAO_FERRAMENTA.search(raw) and correcoes < 2:
+                    # Marcação quebrada ou ferramenta inventada: antes a tarefa
+                    # inteira abortava com "formato inválido" (mesmo após 11
+                    # ferramentas certas). Agora pede a chamada de novo.
+                    correcoes += 1
                     messages.append({"role": "assistant", "content": raw})
                     messages.append({"role": "user", "content": (
-                        "Chamada de ferramenta inválida. Responda só com o JSON "
-                        "do protocolo e use uma ferramenta da lista.")})
+                        "Chamada de ferramenta inválida (formato errado ou "
+                        "ferramenta inexistente). Use exatamente o JSON "
+                        '{"acao":"usar_ferramenta","ferramenta":"<nome>","args":{...}} '
+                        "com uma destas ferramentas: "
+                        + ", ".join(nomes or list(self.registry.tools)[:40])
+                        + ". Se já tem o que precisa, escreva a resposta final "
+                        "em texto puro.")})
                     continue
-                if '"usar_ferramenta"' in raw or '"ferramenta"' in raw:
+                if _MARCACAO_FERRAMENTA.search(raw) and usadas:
+                    break           # já trabalhou: pede a síntese final abaixo
+                if _MARCACAO_FERRAMENTA.search(raw):
                     aviso = ("Não consegui executar: vieram chamadas de "
                              "ferramenta em formato inválido. Tente de novo ou "
                              "peça em passos menores.")

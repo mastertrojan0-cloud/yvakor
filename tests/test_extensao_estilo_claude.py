@@ -860,6 +860,61 @@ def test_chamada_vazada_como_texto_dsml_e_executada_ou_corrigida_nunca_mostrada(
     assert "DSML" not in limpo and limpo.startswith("A página carregou")
 
 
+def _registro_com_specs(chamadas):
+    from yvakor.config import load_settings
+    from yvakor.tools.registry import ToolRegistry
+    reg = ToolRegistry(load_settings())
+    reg.register("navegador_extrair", lambda **k: chamadas.append(("extrair", k)) or
+                 {"ok": True, "texto": "Azul R$ 1.013 direto"}, "Extrai.",
+                 {"seletor": "str?", "aba": "int?"})
+    reg.register("navegador_pesquisar", lambda **k: chamadas.append(("pesquisar", k)) or
+                 {"ok": True}, "Pesquisa.", {"termo": "str", "buscador": "str?"})
+    return reg
+
+
+def test_formato_tool_e_nomes_inventados_viram_a_ferramenta_real():
+    """Resposta real: {"tool": "navegador_ler", "args": {"tab_id": 658615844}} e
+    navegador_pesquisar com 'query' em vez de 'termo'."""
+    from yvakor.agent import _parse_acoes
+    reg = _registro_com_specs([])
+    a = _parse_acoes('{"tool": "navegador_ler", "args": {"tab_id": 658615844}}', reg)
+    assert a and a[0]["ferramenta"] == "navegador_extrair" and a[0]["args"] == {"aba": 658615844}
+    b = _parse_acoes('{"acao":"usar_ferramenta","ferramenta":"navegador_pesquisar",'
+                     '"args":{"query":"voos MAO BVB"}}', reg)
+    assert b[0]["args"] == {"termo": "voos MAO BVB"}
+
+
+def test_loop_json_nao_aborta_a_tarefa_por_chamada_invalida():
+    """'Não consegui executar: vieram chamadas de ferramenta em formato inválido'
+    depois de 11 ferramentas certas: agora pede a chamada de novo."""
+    from yvakor.agent import AgentLoop
+    chamadas = []
+    roteiro = [
+        '{"acao":"usar_ferramenta","ferramenta":"navegador_extrair","args":{}}',
+        '{"acao":"usar_ferramenta","ferramenta":"navegador_inexistente","args":{}}',
+        "A Azul tem voo direto por R$ 1.013.",
+    ]
+
+    class Router:
+        vistos = []
+
+        def complete_messages(self, task, msgs, **k):
+            Router.vistos.append(msgs[-1]["content"])
+            return roteiro.pop(0)
+
+    loop = AgentLoop(Router(), _registro_com_specs(chamadas), max_iterations=6)
+    saida = loop.run("t", [{"role": "user", "content": "passagens manaus boa vista"}])
+    assert saida == "A Azul tem voo direto por R$ 1.013."
+    assert "inexistente" in Router.vistos[2] and len(chamadas) == 1
+
+
+def test_extensao_acha_ou_cria_janela_quando_nao_ha_janela_atual():
+    bg = (EXT / "background.js").read_text(encoding="utf-8")
+    assert "janelaNormalBG" in bg and "chrome.windows.create" in bg
+    assert "currentWindow: true })" not in bg.replace("{ active: true, currentWindow: true }", "")
+    assert bg.count("criarAbaBG(") >= 3
+
+
 def test_eco_de_observacao_do_modelo_local_nao_chega_ao_usuario():
     from yvakor.textos import sem_json_de_ferramenta
     t = ('OBSERVAÇÃO (navegador_ver): {"ok": true, "titulo": "X", "elementos": [1, 2]}\n'

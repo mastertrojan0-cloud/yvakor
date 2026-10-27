@@ -46,8 +46,37 @@ async function pontePing() {
   } catch (e) { /* núcleo offline */ }
 }
 
+// Janela normal para abrir/achar abas. No service worker, `currentWindow` falha
+// ("No current window" / "sem aba ativa") quando o Chrome está sem janela, só
+// com o painel, ou com o foco num popup/DevTools — as tarefas morriam aí.
+async function janelaNormalBG() {
+  if (!chrome.windows) return undefined;          // sem a API: deixa o Chrome escolher
+  try {
+    const w = await chrome.windows.getLastFocused({ windowTypes: ["normal"] });
+    if (w && w.id != null) return w.id;
+  } catch (e) { /* nenhuma janela focada */ }
+  try {
+    const todas = await chrome.windows.getAll({ windowTypes: ["normal"] });
+    if (todas && todas.length) return todas[0].id;
+  } catch (e) { /* ignora */ }
+  const nova = await chrome.windows.create({ url: "about:blank", focused: true });
+  return nova.id;
+}
+
+async function criarAbaBG(props) {
+  try {
+    return await chrome.tabs.create(props);
+  } catch (e) {
+    return chrome.tabs.create({ ...props, windowId: await janelaNormalBG() });
+  }
+}
+
 async function abaAtivaBG() {
-  const [t] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const windowId = await janelaNormalBG();
+  let [t] = await chrome.tabs.query(windowId != null ? { active: true, windowId }
+                                                     : { active: true, currentWindow: true });
+  if (!t) [t] = await chrome.tabs.query({ active: true, windowType: "normal" });
+  if (!t) t = await criarAbaBG({ url: "about:blank" });
   if (!t || !t.id) throw new Error("sem aba ativa");
   return t;
 }
@@ -357,7 +386,7 @@ async function executarBGInterno(c) {
       return { tab_id: tab.id, titulo: a.url || tab.title || "",
                url: a.url || tab.url || "" };
     }
-    tab = await chrome.tabs.create({ url: a.url || "about:blank", active: ativo });
+    tab = await criarAbaBG({ url: a.url || "about:blank", active: ativo });
     await setCtrlIdBG(tab.id);
     await agruparBG(tab.id);
     tab = await aguardarCarregarBG(tab.id);
@@ -365,8 +394,8 @@ async function executarBGInterno(c) {
              url: a.url || tab.url || "" };
   }
   if (c.tipo === "newtab") {
-    let tab = await chrome.tabs.create({ url: a.url || "about:blank",
-                                         active: a.ativo !== false });
+    let tab = await criarAbaBG({ url: a.url || "about:blank",
+                                 active: a.ativo !== false });
     await setCtrlIdBG(tab.id);
     await agruparBG(tab.id);
     tab = await aguardarCarregarBG(tab.id);
@@ -405,7 +434,7 @@ async function executarBGInterno(c) {
     if (a.aba != null && a.aba !== "") {
       alvo = await chrome.tabs.get(Number(a.aba)).catch(() => null);
     } else {
-      const tabs = await chrome.tabs.query({ currentWindow: true });
+      const tabs = await chrome.tabs.query({ windowId: await janelaNormalBG() });
       alvo = tabs[Math.max(0, Math.min(tabs.length - 1, Number(a.indice) || 0))] || null;
     }
     if (!alvo) throw new Error("aba não encontrada (use navegador_abas para ver os ids)");
@@ -420,7 +449,7 @@ async function executarBGInterno(c) {
     if (a.aba != null && a.aba !== "") {
       alvo = await chrome.tabs.get(Number(a.aba)).catch(() => null);
     } else if (a.indice != null && Number(a.indice) >= 0) {
-      const tabs = await chrome.tabs.query({ currentWindow: true });
+      const tabs = await chrome.tabs.query({ windowId: await janelaNormalBG() });
       alvo = tabs[Math.min(tabs.length - 1, Number(a.indice))] || null;
     } else {
       // Sem alvo: a aba CONTROLADA. Antes `Number(undefined)` virava NaN → índice 0,
