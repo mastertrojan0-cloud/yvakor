@@ -998,20 +998,41 @@ class ErroAPI(RuntimeError):
     pass
 
 
-def _token() -> str:
-    """Token do servidor local (data/.server_token), exigido em POST/DELETE."""
+_TOKEN_VIVO = ""
+
+
+def _token(renovar: bool = False) -> str:
+    """Token do servidor local, exigido em POST/DELETE.
+
+    Normalmente vem de data/.server_token. Com renovar=True pergunta ao núcleo
+    EM EXECUÇÃO (GET /api/token), que é a fonte da verdade: o arquivo pode estar
+    velho se o servidor reiniciou ou se outro processo o sobrescreveu.
+    """
+    global _TOKEN_VIVO
+    if _TOKEN_VIVO and not renovar:
+        return _TOKEN_VIVO
+    if renovar:
+        try:
+            with urllib.request.urlopen(BASE + "/api/token", timeout=3) as r:
+                _TOKEN_VIVO = (json.loads(r.read().decode("utf-8"))
+                               .get("token") or "")
+            if _TOKEN_VIVO:
+                return _TOKEN_VIVO
+        except Exception:
+            pass
     try:
-        return (ROOT / "data" / ".server_token").read_text(
+        _TOKEN_VIVO = (ROOT / "data" / ".server_token").read_text(
             encoding="utf-8").strip()
     except Exception:
-        return os.environ.get("YVAKOR_TOKEN", "")
+        _TOKEN_VIVO = os.environ.get("YVAKOR_TOKEN", "")
+    return _TOKEN_VIVO
 
 
-def api(path: str, dados: dict | None = None, timeout: float = 60,
-        metodo: str | None = None):
+def _api_uma_vez(path: str, dados: dict | None, timeout: float,
+                 metodo: str | None, token: str):
     url = BASE + path
     corpo = None
-    headers = {"Accept": "application/json", "X-YVAKOR-Token": _token()}
+    headers = {"Accept": "application/json", "X-YVAKOR-Token": token}
     if dados is not None:
         corpo = json.dumps(dados, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json; charset=utf-8"
@@ -1034,6 +1055,18 @@ def api(path: str, dados: dict | None = None, timeout: float = 60,
         raise ErroAPI(f"núcleo indisponível ({exc.reason})") from exc
     except TimeoutError as exc:
         raise ErroAPI("núcleo não respondeu a tempo") from exc
+
+
+def api(path: str, dados: dict | None = None, timeout: float = 60,
+        metodo: str | None = None):
+    try:
+        return _api_uma_vez(path, dados, timeout, metodo, _token())
+    except ErroAPI as exc:
+        # 403 = token velho (servidor reiniciou): renova com o núcleo e repete.
+        if str(exc).startswith("403:"):
+            return _api_uma_vez(path, dados, timeout, metodo,
+                                _token(renovar=True))
+        raise
 
 
 def ping(timeout: float = 0.7) -> bool:

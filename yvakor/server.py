@@ -176,8 +176,15 @@ _lock = threading.Lock()
 # ainda é validado para clientes não-navegador. O token é gravado em
 # data/.server_token (0600) para os clientes locais (GUI, voz) e injetado no
 # index.html para a interface web.
-def _gerar_token() -> str:
-    tok = os.environ.get("YVAKOR_TOKEN") or secrets.token_urlsafe(32)
+def _gravar_token(tok: str) -> None:
+    """Publica o token em data/.server_token para a GUI/voz lerem.
+
+    Só deve ser chamado por quem DE FATO serve (main(), depois de ganhar o
+    lock de instância única). Antes isso rodava a cada `import yvakor.server`:
+    um teste, um segundo processo ou a instância que ia sair ("já existe um
+    YVAKOR") sobrescrevia o arquivo com um token que o servidor em execução
+    não conhecia — e a interface passava a levar 403 em tudo.
+    """
     try:
         pasta = ROOT / "data"
         pasta.mkdir(parents=True, exist_ok=True)
@@ -189,10 +196,10 @@ def _gerar_token() -> str:
             pass
     except Exception:
         pass
-    return tok
 
 
-TOKEN = _gerar_token()
+# Token desta execução (só em memória até main() publicá-lo).
+TOKEN = os.environ.get("YVAKOR_TOKEN") or secrets.token_urlsafe(32)
 
 # Extensão do YVAKOR: se YVAKOR_EXT_ID for definido, só essa extensão é aceita
 # no CORS; sem ele, mantém compatibilidade aceitando extensões instaladas
@@ -238,6 +245,16 @@ def _injetar_token(html: bytes) -> bytes:
     if pos == -1:
         return shim + html
     return html[:pos] + shim + html[pos:]
+
+
+def _provedor_efetivo(agent) -> str:
+    padrao = agent.settings["llm"]["default_provider"]
+    try:
+        if agent.router.sem_externos() and "ollama" in agent.settings["llm"]["providers"]:
+            return "ollama"
+    except Exception:
+        pass
+    return padrao
 
 
 def get_agent() -> Orchestrator:
@@ -661,9 +678,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {
                 "agent": "YVAKOR",
                 "build": BUILD,
-                "provider": agent.settings["llm"]["default_provider"],
+                # Provedor EFETIVO: se a nuvem está fora (ex.: DeepSeek sem
+                # saldo) a interface mostra o modelo local que está respondendo,
+                # em vez de "deepseek" enquanto quem responde é o ollama.
+                "provider": _provedor_efetivo(agent),
                 "model": agent.settings["llm"]["providers"][
-                    agent.settings["llm"]["default_provider"]]["model"],
+                    _provedor_efetivo(agent)]["model"],
                 "skills": skills,
                 "episodes": episodes,
                 "cowork_pending": agent.cowork.pending_count(),
@@ -1571,6 +1591,7 @@ def main():
     except OSError:
         print("  [aviso] já existe um YVAKOR em execução; saindo.")
         return
+    _gravar_token(TOKEN)   # só quem detém o lock publica o token
     print(f"\n  YVAKOR online → http://localhost:{PORT}\n  (Ctrl+C para sair)\n")
     # Inicia a auto-manutenção em segundo plano (consolida conhecimento +
     # verifica atualização de código, conforme settings.yaml → maintenance).
