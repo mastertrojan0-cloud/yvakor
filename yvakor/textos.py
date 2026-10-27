@@ -8,7 +8,14 @@ import re
 def sem_json_de_ferramenta(texto: str) -> str:
     """Tira do texto final os blocos JSON de chamada de ferramenta que o modelo
     deixou escapar no meio da prosa ({"acao":"usar_ferramenta",...}): são
-    protocolo interno, não resposta. Se só sobrar isso, devolve o original."""
+    protocolo interno, não resposta. Se só sobrar isso, devolve o original.
+    A marcação DSML do DeepSeek (<｜｜DSML｜｜ invoke …>) sai sempre, mesmo que
+    não sobre nada: nunca é texto para o usuário."""
+    if "DSML" in texto:
+        texto = re.sub(r"<[^>\n]*DSML.*DSML[^>\n]*>", "", texto, flags=re.S)
+        texto = re.sub(r"</?[^>\n]*DSML[^>\n]*>", "", texto).strip()
+        if not texto:
+            return ""
     dec = json.JSONDecoder()
     saida, i = [], 0
     while True:

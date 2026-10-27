@@ -819,6 +819,47 @@ def test_modelo_que_desiste_sem_tentar_e_obrigado_a_usar_o_navegador(monkeypatch
     assert not desistiu_sem_tentar("Pronto, abri o Gmail.", ["navegador_ver"], 0)
 
 
+_DSML_QUEBRADO = (
+    "A página carregou, mas a extração veio só com os links do rodapé. Vou inspecionar "
+    "os campos.\n\n<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"navegador_js\">"
+    "</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>")
+
+
+def test_chamada_vazada_como_texto_dsml_e_executada_ou_corrigida_nunca_mostrada():
+    """Consulta do CPF: o DeepSeek escreveu a chamada (com ferramenta inventada)
+    como texto e o usuário recebeu a marcação DSML crua como resposta."""
+    from yvakor.agent import AgentLoop
+    from yvakor.textos import sem_json_de_ferramenta
+    chamadas = []
+    valida = ('<｜｜DSML｜｜ invoke name="navegador_ver"></｜｜DSML｜｜ invoke>')
+
+    class Router:
+        def __init__(self):
+            self.n = 0
+            self.vistos = []
+
+        def complete_tools(self, task, msgs, tools, forcar=None):
+            self.n += 1
+            self.vistos.append(msgs[-1]["content"])
+            if self.n == 1:
+                return "fake", {"content": _DSML_QUEBRADO}
+            if self.n == 2:
+                return "fake", {"content": "Vou ver a página. " + valida}
+            return "fake", {"content": "O formulário tem CPF, data de nascimento e um captcha."}
+
+        def complete_messages(self, *a, **k):
+            return "ok"
+
+    r = Router()
+    loop = AgentLoop(r, _registro_navegador_fake(chamadas), max_iterations=6, nativo=True)
+    saida = loop.run("t", [{"role": "user", "content": "consulta meu cpf na receita"}])
+    assert "inexistente" in r.vistos[1]               # pediu a chamada de novo
+    assert chamadas == ["navegador_ver"]              # a válida foi executada
+    assert "DSML" not in saida and "captcha" in saida
+    limpo = sem_json_de_ferramenta(_DSML_QUEBRADO)
+    assert "DSML" not in limpo and limpo.startswith("A página carregou")
+
+
 def test_gmail_email_e_voo_recebem_ferramentas_de_navegador():
     from yvakor.tools.router import selecionar
     reg = _registro_navegador_fake([])

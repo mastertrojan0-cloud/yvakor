@@ -300,6 +300,9 @@ _DSML_PARAM = re.compile(
     r"</[^>\n]*DSML[^>\n]*parameter>", re.S | re.I)
 
 
+_MARCACAO_FERRAMENTA = re.compile(r"DSML|\"usar_ferramenta\"")
+
+
 def _parse_acoes(raw: str, registry=None) -> list[dict]:
     """Extrai TODAS as chamadas de ferramenta: JSON e formato DSML."""
     dec = json.JSONDecoder()
@@ -649,6 +652,13 @@ class AgentLoop:
             # Nenhuma ferramenta reconhecida → resposta final (ou erro claro).
             if not acoes:
                 texto = _extrair_resposta_final(raw)
+                if "DSML" in raw and not insistiu:
+                    insistiu = True       # marcação quebrada/ferramenta inventada
+                    messages.append({"role": "assistant", "content": raw})
+                    messages.append({"role": "user", "content": (
+                        "Chamada de ferramenta inválida. Responda só com o JSON "
+                        "do protocolo e use uma ferramenta da lista.")})
+                    continue
                 if '"usar_ferramenta"' in raw or '"ferramenta"' in raw:
                     aviso = ("Não consegui executar: vieram chamadas de "
                              "ferramenta em formato inválido. Tente de novo ou "
@@ -705,6 +715,7 @@ class AgentLoop:
         inicio_run = time.time()
         usadas = 0
         insistiu = False
+        vazamentos = 0
         for _ in range(self.max_iterations):
             if should_stop is not None and should_stop():
                 return "⏹ Tarefa interrompida a pedido do usuário."
@@ -716,6 +727,39 @@ class AgentLoop:
             chamadas = msg.get("tool_calls") or []
             if not chamadas:
                 texto = (msg.get("content") or "").strip()
+                if _MARCACAO_FERRAMENTA.search(texto) and vazamentos < 3:
+                    # Chamada escrita como TEXTO (DSML/JSON) em vez de
+                    # tool_calls: antes virava a "resposta final" com a
+                    # marcação crua. Executa se for válida; senão pede de novo.
+                    vazamentos += 1
+                    acoes = _parse_acoes(texto, self.registry)
+                    msgs.append({"role": "assistant", "content": texto})
+                    if not acoes:
+                        msgs.append({"role": "user", "content": (
+                            "Sua chamada de ferramenta veio como texto e/ou com "
+                            "ferramenta inexistente. Use a chamada de função "
+                            "nativa, só com estas ferramentas: "
+                            + ", ".join(nomes or list(self.registry.tools)[:40])
+                            + ". Para ler campos de formulário use navegador_ver.")})
+                        continue
+                    for acao in acoes:
+                        nome = acao.get("ferramenta", "")
+                        args = acao.get("args", {}) or {}
+                        if on_event:
+                            on_event("ferramenta", {"nome": nome, "args": args})
+                        if estado is not None:
+                            estado["ferramentas"] += 1
+                        usadas += 1
+                        resultado = self.registry.run(nome, **args) \
+                            if isinstance(args, dict) else \
+                            {"ok": False, "error": "args inválidos"}
+                        self._coletar(resultado)
+                        if on_event:
+                            on_event("observacao", {"nome": nome, "resultado": resultado})
+                        msgs.append({"role": "user", "content": (
+                            f"OBSERVAÇÃO ({nome}): "
+                            + json.dumps(resultado, ensure_ascii=False)[:4000])})
+                    continue
                 if not insistiu and desistiu_sem_tentar(texto, nomes, usadas):
                     insistiu = True
                     msgs.append({"role": "assistant", "content": texto})
