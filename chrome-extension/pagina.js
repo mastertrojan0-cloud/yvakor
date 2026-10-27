@@ -521,6 +521,76 @@
              painel_interno: !!alvoRolagem, url: location.href };
   }
 
+  // ---- pré-visualização (SEM efeito): o que a ação faria e se é sensível ----
+  // Alimenta o pedido de confirmação ("Clicar em «Comprar agora»") antes de agir.
+  const SENSIVEL_TEXTO = new RegExp(
+    "\\b(comprar|compra|pagar|pagamento|finalizar|confirmar (a )?(compra|pedido|" +
+    "pagamento)|fechar pedido|enviar|publicar|postar|tuitar|excluir|apagar|" +
+    "deletar|remover|cancelar (assinatura|pedido|conta)|assinar|contratar|" +
+    "transferir|autorizar|aprovar|aceitar|buy|purchase|pay|checkout|place order|" +
+    "submit|send|post|publish|delete|remove|subscribe|transfer|authorize)\\b", "i");
+  const SENSIVEL_CAMPO = /(card|cart[aã]o|cvv|cvc|cpf|ssn|senha|password|passwd|otp|iban|pix)/i;
+
+  function nomeDe(el) {
+    return curto(el.innerText || el.getAttribute("aria-label") || el.title ||
+                 el.value || el.placeholder || el.name || el.id ||
+                 el.tagName.toLowerCase(), 60);
+  }
+
+  function descrever_acao({ acao = "", alvo = "", texto = "", valor = "",
+                            tecla = "Enter", enviar = false } = {}) {
+    const val = texto || valor;
+    let el;
+    if (acao === "pressionar") {
+      el = alvo ? achar(alvo)
+        : (document.activeElement && document.activeElement !== document.body
+            ? document.activeElement : campoPadrao());
+    } else if (acao === "escrever") {
+      el = alvo ? achar(alvo) : campoPadrao();
+    } else {
+      el = achar(alvo);
+    }
+    if (!el) {
+      return { ok: true, descricao: "(elemento não encontrado — a ação vai falhar)",
+               sensivel: false, host: location.hostname };
+    }
+    const tag = el.tagName.toLowerCase();
+    const tipo = (el.type || "").toLowerCase();
+    const nome = nomeDe(el);
+    const atrib = [el.name, el.id, el.getAttribute("autocomplete"),
+                   el.getAttribute("aria-label"), el.placeholder].join(" ");
+    const form = el.form || el.closest("form");
+    const formTemSenha = !!(form && form.querySelector(
+      "input[type='password'],input[autocomplete^='cc-']"));
+    let descricao = "", sensivel = false, motivo = "";
+
+    if (acao === "clicar") {
+      descricao = "Clicar em «" + nome + "»";
+      const ehEnvio = (tag === "button" && (tipo === "submit" || !tipo)) ||
+                      (tag === "input" && tipo === "submit");
+      if (SENSIVEL_TEXTO.test(nome)) { sensivel = true; motivo = "ação irreversível ou com custo"; }
+      else if (ehEnvio && formTemSenha) { sensivel = true; motivo = "envia um formulário com senha/cartão"; }
+    } else if (acao === "escrever") {
+      const oculto = tipo === "password" || SENSIVEL_CAMPO.test(atrib);
+      descricao = oculto ? "Digitar um valor (oculto) em «" + nome + "»"
+                         : "Digitar «" + curto(val, 40) + "» em «" + nome + "»";
+      if (oculto) { sensivel = true; motivo = "campo de senha, cartão ou documento"; }
+      if (enviar) {
+        descricao += " e enviar";
+        if (formTemSenha && !sensivel) { sensivel = true; motivo = "envia um formulário com senha/cartão"; }
+      }
+    } else if (acao === "pressionar") {
+      descricao = "Pressionar " + tecla + " em «" + nome + "»";
+      if (/^enter$/i.test(tecla) && formTemSenha) { sensivel = true; motivo = "envia um formulário com senha/cartão"; }
+    } else if (acao === "selecionar") {
+      descricao = "Escolher «" + curto(val, 40) + "» em «" + nome + "»";
+    } else {
+      descricao = acao + " em «" + nome + "»";
+    }
+    return { ok: true, descricao, sensivel, motivo, host: location.hostname };
+  }
+
   window.__yvakorAcoes = { snapshot, extrair, clicar, escrever, pressionar,
-                           selecionar, passar_mouse, esperar, rolar };
+                           selecionar, passar_mouse, esperar, rolar,
+                           descrever_acao };
 })();
