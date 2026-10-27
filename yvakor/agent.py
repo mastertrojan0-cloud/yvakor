@@ -337,7 +337,42 @@ class AgentLoop:
         from yvakor.tools.router import selecionar
         self.ultima_selecao = selecionar(self.registry, mensagem,
                                          limite or self.max_ferramentas)
+        if limite is not None:           # modo compacto (modelo local)
+            self.ultima_selecao = self._limitar_compacto(
+                self.ultima_selecao, mensagem, limite)
         return self.ultima_selecao
+
+    # Pedido que cita ação de risco de forma explícita (rodar/apagar/mover/
+    # escrever/instalar/enviar…): só então o modelo local recebe essas ferramentas.
+    _ACAO_EXPLICITA = re.compile(
+        r"\b(execut|rod[ae]r?\b|shell|comando|cmd\b|powershell|terminal|apag|"
+        r"delet|remov|exclu|mov[ae]r?\b|renome|escrev|salv|edit|instal|baix|"
+        r"envi|manda|publi)", re.I)
+    # Conjunto mínimo e SEGURO quando nada casa com a mensagem.
+    _BASE_SEGURA = ("pesquisa_web", "cerebro_buscar", "arquivos_listar",
+                    "arquivos_ler", "http_get")
+
+    def _limitar_compacto(self, nomes: list[str], mensagem: str,
+                          limite: int) -> list[str]:
+        """O seletor devolve TODAS as ferramentas quando nada casa, ignorando o
+        limite — no modelo local isso viraria um prompt gigantesco (~110s por
+        7k caracteres). E 'executar_shell' entra sempre como núcleo, então o 3B
+        chamava shell para qualquer coisa (ex.: `bitcoin-cli` p/ cotação).
+        Aqui: respeita o limite, usa uma base segura se nada casou e só libera
+        ferramentas que exigem confirmação se o pedido for explícito."""
+        disponiveis = set(self.registry.tools)
+        perigosas = set(getattr(getattr(self.registry, "guard", None),
+                                "always_confirm", ()) or ())
+        if len(nomes) >= len(disponiveis) > limite:
+            nomes = []                           # nada casou: não é "tudo"
+        if not self._ACAO_EXPLICITA.search(mensagem or ""):
+            nomes = [n for n in nomes if n not in perigosas]
+        for n in self._BASE_SEGURA:              # completa com o seguro
+            if len(nomes) >= limite:
+                break
+            if n in disponiveis and n not in nomes:
+                nomes.append(n)
+        return nomes[:limite]
 
     def system_with_tools(self, base_system: str,
                           nomes: list[str] | None = None,

@@ -85,6 +85,7 @@ def garantir(url: str = "http://127.0.0.1:9222",
         "--start-maximized",
         "about:blank",
     ]
+    _registrar_abertura(porta)
     try:
         _ywproc.popen(cmd, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, close_fds=True)
@@ -99,6 +100,31 @@ def garantir(url: str = "http://127.0.0.1:9222",
         time.sleep(0.5)
     return {"ok": False, "erro": "o Chrome abriu, mas o CDP não respondeu",
             "perfil": str(pasta), "porta": porta}
+
+
+def _registrar_abertura(porta: str) -> None:
+    """Registra QUEM pediu para abrir o Chrome (pilha de chamadas).
+
+    O Chrome do agente abre maximizado e visível. Já apareceu "sozinho" cinco
+    segundos depois de iniciar o núcleo e nada no código explicava o gatilho;
+    este log em data/logs/navegador_abertura.log mostra o responsável na
+    próxima vez, sem precisar adivinhar.
+    """
+    try:
+        import datetime
+        import threading
+        import traceback
+        pilha = " <- ".join(
+            f"{os.path.basename(f.filename)}:{f.lineno}:{f.name}"
+            for f in reversed(traceback.extract_stack(limit=12)[:-1]))
+        pasta = ROOT / "data" / "logs"
+        pasta.mkdir(parents=True, exist_ok=True)
+        with (pasta / "navegador_abertura.log").open("a", encoding="utf-8") as f:
+            f.write(f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S} "
+                    f"porta={porta} thread={threading.current_thread().name} "
+                    f"pilha: {pilha}\n")
+    except Exception:
+        pass
 
 
 def garantir_para_url(url: str, perfil: str | Path | None = None) -> dict:

@@ -388,8 +388,47 @@ async function tickProgresso() {
     const p = await api("/api/progress?session=" + encodeURIComponent(sidProgresso),
                         { timeout: 4000 });
     pintarPassos(p.steps || [], !!p.running);
+    tratarPendencia(p.pending);
   } catch (e) { /* ignora */ }
 }
+
+// Confirmação de ação protegida (shell, apagar/escrever arquivo, rede…).
+// O núcleo PARA a conversa esperando esta resposta; a extensão não mostrava
+// nada, então a tarefa ficava minutos travada até o prazo e era negada.
+let pendenciaId = null;
+function tratarPendencia(pend) {
+  const cartao = $("confirmacao");
+  if (!pend) {
+    pendenciaId = null;
+    cartao.classList.add("oculto");
+    return;
+  }
+  if (pend.id === pendenciaId) return;           // já exibida
+  pendenciaId = pend.id;
+  $("conf-acao").textContent = pend.action || "ação protegida";
+  $("conf-detalhe").textContent = pend.detail || "";
+  $("conf-detalhe").classList.toggle("oculto", !pend.detail);
+  $("conf-prazo").textContent =
+    `Sem resposta em ${pend.timeout || 90}s a ação é negada.`;
+  cartao.classList.remove("oculto");
+  $("conf-permitir").focus();
+  rolar();
+}
+async function responderConfirmacao(permitir) {
+  $("confirmacao").classList.add("oculto");
+  try {
+    await api("/api/confirm", {
+      method: "POST", timeout: 5000,
+      body: { session: sidProgresso, allow: !!permitir } });
+  } catch (e) {
+    add("agente", "Não consegui enviar sua resposta ao núcleo: " + e.message);
+  }
+}
+$("conf-permitir").addEventListener("click", () => responderConfirmacao(true));
+$("conf-negar").addEventListener("click", () => responderConfirmacao(false));
+$("confirmacao").addEventListener("keydown", (e) => {
+  if (e.key === "Escape") responderConfirmacao(false);
+});
 async function acompanhar(sid) {
   clearInterval(timerProgresso);
   clearTimeout(timerOcultar);
@@ -449,6 +488,7 @@ async function enviarMensagem() {
     enviar.disabled = false;
     clearInterval(timerProgresso);
     tickProgresso();   // leitura final: pinta "concluído · N passos" e recolhe sozinho
+    tratarPendencia(null);   // a requisição acabou: nenhuma confirmação fica aberta
     entrada.focus();
     ping();
     atualizarContexto();

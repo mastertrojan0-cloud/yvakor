@@ -461,3 +461,30 @@ body {
   text-overflow: ellipsis;
 }
 #modelo:hover { border-color: var(--ouro); }
+
+/* Confirmação de ação protegida (a conversa está parada esperando) */
+.confirmacao {
+  margin: 8px 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--ouro);
+  border-left-width: 4px;
+  border-radius: 9px;
+  background: #fff8e6;
+  box-shadow: 0 2px 10px #d9a44133;
+}
+.conf-topo { font-size: 8px; letter-spacing: .12em; font-weight: 700; color: #8a6a1f; }
+.conf-acao { margin-top: 5px; font-size: 12px; font-weight: 700; color: #2b2820; overflow-wrap: anywhere; }
+.conf-detalhe {
+  margin-top: 6px; padding: 6px 8px; font-size: 10.5px; color: #4a463c;
+  background: #f1ebdf; border: 1px solid var(--linha); border-radius: 6px;
+  font-family: ui-monospace, Consolas, monospace; overflow-wrap: anywhere;
+  max-height: 90px; overflow-y: auto;
+}
+.conf-prazo { margin-top: 6px; font-size: 9px; color: var(--muted); }
+.conf-botoes { display: flex; justify-content: flex-end; gap: 7px; margin-top: 9px; }
+.conf-botoes button {
+  font-size: 11px; padding: 5px 14px; border-radius: 7px; cursor: pointer;
+  border: 1px solid var(--linha-forte); background: #fff; color: #7a2e2a;
+}
+.conf-botoes #conf-permitir { background: var(--ouro); border-color: var(--ouro); color: #1c1a14; font-weight: 700; }
+.conf-botoes button:hover { filter: brightness(.96); }

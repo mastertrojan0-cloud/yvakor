@@ -4001,7 +4001,8 @@ class App:
             tk.Label(win, text=detalhe, bg=PANEL2, fg=MUTED, font=FONT_XS,
                      wraplength=410, justify="left", anchor="w", padx=10,
                      pady=8).pack(fill="x", padx=20, pady=(10, 0))
-        tk.Label(win, text="Sem resposta em 180 s a ação é negada.",
+        tk.Label(win, text=f"Sem resposta em {int(pend.get('timeout') or 90)} s "
+                           "a ação é negada.",
                  bg=BG, fg=DIM, font=(UI, 7)).pack(anchor="w",
                                                           padx=20,
                                                           pady=(8, 0))
@@ -4036,6 +4037,19 @@ class App:
             win.geometry(f"{largura}x{altura}+{x}+{y}")
         except Exception:
             win.geometry("470x300")
+        # A conversa está PARADA esperando esta resposta: o popup precisa ser
+        # visto. Sobe para a frente (mesmo com a janela principal atrás de
+        # outros apps ou minimizada), pega o foco e avisa com um bipe.
+        try:
+            if self.root.state() == "iconic":
+                self.root.deiconify()
+            win.lift()
+            win.attributes("-topmost", True)
+            win.after(1500, lambda: win.attributes("-topmost", False))
+            win.focus_force()
+            self.root.bell()
+        except Exception:
+            pass
 
     def _responder_confirmacao(self, win, pend: dict, allow: bool):
         try:

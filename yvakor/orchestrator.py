@@ -65,7 +65,8 @@ class ConfirmationBroker:
         with self._lock:
             self._seq += 1
             self._pending[sid] = {"id": self._seq, "action": action,
-                                  "detail": str(detail)[:300]}
+                                  "detail": str(detail)[:300],
+                                  "timeout": int(self.timeout)}
             self._events[sid] = ev
             self._results.pop(sid, None)
         aprovou = ev.wait(self.timeout)  # False se estourar o tempo → nega
@@ -232,7 +233,11 @@ class Orchestrator:
         # leem a mensagem de outra.
         self._tl = threading.local()
         # Confirmação de ações protegidas via interface (popup no navegador)
-        self.confirm_broker = ConfirmationBroker()
+        # Tempo para o usuário responder ao popup; sem resposta → ação negada.
+        # (Era 180s fixos: a conversa ficava "travada" 3 min esperando um aviso
+        # que a interface nem sempre mostra.)
+        self.confirm_broker = ConfirmationBroker(timeout=float(
+            (self.settings.get("tools") or {}).get("confirm_timeout_s", 90)))
         self.telemetria = Telemetria()
 
     # ------------------------------------------------------------------ #
@@ -966,8 +971,13 @@ class Orchestrator:
         # Ações protegidas pedem confirmação via interface (popup no navegador),
         # roteadas pelo broker para ESTA sessão (conversa ou tarefa cowork).
         from yvakor.tools.guard import set_thread_confirmer, clear_thread_confirmer
-        set_thread_confirmer(
-            lambda action, detail: self.confirm_broker.request(sid, action, detail))
+        def _confirmar(action, detail):
+            # Deixa claro no painel de processo POR QUE a conversa parou.
+            self._prog_step(
+                sid, f"⏳ Aguardando sua confirmação: {action} "
+                     f"(negada em {int(self.confirm_broker.timeout)}s sem resposta)")
+            return self.confirm_broker.request(sid, action, detail)
+        set_thread_confirmer(_confirmar)
         try:
             answer = self.agent.run(system, history=history, on_event=_trace,
                                     should_stop=should_stop,
