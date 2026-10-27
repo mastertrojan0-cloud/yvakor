@@ -557,3 +557,28 @@ def test_controle_de_abas_do_background_no_node():
     assert "erro" not in j, j.get("erro", "")[:300]
     assert len(j["casos"]) >= 22
     assert [c["nome"] for c in j["casos"] if not c["ok"]] == []
+
+
+def test_atalhos_barra_no_node_e_ligados_ao_painel():
+    """Lógica pura dos /comandos (21 casos) + a fiação no painel/manifest/background."""
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        import pytest
+        pytest.skip("node não instalado")
+    r = subprocess.run([node, str(ROOT / "tests" / "extensao" / "atalhos.test.js")],
+                       capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", timeout=60)
+    assert r.returncode == 0, r.stdout[:300] + r.stderr[:300]
+    j = json.loads(r.stdout)
+    assert len(j["casos"]) >= 21
+    assert [c["nome"] for c in j["casos"] if not c["ok"]] == []
+    html = (EXT / "sidepanel.html").read_text(encoding="utf-8")
+    assert html.index("atalhos.js") < html.index("sidepanel.js")
+    js = (EXT / "sidepanel.js").read_text(encoding="utf-8")
+    assert "YvakorAtalhos.expandir" in js and "message: mensagem" in js
+    m = json.loads((EXT / "manifest.json").read_text(encoding="utf-8"))
+    assert "contextMenus" in m["permissions"] and "abrir-yvakor" in m["commands"]
+    bg = (EXT / "background.js").read_text(encoding="utf-8")
+    assert "yvakor-selecao" in bg and "pedido_painel" in bg

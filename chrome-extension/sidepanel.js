@@ -506,6 +506,15 @@ async function enviarMensagem() {
   if (ocupado) return;
   const texto = entrada.value.trim();
   if (!texto) return;
+  let mensagem = texto;
+  if (texto.startsWith("/")) {
+    await atualizarContexto(true);
+    const ex = YvakorAtalhos.expandir(texto, listaAtalhos, {
+      selecao: contexto && contexto.selecao, url: contexto && contexto.url,
+      titulo: contexto && contexto.titulo });
+    if (ex.erro) { add("agente", ex.erro); return; }
+    if (ex.ok) mensagem = ex.prompt;
+  }
   if (!sessao) {
     try { await novaSessao(); }
     catch (e) { add("agente", "Núcleo indisponível: " + e.message); return; }
@@ -519,7 +528,7 @@ async function enviarMensagem() {
   add("user", texto);
   await acompanhar(sessao);
   try {
-    const body = { message: texto, session: sessao };
+    const body = { message: mensagem, session: sessao };
     await atualizarContexto(true);
     if (contexto) {
       body.page_context = `TÍTULO: ${contexto.titulo || ""}\n`
@@ -574,13 +583,85 @@ function ajustarAltura() {
   entrada.style.height = "auto";
   entrada.style.height = Math.min(100, entrada.scrollHeight) + "px";
 }
+/* --------------------- atalhos "/comando" -------------------------- */
+let listaAtalhos = YvakorAtalhos.juntar([]);
+let atalhoSel = 0;
+let sugestoes = [];
+async function carregarAtalhos() {
+  try {
+    const r = await chrome.storage.local.get("atalhos_usuario");
+    listaAtalhos = YvakorAtalhos.juntar(r.atalhos_usuario || []);
+  } catch (e) { /* usa só os padrão */ }
+}
+carregarAtalhos();
+function fecharMenuAtalhos() { sugestoes = []; $("atalhos-menu").classList.add("oculto"); }
+function atualizarMenuAtalhos() {
+  sugestoes = YvakorAtalhos.sugerir(entrada.value, listaAtalhos, 8);
+  const menu = $("atalhos-menu");
+  if (!sugestoes.length) { fecharMenuAtalhos(); return; }
+  atalhoSel = Math.min(atalhoSel, sugestoes.length - 1);
+  menu.innerHTML = "";
+  sugestoes.forEach((a, i) => {
+    const it = document.createElement("div");
+    it.className = "item" + (i === atalhoSel ? " sel" : "");
+    const b = document.createElement("b"); b.textContent = "/" + a.comando;
+    const s = document.createElement("span"); s.textContent = a.nome;
+    it.append(b, s);
+    it.addEventListener("mousedown", (ev) => { ev.preventDefault(); escolherAtalho(a); });
+    menu.appendChild(it);
+  });
+  menu.classList.remove("oculto");
+}
+function escolherAtalho(a) {
+  entrada.value = "/" + a.comando + " ";
+  fecharMenuAtalhos();
+  ajustarAltura();
+  entrada.focus();
+}
 entrada.addEventListener("keydown", (e) => {
+  if (sugestoes.length) {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      atalhoSel = (atalhoSel + (e.key === "ArrowDown" ? 1 : sugestoes.length - 1)) % sugestoes.length;
+      atualizarMenuAtalhos(); return;
+    }
+    if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+      e.preventDefault(); escolherAtalho(sugestoes[atalhoSel]); return;
+    }
+    if (e.key === "Escape") { e.stopPropagation(); fecharMenuAtalhos(); return; }
+  }
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     enviarMensagem();
   }
 });
-entrada.addEventListener("input", ajustarAltura);
+entrada.addEventListener("input", () => { atalhoSel = 0; atualizarMenuAtalhos(); ajustarAltura(); });
+entrada.addEventListener("blur", () => setTimeout(fecharMenuAtalhos, 120));
+
+// Pedidos vindos do menu de contexto / atalho de teclado (gravados pelo background).
+async function consumirPedidoExterno() {
+  try {
+    const r = await chrome.storage.session.get("pedido_painel");
+    const p = r.pedido_painel;
+    if (!p) return;
+    await chrome.storage.session.remove("pedido_painel");
+    if (p.tipo === "selecao" && p.texto) {
+      entrada.value = "/explicar";
+      await atualizarContexto(true);
+      if (!contexto || !contexto.selecao) contexto = Object.assign({}, contexto, { selecao: p.texto });
+      enviarMensagem();
+    } else if (p.tipo === "foco") {
+      entrada.focus();
+    }
+  } catch (e) { /* sem acesso ao storage de sessão */ }
+}
+try {
+  chrome.storage.onChanged.addListener((mud, area) => {
+    if (area === "session" && mud.pedido_painel && mud.pedido_painel.newValue) consumirPedidoExterno();
+    if (area === "local" && mud.atalhos_usuario) carregarAtalhos();
+  });
+} catch (e) {}
+consumirPedidoExterno();
 // Parar: cancela a execução no núcleo (o agente confere entre os passos; uma
 // confirmação pendente é negada e um comando esperando o navegador aborta).
 async function pararTarefa() {

@@ -378,6 +378,13 @@ body {
 }
 
 /* composer */
+.atalhos-menu { margin: 0 10px 4px; border: 1px solid var(--borda, #444); border-radius: 8px;
+  background: var(--painel, #1e1e1e); max-height: 180px; overflow-y: auto; }
+.atalhos-menu.oculto { display: none; }
+.atalhos-menu .item { padding: 6px 10px; cursor: pointer; font-size: 13px; display: flex; gap: 8px; }
+.atalhos-menu .item b { min-width: 84px; }
+.atalhos-menu .item span { opacity: .7; }
+.atalhos-menu .item.sel, .atalhos-menu .item:hover { background: rgba(255,255,255,.1); }
 .composer {
   flex: 0 0 auto;
   display: flex;

@@ -610,3 +610,35 @@ chrome.runtime.onInstalled.addListener(verificarBuild);
 chrome.runtime.onStartup.addListener(verificarBuild);
 verificarBuild();
 setInterval(verificarBuild, 60000);
+
+/* Menu de contexto e atalho de teclado → painel. sidePanel.open exige gesto do
+ * usuário: é chamado ANTES de qualquer await. O pedido vai pelo storage de sessão. */
+function pedirAoPainel(pedido, tab) {
+  try {
+    if (tab && tab.windowId != null) chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {});
+  } catch (e) { /* painel já aberto ou API indisponível */ }
+  chrome.storage.session.set({ pedido_painel: Object.assign({ t: Date.now() }, pedido) }).catch(() => {});
+}
+try {
+  if (chrome.contextMenus) {
+    const criarMenu = () => {
+      chrome.contextMenus.removeAll(() => {
+        chrome.contextMenus.create({
+          id: "yvakor-selecao", title: "Perguntar ao YVAKOR sobre a seleção",
+          contexts: ["selection"],
+        });
+      });
+    };
+    chrome.runtime.onInstalled.addListener(criarMenu);
+    chrome.contextMenus.onClicked.addListener((info, tab) => {
+      if (info.menuItemId === "yvakor-selecao" && info.selectionText) {
+        pedirAoPainel({ tipo: "selecao", texto: String(info.selectionText).slice(0, 4000) }, tab);
+      }
+    });
+  }
+  if (chrome.commands && chrome.commands.onCommand) {
+    chrome.commands.onCommand.addListener((cmd, tab) => {
+      if (cmd === "abrir-yvakor") pedirAoPainel({ tipo: "foco" }, tab);
+    });
+  }
+} catch (e) { console.warn("menu/atalho:", e); }
