@@ -438,3 +438,99 @@ def test_avaliar_resposta_tolera_modelo_que_foge_do_json():
     out = avaliar_resposta(Router(["Dou nota 5 porque está correta.", "Nota: 5, correta"]), "p", "r")
     assert out["ok"] and out["nota"] == 5 and out["aproximada"]       # nota solta no texto
     assert avaliar_resposta(Router(["sem nada", "ainda nada"]), "p", "r")["ok"] is False
+
+
+# --------------------------------------------------------------------------- #
+# análise de mercado (dados reais mockados) e exibição no chat
+# --------------------------------------------------------------------------- #
+def _candles_falsos(n=220, base=60000.0):
+    import numpy as np
+    rng = np.random.default_rng(1)
+    c = base * np.cumprod(1 + rng.normal(0.001, 0.02, n))
+    o = np.r_[c[0], c[:-1]]
+    h = np.maximum(o, c) * 1.01
+    l = np.minimum(o, c) * 0.99
+    t = 1_700_000_000 + np.arange(n) * 86400
+    return {"t": t.astype(float), "o": o, "h": h, "l": l, "c": c, "v": rng.uniform(900, 1500, n),
+            "fonte": "falsa"}
+
+
+def test_indicadores_batem_com_calculo_de_referencia():
+    import numpy as np
+    from yvakor import mercado as M
+    x = np.arange(1, 31, dtype=float)
+    assert M.sma(x, 5)[-1] == pytest.approx(28.0)
+    assert np.isnan(M.sma(x, 5)[3])
+    assert M.rsi(x)[-1] == pytest.approx(100.0)                      # só subidas
+    assert M.rsi(x[::-1].copy())[-1] == pytest.approx(0.0)           # só quedas
+    assert M.ema(np.full(40, 7.0), 10)[-1] == pytest.approx(7.0)
+    assert M._fmt(81189.43) == "81.189" and M._fmt(1234.5, 2) == "1.234,50" and M._pct(2.5) == "+2,50%"
+    assert M.resolver_ativo("analise do bitcoin") == ("BTC", "cripto")
+    assert M.resolver_ativo("faz uma analise do $TSLA") == ("TSLA", "acao")
+
+
+def test_analisar_gera_resumo_completo_graficos_e_sentimento(monkeypatch, tmp_path):
+    from yvakor import mercado as M
+    monkeypatch.setattr(M, "PASTA_GRAFICOS", tmp_path)
+    monkeypatch.setattr(M, "candles", lambda *a, **k: _candles_falsos())
+    monkeypatch.setattr(M, "sentimento_stocktwits", lambda *a, **k: {
+        "simbolo": "BTC.X", "mensagens": 30, "altistas": 12, "baixistas": 3, "neutras": 15, "saldo": 0.6,
+        "watchlist": 685030, "destaques": [{"autor": "fulano", "sentimento": "Bullish", "curtidas": 5,
+                                            "texto": "rompendo a resistência"}]})
+    monkeypatch.setattr(M, "medo_ganancia", lambda n=30: {"valor": 48, "classe": "Neutral", "historico": list(range(30, 60))})
+    r = M.analisar("bitcoin", "1d")
+    assert r["ok"] and r["ativo"] == "BTC"
+    md = r["resumo"]
+    for pedaco in ("Veredito técnico", "| Indicador | Valor | Leitura |", "SMA 200", "RSI 14", "Suportes",
+                   "Cenários de referência", "StockTwits (BTC.X)", "Medo & Ganância", "não é recomendação"):
+        assert pedaco in md, pedaco
+    assert len(r["arquivos"]) == 2 and all(__import__("pathlib").Path(a["arquivo"]).stat().st_size > 5000
+                                           for a in r["arquivos"])
+    assert -100 <= r["score"] <= 100
+
+
+def test_analisar_tolera_fontes_fora_do_ar(monkeypatch, tmp_path):
+    from yvakor import mercado as M
+    monkeypatch.setattr(M, "PASTA_GRAFICOS", tmp_path)
+    monkeypatch.setattr(M, "candles", lambda *a, **k: _candles_falsos())
+    def cai(*a, **k):
+        raise OSError("sem rede")
+    monkeypatch.setattr(M, "sentimento_stocktwits", cai)
+    monkeypatch.setattr(M, "medo_ganancia", cai)
+    r = M.analisar("ETH")
+    assert r["ok"] and any("StockTwits" in a for a in r["avisos"]) and "Veredito técnico" in r["resumo"]
+    monkeypatch.setattr(M, "candles", cai)
+    assert M.analisar("BTC")["ok"] is False                      # sem preço não há análise: erro claro
+
+
+def test_pedido_de_analise_vira_resposta_completa_com_graficos_no_chat_sem_llm(monkeypatch, tmp_path):
+    from yvakor import mercado as M
+    from yvakor.voz.diretos import detectar, executar
+    monkeypatch.setattr(M, "PASTA_GRAFICOS", tmp_path)
+    monkeypatch.setattr(M, "candles", lambda *a, **k: _candles_falsos())
+    monkeypatch.setattr(M, "sentimento_stocktwits", lambda *a, **k: None if False else {
+        "simbolo": "BTC.X", "mensagens": 2, "altistas": 1, "baixistas": 1, "neutras": 0, "saldo": 0.0,
+        "watchlist": None, "destaques": []})
+    monkeypatch.setattr(M, "medo_ganancia", lambda n=30: {"valor": 20, "classe": "Extreme Fear", "historico": [20] * 30})
+    intent = detectar("analise do btc com graficos e analise stocktwits")
+    assert intent and intent["acao"] == "mercado"
+    for frase in ("como esta o sol hoje", "analise o arquivo relatorio.pdf", "escreva um codigo python para analisar bitcoin"):
+        assert (detectar(frase) or {}).get("acao") != "mercado", frase
+    class Orq:
+        ultimos_artefatos = []
+    o = Orq()
+    resposta = executar(o, intent)
+    assert "Veredito técnico" in resposta and "StockTwits" in resposta
+    imgs = [a for a in o.ultimos_artefatos if a["tipo"] == "imagem"]
+    assert len(imgs) == 2 and all(a["url"].startswith("/midia/graficos/mercado_BTC_") for a in imgs)
+
+
+def test_ferramenta_mercado_registrada_e_oferecida_ao_modelo():
+    from yvakor.tools.registry import ToolRegistry
+    from yvakor.tools.router import selecionar
+    from yvakor import mercado as M
+    reg = ToolRegistry(load_settings())
+    M.registrar_ferramentas(reg)
+    assert "mercado_analisar" in reg.tools
+    escolhidas = selecionar(reg, "analise do btc com graficos e analise stocktwits")
+    assert "mercado_analisar" in escolhidas[:3]

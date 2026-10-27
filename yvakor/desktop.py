@@ -11,6 +11,7 @@ import json
 import math
 import os
 import queue
+import re
 import subprocess
 from yvakor import proc as _ywproc
 import sys
@@ -26,6 +27,7 @@ import wave
 import webbrowser
 from datetime import datetime
 from pathlib import Path
+from tkinter import font as tkfont
 from tkinter import ttk
 
 from yvakor.textos import sem_json_de_ferramenta
@@ -204,6 +206,197 @@ def _limpar_markdown(texto: str) -> str:
     t = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", r"\1\n\2", t)
     t = re.sub(r"(?m)^\s*[-*]\s+", "• ", t)
     return t.strip()
+
+class CorpoRico(tk.Text):
+    """Resposta do agente com Markdown de verdade: títulos, negrito, itálico, código,
+    listas, citações, links e TABELAS alinhadas (fonte monoespaçada). Seleciona/copia
+    como texto. Compatível com o reembrulho do ChatView (aceita `wraplength`)."""
+
+    _INLINE = re.compile(
+        r"(\*\*(?P<b>.+?)\*\*)|(`(?P<c>[^`\n]+)`)|(\[(?P<lt>[^\]]+)\]\((?P<lu>https?://[^)\s]+)\))"
+        r"|(?P<u>https?://[^\s)]+)|(?<![\*\w])\*(?P<i>[^*\n]+)\*(?![\*\w])"
+        r"|(?<![\w_])_(?P<i2>[^_\n]+)_(?![\w_])")
+
+    def __init__(self, master, texto: str, fundo: str, fg: str, largura_px: int,
+                 base=(None, 11)):
+        fam = base[0] or UI
+        self._fam, self._tam = fam, base[1]
+        self._mono = "Consolas"
+        super().__init__(master, bg=fundo, fg=fg, bd=0, highlightthickness=0,
+                         wrap="word", padx=2, pady=2, cursor="arrow",
+                         font=(fam, self._tam), spacing1=1, spacing3=3,
+                         insertwidth=0, takefocus=0, exportselection=True)
+        self._texto = texto
+        self._fundo, self._fg = fundo, fg
+        self._tags()
+        self._montar(texto)
+        self.configure(state="disabled")
+        self._largura_px = 0
+        self.configure(wraplength=largura_px)
+
+    # ---- API compatível com tk.Label ----
+    def configure(self, cnf=None, **kw):
+        if "wraplength" in kw:
+            self._ajustar(int(kw.pop("wraplength")))
+        if cnf or kw:
+            return super().configure(cnf, **kw)
+
+    config = configure
+
+    def _ajustar(self, largura_px: int) -> None:
+        if largura_px == self._largura_px:
+            return
+        self._largura_px = largura_px
+        try:
+            f = tkfont.Font(font=(self._fam, self._tam))
+            cols = max(24, largura_px // max(1, f.measure("0")))
+        except Exception:
+            cols = max(24, largura_px // 8)
+        super().configure(width=cols)
+        self._altura()
+        self.after_idle(self._altura)
+
+    def _altura(self) -> None:
+        try:
+            self.update_idletasks()
+            n = self.count("1.0", "end-1c", "displaylines")
+            linhas = int(n[0]) if n else 1
+        except Exception:
+            linhas = self._texto.count("\n") + 2
+        super().configure(height=max(1, linhas))
+
+    # ---- estilos ----
+    def _tags(self) -> None:
+        fam, t, mono = self._fam, self._tam, self._mono
+        self.tag_configure("b", font=(fam, t, "bold"))
+        self.tag_configure("i", font=(fam, t, "italic"))
+        self.tag_configure("c", font=(mono, t - 1), background=PANEL2)
+        self.tag_configure("h1", font=(fam, t + 5, "bold"), spacing1=10, spacing3=4)
+        self.tag_configure("h2", font=(fam, t + 3, "bold"), spacing1=9, spacing3=3)
+        self.tag_configure("h3", font=(fam, t + 1, "bold"), spacing1=7, spacing3=2)
+        self.tag_configure("li", lmargin1=14, lmargin2=28)
+        self.tag_configure("q", lmargin1=14, lmargin2=14, foreground=MUTED)
+        self.tag_configure("code", font=(mono, t - 1), background=PANEL2, lmargin1=8,
+                           lmargin2=8, wrap="none", spacing1=0, spacing3=0)
+        self.tag_configure("tab", font=(mono, t - 1), background=PANEL2, lmargin1=6,
+                           lmargin2=6, wrap="none", spacing1=0, spacing3=0)
+        self.tag_configure("tabh", font=(mono, t - 1, "bold"), background=PANEL2, lmargin1=6,
+                           lmargin2=6, wrap="none", foreground=GOLD, spacing1=0, spacing3=0)
+        self.tag_configure("a", foreground=TEAL, underline=True)
+        self.tag_configure("hr", foreground=DIM)
+        self.tag_bind("a", "<Enter>", lambda e: self.configure(cursor="hand2"))
+        self.tag_bind("a", "<Leave>", lambda e: self.configure(cursor="arrow"))
+
+    # ---- conteúdo ----
+    def _inline(self, texto: str, base: tuple = ()) -> None:
+        pos = 0
+        for m in self._INLINE.finditer(texto):
+            if m.start() > pos:
+                self.insert("end", texto[pos:m.start()], base)
+            if m.group("b") is not None:
+                self.insert("end", m.group("b"), base + ("b",))
+            elif m.group("c") is not None:
+                self.insert("end", m.group("c"), base + ("c",))
+            elif m.group("i") is not None or m.group("i2") is not None:
+                self.insert("end", m.group("i") or m.group("i2"), base + ("i",))
+            else:
+                url = m.group("lu") or m.group("u")
+                rot = m.group("lt") or url
+                tag = f"a{self.index('end')}"
+                self.insert("end", rot, base + ("a", tag))
+                self.tag_bind(tag, "<Button-1>", lambda e, u=url: webbrowser.open(u))
+            pos = m.end()
+        if pos < len(texto):
+            self.insert("end", texto[pos:], base)
+
+    @staticmethod
+    def _limpo(c: str) -> str:
+        c = re.sub(r"\*\*(.+?)\*\*", r"\1", c)
+        c = re.sub(r"`([^`]+)`", r"\1", c)
+        return re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", c).strip()
+
+    def _tabela(self, linhas: list[str]) -> None:
+        cel = [[self._limpo(c) for c in l.strip().strip("|").split("|")] for l in linhas]
+        cel = [r for r in cel if not all(re.fullmatch(r":?-{2,}:?", c) or not c for c in r)]
+        if not cel:
+            return
+        n = max(len(r) for r in cel)
+        for r in cel:
+            r += [""] * (n - len(r))
+        larg = [max(len(r[i]) for r in cel) for i in range(n)]
+        total = sum(larg) + 3 * (n - 1) + 2
+        try:
+            maximo = max(30, self._largura_px // max(1, tkfont.Font(font=(self._mono, self._tam - 1)).measure("0")))
+        except Exception:
+            maximo = 80
+        if total > maximo:                       # larga demais: vira lista (nada é cortado)
+            cab = cel[0]
+            for r in cel[1:]:
+                self.insert("end", "• " + " — ".join(f"{cab[i]}: {r[i]}" if i else r[i] for i in range(n) if r[i]) + "\n", ("li",))
+            return
+        def fmt(r):
+            return " " + " │ ".join(c.ljust(larg[i]) for i, c in enumerate(r)) + " "
+        self.insert("end", fmt(cel[0]) + "\n", ("tabh",))
+        self.insert("end", "─" + "─┼─".join("─" * w for w in larg) + "─\n", ("tab",))
+        for r in cel[1:]:
+            self.insert("end", fmt(r) + "\n", ("tab",))
+        self.insert("end", "\n")
+
+    def _montar(self, texto: str) -> None:
+        linhas = str(texto or "").replace("\r\n", "\n").split("\n")
+        i, em_codigo, buf_codigo = 0, False, []
+        while i < len(linhas):
+            l = linhas[i]
+            if l.strip().startswith("```"):
+                if em_codigo:
+                    self.insert("end", "\n".join(buf_codigo) + "\n", ("code",))
+                    buf_codigo, em_codigo = [], False
+                else:
+                    em_codigo = True
+                i += 1
+                continue
+            if em_codigo:
+                buf_codigo.append(l)
+                i += 1
+                continue
+            if l.lstrip().startswith("|") and i + 1 < len(linhas) and re.match(r"^\s*\|?\s*:?-{2,}", linhas[i + 1]):
+                bloco = []
+                while i < len(linhas) and linhas[i].lstrip().startswith("|"):
+                    bloco.append(linhas[i])
+                    i += 1
+                self._tabela(bloco)
+                continue
+            m = re.match(r"^(#{1,6})\s+(.*)$", l)
+            if m:
+                self._inline(m.group(2), ("h1" if len(m.group(1)) == 1 else "h2" if len(m.group(1)) == 2 else "h3",))
+                self.insert("end", "\n")
+            elif re.match(r"^\s*[-*]\s+", l):
+                self.insert("end", "• ", ("li",))
+                self._inline(re.sub(r"^\s*[-*]\s+", "", l), ("li",))
+                self.insert("end", "\n")
+            elif re.match(r"^\s*\d+[.)]\s+", l):
+                num = re.match(r"^\s*(\d+[.)])\s+", l).group(1)
+                self.insert("end", num + " ", ("li",))
+                self._inline(re.sub(r"^\s*\d+[.)]\s+", "", l), ("li",))
+                self.insert("end", "\n")
+            elif l.lstrip().startswith(">"):
+                self._inline(l.lstrip()[1:].strip(), ("q",))
+                self.insert("end", "\n")
+            elif re.match(r"^\s*([-*_])\1{2,}\s*$", l):
+                self.insert("end", "─" * 40 + "\n", ("hr",))
+            else:
+                self._inline(l)
+                self.insert("end", "\n")
+            i += 1
+        if em_codigo and buf_codigo:
+            self.insert("end", "\n".join(buf_codigo) + "\n", ("code",))
+        # tira a última quebra
+        try:
+            if self.get("end-2c", "end-1c") == "\n":
+                self.delete("end-2c", "end-1c")
+        except tk.TclError:
+            pass
+
 
 
 class ChatView(tk.Frame):
@@ -474,13 +667,17 @@ class ChatView(tk.Frame):
             self._textos.append(("meta", texto or ""))
             self._bind_roda(lbl)
         else:
-            exibicao = texto if usuario else _limpar_markdown(
-                sem_json_de_ferramenta(texto))
-            corpo = tk.Label(bolha, text=exibicao, bg=fundo, fg=FG,
-                             justify="left",
-                             anchor=ancora,
-                             font=(UI, 10) if usuario else (DISPLAY, 11),
-                             wraplength=self._wrap)
+            if usuario:
+                corpo = tk.Label(bolha, text=texto, bg=fundo, fg=FG, justify="left",
+                                 anchor=ancora, font=(UI, 10), wraplength=self._wrap)
+            else:
+                try:
+                    corpo = CorpoRico(bolha, sem_json_de_ferramenta(texto), fundo, FG,
+                                      self._wrap, base=(DISPLAY, 11))
+                except Exception:                 # nunca deixa de mostrar a resposta
+                    corpo = tk.Label(bolha, text=_limpar_markdown(sem_json_de_ferramenta(texto)),
+                                     bg=fundo, fg=FG, justify="left", anchor=ancora,
+                                     font=(DISPLAY, 11), wraplength=self._wrap)
             corpo.pack(anchor=ancora, padx=(14, 14) if usuario else (2, 2),
                        pady=(8, 8) if usuario else (4, 10))
             self._labels.append(corpo)
@@ -514,7 +711,7 @@ class ChatView(tk.Frame):
         if tipo == "imagem" and Image is not None and Path(caminho).is_file():
             try:
                 img = Image.open(caminho)
-                img.thumbnail((430, 320), Image.LANCZOS)
+                img.thumbnail((max(430, min(self._wrap, 840)), 580), Image.LANCZOS)  # gráficos legíveis
                 foto = ImageTk.PhotoImage(img)
                 alvo = tk.Label(card, image=foto, bg=fundo, cursor="hand2")
                 alvo.image = foto

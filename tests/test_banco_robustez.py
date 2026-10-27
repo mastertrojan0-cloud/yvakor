@@ -432,3 +432,32 @@ def test_hover_nao_apaga_o_clique_ja_ligado_ao_botao():
         assert w.cget("bg") == "#222"                              # e o hover continua funcionando
     finally:
         raiz.destroy()
+
+
+def test_corpo_rico_renderiza_markdown_tabela_e_ajusta_altura():
+    import tkinter as tk
+    from yvakor import desktop as D
+    try:
+        raiz = tk.Tk()
+    except tk.TclError:
+        import pytest
+        pytest.skip("sem display")
+    try:
+        raiz.geometry("700x500+6000+6000")
+        md = ("## Título\nTexto com **negrito**, _itálico_ e `código`.\n\n"
+              "| A | B |\n|---|---|\n| 1 | dois |\n\n- item um\n- item dois\n\n"
+              "[site](https://exemplo.com)")
+        w = D.CorpoRico(raiz, md, D.BG, D.FG, 600, base=(D.DISPLAY, 11))
+        w.pack(anchor="w")                       # como na bolha do chat: a largura vem do `width`
+        raiz.update()
+        txt = w.get("1.0", "end")
+        assert "Título" in txt and "**" not in txt and "`" not in txt           # marcação some
+        assert "│" in txt and "• item um" in txt and "site" in txt             # tabela e lista
+        assert "b" in w.tag_names() and w.tag_ranges("b") and w.tag_ranges("tabh")
+        h1 = int(w.cget("height"))
+        w.configure(wraplength=100)                                           # janela estreita: mais linhas
+        raiz.update()
+        assert int(w.cget("height")) > h1
+        assert str(w.cget("state")) == "disabled"                              # só leitura
+    finally:
+        raiz.destroy()

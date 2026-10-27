@@ -46,6 +46,15 @@ GRUPOS = {
                        "navegador_abrir", "navegador_historico",
                        "navegador_passar_mouse", "navegador_captura"),
     },
+    "mercado": {
+        "prefixos": ("mercado_",),
+        "palavras": ("btc", "bitcoin", "eth", "ethereum", "cripto", "criptomoeda", "stocktwits",
+                     "rsi", "macd", "candle", "candles", "cotacao", "cotação", "ativo", "ticker",
+                     "binance", "solana", "zcash", "dogecoin", "bolsa", "acao", "ação", "acoes",
+                     "ações", "tendencia", "tendência", "suporte", "resistencia", "resistência"),
+        "radicais": ("bitco", "cripto", "ethere", "stockt", "cotac", "cota\u00e7"),
+        "prioridade": ("mercado_analisar",),
+    },
     "arquivos": {
         "prefixos": ("arquivos_",),
         "palavras": ("arquivo", "pasta", "diretorio", "diretório", "ler",

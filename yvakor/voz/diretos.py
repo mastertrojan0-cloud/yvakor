@@ -28,8 +28,31 @@ def _expressao_da_conta(texto: str) -> str:
     return max(trechos, key=len) if trechos else resto.rstrip("?").strip()
 
 
+_VERBO_MERCADO = re.compile(
+    r"\b(analis\w*|an[aá]lise|grafic\w*|gr[aá]fic\w*|tend[eê]ncia|cota[cç][aã]o|como (?:esta|est[aá])|"
+    r"stocktwits|rsi|macd|suporte|resist[eê]ncia|sentimento|previs[aã]o|vale a pena)\b", re.I)
+_ATIVO_MERCADO = re.compile(
+    r"\b(btc|bitcoin|eth|ethereum|solana|bnb|xrp|ripple|cardano|doge|dogecoin|ltc|litecoin|"
+    r"avax|matic|zec|zcash|trx|shib|pepe)\b|\$[A-Za-z]{1,6}\b", re.I)
+
+
+def _intencao_mercado(texto: str):
+    """'analise do btc com gráficos e análise stocktwits' → análise completa, sem LLM."""
+    if not (_VERBO_MERCADO.search(texto) and _ATIVO_MERCADO.search(texto)):
+        return None
+    # pedido de CÓDIGO/arquivo sobre o ativo não é análise de mercado
+    if re.search(r"\b(c[oó]digo|script|fun[cç][aã]o|arquivo|pasta|bug|erro de)\b", texto, re.I):
+        return None
+    m = re.search(r"\b(1w|semanal|4h|1h|15m|30m|1d|di[aá]rio|diario)\b", texto, re.I)
+    iv = {"semanal": "1w", "diario": "1d", "diário": "1d"}.get((m.group(1).lower() if m else ""), (m.group(1).lower() if m else "1d"))
+    return {"acao": "mercado", "ativo": texto, "intervalo": iv}
+
+
 def detectar(texto: str) -> dict | None:
     low = normalizar(texto or "")
+    _mercado = _intencao_mercado(texto or "")
+    if _mercado:
+        return _mercado
     if low in ("nao funciona", "não funciona", "nao esta funcionando",
                "não está funcionando", "deu erro", "ta com erro",
                "está com erro", "nao sei o que fazer"):
@@ -366,6 +389,23 @@ def executar(orchestrator, intent: dict, ultima: str = "") -> str:
                                                         "erro": "indisponível"}
         return (f"Abri o projeto {r.get('nome')} em {r.get('caminho')}."
                 if r.get("ok") else f"Não encontrei: {r.get('erro')}")
+
+    if acao == "mercado":
+        from pathlib import Path
+        from urllib.parse import quote
+        from yvakor import mercado
+        try:
+            r = mercado.analisar(intent.get("ativo") or "BTC", intent.get("intervalo") or "1d")
+        except Exception as exc:
+            return f"A análise de mercado falhou: {exc}"
+        if not r.get("ok"):
+            return f"Não consegui analisar o ativo: {r.get('erro')}"
+        for a in r.get("arquivos", []):
+            p = Path(a["arquivo"]).resolve()
+            orchestrator.ultimos_artefatos.append({
+                "tipo": "imagem", "url": "/midia/graficos/" + quote(p.name),
+                "caminho": str(p), "titulo": a.get("titulo") or p.name, "nome": p.name})
+        return r["resumo"]
 
     if acao == "conta":
         from yvakor.capacidades import calcular
