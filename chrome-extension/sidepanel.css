@@ -517,3 +517,106 @@ body {
 .sites-form input { flex: 1; font-size: 11px; padding: 3px 6px; border: 1px solid var(--linha-forte); border-radius: 6px; }
 .sites-form button { font-size: 10px; padding: 3px 9px; border-radius: 6px; border: 1px solid var(--ouro);
   background: var(--ouro); color: #1c1a14; cursor: pointer; font-weight: 700; }
+
+/* ===================== TEMA CLAUDE (claro/escuro) =====================
+   Paleta quente, respostas em serifada, balão do usuário, compositor em cartão. */
+:root {
+  --fundo: #faf9f5; --papel: #ffffff; --texto: #1f1e1d; --muted: #6b6a64;
+  --linha: rgba(31,30,29,.11); --linha-forte: rgba(31,30,29,.2);
+  --ouro: #c96442; --ouro-claro: #f6e7df; --agua: #4d8a5f; --erro: #b4443b;
+  --usuario: #f0eee6; --codigo: #f5f4ee; --codigo-txt: #8a3a1d; --hover: rgba(31,30,29,.06);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fundo: #262624; --papel: #30302e; --texto: #faf9f5; --muted: #a8a69e;
+    --linha: rgba(250,249,245,.11); --linha-forte: rgba(250,249,245,.2);
+    --ouro: #d97757; --ouro-claro: #3a2d28; --agua: #7fbf8f; --erro: #e07a70;
+    --usuario: #393937; --codigo: #1f1e1d; --codigo-txt: #f0b9a3; --hover: rgba(250,249,245,.08);
+    color-scheme: dark;
+  }
+}
+body { font-size: 14px; }
+.topo { padding: 12px 14px 8px; }
+.marca { background: none; color: var(--ouro); width: auto; height: auto; font-size: 22px; border-radius: 0; }
+.marca-texto h1 { font-size: 19px; font-weight: 500; }
+.marca-texto p { display: none; }
+.pill { font-size: 10.5px; padding: 3px 9px; background: transparent; border-color: var(--linha-forte); }
+.pill.ok { color: var(--agua); border-color: var(--linha-forte); }
+#nova, #voz { width: 30px; height: 30px; border: 0; background: transparent; border-radius: 8px;
+  color: var(--texto); font-size: 17px; }
+#voz { font-size: 14px; }
+#nova:hover, #voz:hover { background: var(--hover); }
+#modelo, #modo-acao { font-size: 12px; padding: 4px 7px; background: var(--papel); color: var(--texto);
+  border: 1px solid var(--linha-forte); border-radius: 8px; max-width: 128px; }
+#btn-sites { background: transparent; border: 0; font-size: 14px; border-radius: 8px; padding: 3px 6px; }
+#btn-sites:hover { background: var(--hover); }
+.contexto { background: transparent; border: 0; color: var(--muted); font-size: 12px; margin: 0 12px 6px;
+  padding: 4px 6px; border-radius: 8px; }
+.ctx-dot { background: var(--agua); }
+#ctx-ler, #ctx-usar { color: var(--muted); font-size: 11px; }
+
+.chat { padding: 8px 16px 12px; gap: 18px; }
+.vazio { max-width: 320px; color: var(--muted); }
+.vazio .simbolo { background: none; color: var(--ouro); width: auto; height: auto; font-size: 34px;
+  margin-bottom: 4px; }
+.vazio h2 { font-size: 25px; font-weight: 400; letter-spacing: -.015em; }
+.vazio p { font-size: 13px; line-height: 1.55; }
+.chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; margin-top: 16px; }
+.chips button { background: none; border: 1px solid var(--linha-forte); color: var(--texto); font-family: inherit;
+  font-size: 12.5px; padding: 6px 12px; border-radius: 999px; cursor: pointer; }
+.chips button:hover { background: var(--hover); }
+
+.msg { max-width: 100%; padding: 0; font-size: 14px; line-height: 1.65; border-radius: 0; }
+.msg .quem { display: none; }
+.msg.voce { align-self: flex-end; max-width: 88%; background: var(--usuario); border: 0;
+  border-radius: 16px; padding: 8px 13px; color: var(--texto); }
+.msg.agente { align-self: stretch; font-family: "Lora", Georgia, serif; font-size: 15px; line-height: 1.7;
+  padding: 0; color: var(--texto); }
+.msg code, .msg .corpo code { background: var(--hover); border: 0; color: var(--codigo-txt);
+  border-radius: 5px; font-size: 12px; padding: 1px 5px; }
+.msg pre { background: var(--codigo); border: 1px solid var(--linha); border-radius: 10px; font-size: 12px; }
+.msg pre code { background: none; color: var(--texto); padding: 0; }
+.msg a, .msg .corpo a { color: var(--ouro); }
+.msg .corpo p.titulo { color: var(--texto); font-size: 1.04em; }
+.msg .corpo th { background: var(--hover); }
+.msg .arquivo { background: var(--papel); font-size: 12.5px; border-radius: 10px; }
+.msg small { font-size: 11px; }
+.ouvir { font-size: 11px; background: transparent; color: var(--muted); }
+
+.processo { margin: 0 14px 8px; background: transparent; border: 0; border-left: 2px solid var(--linha-forte);
+  border-radius: 0; padding: 2px 0 2px 10px; max-height: 130px; }
+.proc-topo { font-size: 11px; letter-spacing: .02em; }
+.passo { font-size: 12px; color: var(--muted); }
+.passo.atual { color: var(--ouro); }
+
+.composer { margin: 0 12px 12px; padding: 8px 8px 8px 12px; gap: 4px; border-radius: 22px;
+  background: var(--papel); box-shadow: 0 2px 12px rgba(0,0,0,.06); }
+.composer:focus-within { border-color: var(--ouro); }
+#entrada { font-size: 14px; line-height: 1.5; padding: 5px 4px; max-height: 140px; }
+#entrada::placeholder { color: var(--muted); }
+#mic { font-size: 15px; padding: 5px 7px; border-radius: 50%; }
+#mic:hover { background: var(--hover); }
+#enviar { width: 32px; height: 32px; padding: 0; border-radius: 50%; font-size: 17px; font-weight: 600;
+  display: grid; place-items: center; background: var(--ouro); color: #fff; }
+#enviar.parar { background: var(--texto); color: var(--fundo); border-color: transparent; font-size: 13px; }
+.atalhos-menu { background: var(--papel); border: 1px solid var(--linha-forte); border-radius: 12px; margin: 0 12px 6px; }
+.atalhos-menu .item { font-size: 13.5px; }
+.atalhos-menu .item.sel, .atalhos-menu .item:hover { background: var(--hover); }
+
+.confirmacao { background: var(--papel); border-color: var(--ouro); box-shadow: 0 2px 14px rgba(0,0,0,.08);
+  border-radius: 12px; }
+.conf-topo { color: var(--ouro); font-size: 10.5px; }
+.conf-acao { color: var(--texto); font-size: 13.5px; }
+.conf-detalhe { background: var(--codigo); color: var(--texto); font-size: 11.5px; }
+.conf-prazo { font-size: 11px; }
+.conf-botoes button { background: var(--papel); color: var(--texto); font-size: 12.5px; border-radius: 9px; }
+.conf-botoes #conf-permitir { background: var(--ouro); border-color: var(--ouro); color: #fff; }
+.sites-painel { background: var(--papel); border-radius: 12px; }
+.sites-topo { color: var(--ouro); font-size: 10px; }
+.site { background: var(--fundo); font-size: 12px; }
+.site button { color: var(--erro); }
+.sites-form input { background: var(--fundo); color: var(--texto); font-size: 12px; }
+.sites-form button { background: var(--ouro); border-color: var(--ouro); color: #fff; }
+.card-cw, .lista-cw .card-cw { background: var(--papel); }
+.resultado { background: var(--codigo); }

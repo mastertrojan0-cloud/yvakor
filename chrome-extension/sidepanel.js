@@ -521,7 +521,7 @@ async function enviarMensagem() {
   }
   ocupado = true;
   // Enquanto roda, o botão vira PARAR (nunca fica desabilitado).
-  enviar.textContent = "Parar";
+  enviar.textContent = "■"; enviar.title = "Parar (Esc)";
   enviar.classList.add("parar");
   entrada.value = "";
   ajustarAltura();
@@ -555,7 +555,7 @@ async function enviarMensagem() {
     add("agente", "Erro: " + e.message);
   } finally {
     ocupado = false;
-    enviar.textContent = "Enviar";
+    enviar.textContent = "↑"; enviar.title = "Enviar (Enter)";
     enviar.classList.remove("parar");
     enviar.disabled = false;
     try { chrome.runtime.sendMessage({ tipo: "fim_tarefa" }); } catch (e) {}
@@ -592,6 +592,26 @@ async function carregarAtalhos() {
     const r = await chrome.storage.local.get("atalhos_usuario");
     listaAtalhos = YvakorAtalhos.juntar(r.atalhos_usuario || []);
   } catch (e) { /* usa só os padrão */ }
+  montarChips();
+}
+// Sugestões da tela inicial (como as do Claude): os atalhos mais úteis em um clique.
+function montarChips() {
+  const box = $("chips");
+  if (!box) return;
+  box.innerHTML = "";
+  ["resumir", "pesquisar", "extrair", "traduzir"].forEach((c) => {
+    const a = listaAtalhos.find((x) => x.comando === c);
+    if (!a) return;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = a.nome;
+    b.addEventListener("click", () => {
+      entrada.value = "/" + a.comando + (a.exige ? " " : "");
+      entrada.focus();
+      if (!a.exige) enviarMensagem();
+    });
+    box.appendChild(b);
+  });
 }
 carregarAtalhos();
 function fecharMenuAtalhos() { sugestoes = []; $("atalhos-menu").classList.add("oculto"); }
@@ -665,7 +685,7 @@ consumirPedidoExterno();
 // Parar: cancela a execução no núcleo (o agente confere entre os passos; uma
 // confirmação pendente é negada e um comando esperando o navegador aborta).
 async function pararTarefa() {
-  enviar.textContent = "Parando…";
+  enviar.textContent = "…";
   procStatus.textContent = "parando…";
   try {
     await api("/api/chat/cancelar", { method: "POST", body: { session: sessao }, timeout: 5000 });

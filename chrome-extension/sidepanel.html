@@ -37,10 +37,11 @@
   <main class="painel">
     <div class="chat" id="chat">
       <div class="vazio" id="vazio">
-        <div class="simbolo">Y</div>
+        <div class="simbolo">✻</div>
         <h2>Como posso ajudar?</h2>
         <p>Peça para navegar, explicar a página, pesquisar ou executar uma
            tarefa no Chrome.</p>
+        <div class="chips" id="chips"></div>
       </div>
     </div>
     <section id="confirmacao" class="confirmacao oculto" role="alertdialog"
@@ -62,9 +63,9 @@
 
   <div id="atalhos-menu" class="atalhos-menu oculto" role="listbox"></div>
   <footer class="composer">
-    <textarea id="entrada" rows="2" placeholder="Pergunte ou peça uma ação…"></textarea>
+    <textarea id="entrada" rows="1" placeholder="Pergunte ou peça uma ação…"></textarea>
     <button id="mic" title="Ditar">🎙</button>
-    <button id="enviar">Enviar</button>
+    <button id="enviar" title="Enviar (Enter)" aria-label="Enviar">↑</button>
   </footer>
 
   <script src="atalhos.js"></script>
