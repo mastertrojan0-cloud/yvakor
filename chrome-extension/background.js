@@ -65,14 +65,19 @@ async function setCtrlIdBG(id) {
 // Aba pedida no comando atual (`aba`). Os comandos rodam UM por vez (a trava
 // ponteOcupada), então uma variável de módulo é segura.
 let abaAlvo = null;
+let abaEstrita = false;     // close_tab/switch_tab: id inexistente é ERRO; nos demais comandos cai na aba atual
+let avisoAba = "";
 const ABAS_CHAVE = "yvakor_abas_do_agente";
 const GRUPO_TITULO = "YVAKOR";
 
 async function ctrlOrActiveBG() {
   if (abaAlvo != null) {
     const t = await chrome.tabs.get(abaAlvo).catch(() => null);
-    if (!t) throw new Error("a aba " + abaAlvo + " não existe mais (use navegador_abas para ver as atuais)");
-    return t;
+    if (t) return t;
+    if (abaEstrita) throw new Error("a aba " + abaAlvo + " não existe mais (use navegador_abas para ver as atuais)");
+    // Modelos pequenos inventam ids de aba (aba=0, aba=2…). Em vez de travar o agente num laço de
+    // erro, age na aba atual e avisa no resultado.
+    avisoAba = "a aba " + abaAlvo + " não existe; usei a aba atual (só passe `aba` com ids de navegador_abas)";
   }
   const id = await ctrlIdBG();
   if (id) {
@@ -325,7 +330,12 @@ const politicaDe = (a) => ({ politica: a.politica, confirmado_site: a.confirmado
 async function executarBG(c) {
   const a = (c && c.args) || {};
   abaAlvo = (a.aba != null && a.aba !== "") ? Number(a.aba) : null;
-  try { return await executarBGInterno(c); } finally { abaAlvo = null; }
+  abaEstrita = !!c && (c.tipo === "close_tab" || c.tipo === "switch_tab");
+  avisoAba = "";
+  try {
+    const r = await executarBGInterno(c);
+    return (avisoAba && r && typeof r === "object") ? Object.assign({ aviso: avisoAba }, r) : r;
+  } finally { abaAlvo = null; abaEstrita = false; avisoAba = ""; }
 }
 
 async function executarBGInterno(c) {

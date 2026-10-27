@@ -745,3 +745,23 @@ def test_comando_entregue_a_conexao_morta_volta_para_a_fila_e_resultado_espalhad
         assert res["r"]["tab_id"] == 3 and res["r"]["titulo"] == "T"
     finally:
         base._fechar(S, srv)
+
+
+def test_pedido_composto_abre_agora_e_entrega_o_resto_ao_agente():
+    """O print do usuário: 'abre o gmail e verifica se tem email…' só abria o Gmail e parava."""
+    from yvakor.voz.navegacao import detectar
+    r = detectar("abre o gmail e verifica se tem um email da sefaz amazonas")
+    assert r["acao"] == "abrir_e_continuar" and r["url"] == "https://mail.google.com"
+    assert r["resto"] == "verifica se tem um email da sefaz amazonas"
+    assert detectar("abre o youtube e pesquise gatos")["resto"] == "pesquise gatos"
+    assert detectar("abre http://x.com/a e me diga o titulo")["acao"] == "abrir_e_continuar"
+    # pedidos simples continuam no atalho de abrir
+    for frase in ("abra o google", "abre o youtube no chrome", "abra https://example.com por favor",
+                  "abre a nova aba do google no chrome"):
+        assert detectar(frase)["acao"] == "abrir", frase
+    assert detectar("o que é o gmail?") is None
+
+
+def test_aba_inventada_pelo_modelo_nao_trava_e_o_aviso_chega_ao_agente():
+    bg = (EXT / "background.js").read_text(encoding="utf-8")
+    assert "abaEstrita" in bg and "usei a aba atual" in bg

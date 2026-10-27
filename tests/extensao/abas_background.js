@@ -113,8 +113,12 @@ async function falha(fn) { try { await fn(); return null; } catch (e) { return e
   await run({ tipo: "goto", args: { url: "https://so-nessa.com/", aba: A.tab_id } });
   ok("comando com `aba` age naquela aba", m.chamadas.update.some(([id, p]) => id === A.tab_id && p.url === "https://so-nessa.com/"));
   ok("…e não muda a aba controlada", (await m.exp.ctrlIdBG()) === 2);
-  const e1 = await falha(() => m.exp.executarBG({ tipo: "goto", args: { url: "https://x.com", aba: 9999 } }));
-  ok("aba inexistente → erro claro", e1 && /não existe mais/.test(e1), e1);
+  m.chamadas.update.length = 0;
+  const e1 = await run({ tipo: "goto", args: { url: "https://x.com", aba: 9999 } });
+  ok("`aba` inventada (modelo pequeno) NÃO trava: age na aba atual e avisa", e1.ok !== false && /não existe/.test(e1.aviso || "") &&
+     m.chamadas.update.some(([id, p]) => id === 2 && p.url === "https://x.com"), JSON.stringify(e1));
+  const e2 = await falha(() => m.exp.executarBG({ tipo: "switch_tab", args: { aba: 9999 } }));
+  ok("trocar para aba inexistente continua sendo erro claro", e2 && /não encontrada|não existe/.test(e2), e2);
   ok("o alvo do comando não vaza para o comando seguinte", await (async () => {
     m.chamadas.update.length = 0;
     await run({ tipo: "goto", args: { url: "https://seguinte.com/" } });

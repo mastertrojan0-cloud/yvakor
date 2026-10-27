@@ -996,7 +996,21 @@ class Orchestrator:
         try:
             from yvakor.voz.navegacao import detectar as _dn, executar as _en
             _int_nav = _dn(user_message)
-            if _int_nav:
+            if _int_nav and _int_nav.get("acao") == "abrir_e_continuar":
+                # "abre o gmail e verifica…": abre agora e o agente cuida do resto
+                _abriu = _en(self, {"acao": "abrir", "url": _int_nav["url"],
+                                    "motor": _int_nav.get("motor", "")})
+                if str(_abriu).startswith("Não consegui"):
+                    self.episodic.log("conversa", user_message, _abriu,
+                                      session_id=sid)
+                    return _abriu
+                self._prog_step(sid, f"🌐 abri {_int_nav['url']}")
+                user_message = (f"{_int_nav['resto']}\n\n(Contexto: eu JÁ abri "
+                                f"{_int_nav['url']} no Chrome; a página atual é essa. Use "
+                                "navegador_ver ou navegador_extrair para ler e, se preciso, "
+                                "navegador_clicar/navegador_digitar. NÃO abra de novo.)")
+                self._tl.msg_atual = user_message
+            elif _int_nav:
                 _resp = _en(self, _int_nav)
                 self.ultima_resposta = _resp
                 self.episodic.log("conversa", user_message, _resp,

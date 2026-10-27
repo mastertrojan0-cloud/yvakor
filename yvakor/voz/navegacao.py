@@ -47,15 +47,21 @@ def detectar(texto: str) -> dict | None:
                 alvo = "https://" + dominio.group(1)
     if not alvo:
         return None
-    # Pedido composto ("abre o YouTube e pesquise X") precisa do agente,
-    # não apenas do atalho de abertura.
-    if re.search(r"\b(e|depois|em seguida|entao|então)\b", low) and re.search(
-            r"\b(pesquise|pesquisa|busque|busca|procure|procura|clique|clica|"
-            r"digite|digita|preencha|preenche|assista|assiste|toque|toca|"
-            r"tocar|coloca|coloque|colocar|reproduza|reproduz|baixe|compre|"
-            r"envie|leia|resuma|analise|verifique|escolha|escolhe|diga|dizer|"
-            r"fale|mostre|mostrar)\b", low):
-        return None
+    # Pedido composto ("abre o gmail e verifica se tem um email…", "abre o YouTube e pesquise X")
+    # precisa do AGENTE, não só do atalho de abertura. Regra: depois de "e / depois / em seguida"
+    # (ou vírgula) só pode sobrar o complemento do "abrir" (no Chrome, numa aba nova, por favor…);
+    # qualquer outra coisa é uma segunda tarefa.
+    m = re.search(r"(?:\s+(?:e|depois|em seguida|entao|e entao)\s+|\s*,\s*)(.+)$", low)
+    if m:
+        resto = m.group(1)
+        resto = re.sub(r"\b(no|na|em|num|numa|pelo|pra|para|o|a|um|uma|me|mim|por favor|pf|chrome|edge|aba|nova|navegador|"
+                       r"google chrome|ok|obrigado)\b", " ", resto)
+        if re.sub(r"[^a-z0-9]+", "", resto):
+            # abre o site AGORA (determinístico) e entrega o resto ao agente — o modelo local se
+            # perdia tentando abrir e ler/agir no mesmo pedido
+            tarefa = re.sub(r"^\s*(?:e|depois|em seguida|entao)\s+", "", m.group(1).strip())
+            motor = "chrome" if "chrome" in low else ("edge" if "edge" in low else "")
+            return {"acao": "abrir_e_continuar", "url": alvo, "motor": motor, "resto": tarefa}
     motor = "chrome" if "chrome" in low else ("edge" if "edge" in low else "")
     return {"acao": "abrir", "url": alvo, "motor": motor}
 
