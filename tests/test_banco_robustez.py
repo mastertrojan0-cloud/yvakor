@@ -404,3 +404,31 @@ def test_status_do_navegador_nao_abre_o_chrome():
     assert chamado == []                                   # navegador fechado: nada é aberto
     s._ctx = object()                                      # aberto: aí sim consulta as abas
     assert s.grupos()["ok"] and chamado == [1]
+
+
+def test_hover_nao_apaga_o_clique_ja_ligado_ao_botao():
+    """Regressão: _hover rebindava <ButtonPress-1> (= <Button-1>) e matava o handler de clique;
+    o 'Permitir' do popup de ação protegida não respondia."""
+    import tkinter as tk
+    from yvakor import desktop
+    try:
+        raiz = tk.Tk()
+    except tk.TclError:
+        import pytest
+        pytest.skip("sem display")
+    try:
+        raiz.geometry("120x60+6000+6000")             # fora da tela, mas mapeada (eventos de mouse exigem)
+        w = tk.Label(raiz, text="Permitir", bg="#000")
+        w.pack()
+        raiz.update()
+        w.focus_force()
+        cliques = []
+        w.bind("<Button-1>", lambda e: cliques.append(1))
+        desktop.App._hover(object(), w, "#111", "#222")          # _hover não usa self
+        w.event_generate("<ButtonPress-1>", x=2, y=2)
+        w.event_generate("<ButtonRelease-1>", x=2, y=2)
+        raiz.update()
+        assert cliques == [1]
+        assert w.cget("bg") == "#222"                              # e o hover continua funcionando
+    finally:
+        raiz.destroy()

@@ -2022,10 +2022,13 @@ class App:
             widget.configure(cursor="hand2")
         except Exception:
             pass
-        widget.bind("<Enter>", lambda e: pintar(hover, fg_hover))
-        widget.bind("<Leave>", lambda e: pintar(normal, fg_normal))
-        widget.bind("<ButtonPress-1>", lambda e: pintar(hover, fg_hover))
-        widget.bind("<ButtonRelease-1>", lambda e: pintar(hover, fg_hover))
+        # add="+": <ButtonPress-1> É o mesmo evento de <Button-1>. Sem o "+", este
+        # hover SUBSTITUÍA o clique já ligado ao widget (o botão "Permitir" do popup
+        # de ação protegida ficava morto: a conversa esperava 90 s e negava sozinha).
+        widget.bind("<Enter>", lambda e: pintar(hover, fg_hover), add="+")
+        widget.bind("<Leave>", lambda e: pintar(normal, fg_normal), add="+")
+        widget.bind("<ButtonPress-1>", lambda e: pintar(hover, fg_hover), add="+")
+        widget.bind("<ButtonRelease-1>", lambda e: pintar(hover, fg_hover), add="+")
 
 
     # ------------------------------------------------------------------ #
