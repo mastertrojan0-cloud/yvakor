@@ -397,9 +397,63 @@ function add(role, texto, artefatos = []) {
       d.appendChild(link);
     }
   }
+  d.dataset.texto = texto || "";
+  d.appendChild(barraAcoes(role, d));
   chat.appendChild(d);
   rolar();
   return d;
+}
+
+// Ações por mensagem (como no Claude): copiar, avaliar, tentar de novo, editar.
+function perguntaAnterior(d) {
+  let e = d.previousElementSibling;
+  while (e && !e.classList.contains("voce")) e = e.previousElementSibling;
+  return e ? (e.dataset.texto || "") : "";
+}
+function botaoAcao(rotulo, titulo, fn) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.textContent = rotulo;
+  b.title = titulo;
+  b.setAttribute("aria-label", titulo);
+  b.addEventListener("click", (ev) => { ev.stopPropagation(); fn(b); });
+  return b;
+}
+function barraAcoes(role, d) {
+  const bar = document.createElement("div");
+  bar.className = "acoes-msg";
+  bar.appendChild(botaoAcao("⧉", "Copiar", (b) => {
+    try { navigator.clipboard.writeText(d.dataset.texto || d.innerText); } catch (e) { return; }
+    b.textContent = "✓";
+    setTimeout(() => { b.textContent = "⧉"; }, 1400);
+  }));
+  if (role === "user") {
+    bar.appendChild(botaoAcao("✎", "Editar e reenviar", () => {
+      entrada.value = d.dataset.texto || "";
+      ajustarAltura();
+      entrada.focus();
+    }));
+    return bar;
+  }
+  const nota = (n) => (b) => {
+    api("/api/feedback", { method: "POST", timeout: 5000,
+      body: { nota: n, pergunta: perguntaAnterior(d), resposta: d.dataset.texto || "" } })
+      .then(() => {
+        bar.querySelectorAll(".nota").forEach((x) => x.classList.remove("on"));
+        b.classList.add("on");
+      }).catch(() => {});
+  };
+  const up = botaoAcao("👍", "Resposta boa", nota(5));
+  const down = botaoAcao("👎", "Resposta ruim", nota(1));
+  up.classList.add("nota");
+  down.classList.add("nota");
+  const regen = botaoAcao("↻", "Tentar de novo", () => {
+    const q = perguntaAnterior(d);
+    if (q && !ocupado) { entrada.value = q; enviarMensagem(); }
+  });
+  regen.classList.add("regen");
+  bar.append(up, down, regen);
+  return bar;
 }
 
 /* --------------------------- progresso ----------------------------- */

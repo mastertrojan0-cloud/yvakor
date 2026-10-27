@@ -746,6 +746,8 @@
     <div class="msg sistema">As duas águas se encontram. O núcleo está ativo.</div>
   </div>
   <div id="boas-vindas"><h2><span class="estrela">✻</span><span id="bv-saudacao">Olá</span></h2></div>
+  <div id="anexos"></div>
+  <div id="atalhos-menu" hidden></div>
   <div class="entrada">
     <button id="btn-cmd" class="cmd-toggle" title="Comandos e ferramentas">+</button>
     <div id="menu-cmd" class="menu-cmd" hidden>
@@ -760,6 +762,9 @@
       <button data-cmd="[memoria] ">Buscar memória…</button>
       <button data-cmd="[cowork] ">Tarefa em 2º plano…</button>
     </div>
+    <button id="btn-anexo" class="cmd-toggle" title="Anexar arquivo (ou arraste/cole aqui)">📎</button>
+    <input type="file" id="arq" multiple hidden
+      accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,.pdf,.txt,.md,.mp4,.webm,.mov,.mkv,.avi,.m4v">
     <textarea id="texto" rows="1" placeholder="Fale com o YVAKOR…"
       aria-label="Mensagem para o YVAKOR"></textarea>
     <button id="btn-mic" class="cmd-toggle" title="Falar (voz)">🎙</button>
@@ -844,6 +849,7 @@
   </div>
 </div>
 
+<script src="/atalhos.js"></script>
 <script>
 /* =====================================================================
    NÚCLEO 3D — "Encontro das Águas"
@@ -929,7 +935,7 @@ function renderMarkdown(src){
   return out.join('');
 }
 
-function add(tipo, quem, corpo, artefatos){
+function add(tipo, quem, corpo, artefatos, anexosEnv){
   const d = document.createElement('div');
   d.className = 'msg ' + tipo;
   const cab = quem ? `<span class="quem">${quem}</span>` : '';
@@ -940,6 +946,13 @@ function add(tipo, quem, corpo, artefatos){
   } else {                          // você / sistema: texto puro
     d.innerHTML = cab;
     d.appendChild(document.createTextNode(corpo));
+  }
+  d.dataset.texto = corpo || '';
+  if(tipo === 'voce' && anexosEnv && anexosEnv.length){
+    const cx = document.createElement('div'); cx.className = 'anexos-msg';
+    anexosEnv.forEach(a=>{ const c = document.createElement('span'); c.className = 'chip-anexo';
+      c.textContent = '📎 ' + (a.nome || 'arquivo'); cx.appendChild(c); });
+    d.appendChild(cx);
   }
   if(artefatos && artefatos.length){
     const box = document.createElement('div');
@@ -966,7 +979,46 @@ function add(tipo, quem, corpo, artefatos){
     }
     if(box.childNodes.length) d.appendChild(box);
   }
+  if(tipo === 'yvakor' || tipo === 'voce') d.appendChild(barraAcoes(tipo, d));
   fluxo.appendChild(d); fluxo.scrollTop = fluxo.scrollHeight;
+}
+
+/* ações por mensagem (como no Claude): copiar, avaliar, tentar de novo, editar */
+function perguntaAnterior(d){
+  let e = d.previousElementSibling;
+  while(e && !e.classList.contains('voce')) e = e.previousElementSibling;
+  return e ? (e.dataset.texto || '') : '';
+}
+function botaoAcao(rotulo, titulo, fn){
+  const b = document.createElement('button'); b.type = 'button';
+  b.textContent = rotulo; b.title = titulo; b.setAttribute('aria-label', titulo);
+  b.onclick = ev=>{ ev.stopPropagation(); fn(b); };
+  return b;
+}
+function barraAcoes(tipo, d){
+  const bar = document.createElement('div'); bar.className = 'acoes-msg';
+  bar.appendChild(botaoAcao('⧉', 'Copiar', b=>{
+    copiarTexto(d.dataset.texto || d.innerText).then(()=>{
+      b.textContent = '✓'; setTimeout(()=>{ b.textContent = '⧉'; }, 1400); }); }));
+  if(tipo === 'yvakor'){
+    const nota = n => b=>{
+      fetch('/api/feedback', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({nota: n, pergunta: perguntaAnterior(d), resposta: d.dataset.texto || ''})})
+        .then(()=>{ bar.querySelectorAll('.nota').forEach(x=>x.classList.remove('on')); b.classList.add('on'); })
+        .catch(()=>{});
+    };
+    const up = botaoAcao('👍', 'Resposta boa', nota(5)); up.classList.add('nota');
+    const down = botaoAcao('👎', 'Resposta ruim', nota(1)); down.classList.add('nota');
+    const regen = botaoAcao('↻', 'Tentar de novo', ()=>{
+      const q = perguntaAnterior(d); if(q && !enviando) mandar(q); });
+    regen.classList.add('regen');
+    bar.append(up, down, regen);
+  } else {
+    bar.appendChild(botaoAcao('✎', 'Editar e reenviar', ()=>{
+      texto.value = d.dataset.texto || ''; texto.focus();
+      texto.dispatchEvent(new Event('input', {bubbles:true})); }));
+  }
+  return bar;
 }
 
 /* copiar para a área de transferência (com fallback p/ contexto não-seguro) */
@@ -1211,12 +1263,36 @@ document.getElementById('btn-conectores').onclick = ()=>{
 document.getElementById('cx-fechar').onclick = fecharConectores;
 cxBox.onclick = e=>{ if(e.target===cxBox) fecharConectores(); };
 
-async function mandar(){
-  const m = texto.value.trim();
-  if(!m) return;
-  texto.value=''; texto.style.height='auto';
-  add('voce','você',m);
-  enviar.disabled = true; enviar.textContent = '…';
+let enviando = false;
+let anexos = [];                       // arquivos já enviados ao núcleo, aguardando a mensagem
+let listaAtalhos = [];
+try{
+  if(window.YvakorAtalhos) listaAtalhos = YvakorAtalhos.juntar(JSON.parse(localStorage.getItem('yv_atalhos') || '[]'));
+}catch(e){ if(window.YvakorAtalhos) listaAtalhos = YvakorAtalhos.juntar([]); }
+
+async function pararTarefa(){
+  enviar.textContent = '…';
+  try{
+    await fetch('/api/chat/cancelar', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({session: conversaAtiva})});
+  }catch(e){ add('sistema', null, 'Não consegui parar: ' + e.message); }
+}
+
+async function mandar(forcado){
+  if(enviando) return pararTarefa();
+  const m = (typeof forcado === 'string' ? forcado : texto.value).trim();
+  if(!m && !anexos.length) return;
+  let mensagem = m;
+  if(m.startsWith('/') && window.YvakorAtalhos){
+    const ex = YvakorAtalhos.expandir(m, listaAtalhos, {selecao: String(getSelection() || '')});
+    if(ex.erro){ add('sistema', null, ex.erro); return; }
+    if(ex.ok) mensagem = ex.prompt;
+  }
+  if(!mensagem) mensagem = 'Analise o(s) arquivo(s) anexado(s).';
+  const enviados = anexos.slice(); anexos = []; renderAnexos();
+  texto.value = ''; texto.style.height = 'auto'; fecharAtalhos();
+  add('voce', 'você', m || mensagem, null, enviados);
+  enviando = true; enviar.textContent = '■'; enviar.title = 'Parar (Esc)';
   setEstado('processando', true);
   mostrarPensando();
   // polling do progresso ao vivo (qual ferramenta está rodando agora)
@@ -1230,9 +1306,11 @@ async function mandar(){
     }catch(e){}
   }, 600);
   try{
+    const corpo = {message: mensagem, session: conversaAtiva};
+    if(enviados.length) corpo.attachments = enviados.map(a=>({
+      caminho: a.caminho, nome: a.nome, tipo: a.tipo, texto: a.texto, url: a.url}));
     const r = await fetch('/api/chat',{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({message:m, session:conversaAtiva})});
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(corpo)});
     const j = await r.json();
     if(j.session) conversaAtiva = j.session;
     clearInterval(poll); removerPensando();
@@ -1243,10 +1321,95 @@ async function mandar(){
     clearInterval(poll); removerPensando();
     add('sistema', null, 'Falha de conexão com o núcleo: '+e.message);
   }
-  enviar.disabled = false; enviar.textContent = '↑';
+  enviando = false; enviar.textContent = '↑'; enviar.title = 'Enviar (Enter)';
   setEstado('em escuta', false);
   texto.focus();
 }
+
+/* ---------------- anexos: botão, arrastar e colar ---------------- */
+const anexosBox = document.getElementById('anexos');
+function renderAnexos(){
+  anexosBox.innerHTML = '';
+  anexos.forEach((a, i)=>{
+    const c = document.createElement('span'); c.className = 'chip-anexo';
+    c.textContent = (a.tipo === 'imagem' ? '🖼 ' : a.tipo === 'video' ? '🎬 ' : '📄 ') + a.nome + ' ';
+    const x = document.createElement('button'); x.type = 'button'; x.textContent = '×'; x.title = 'Remover';
+    x.onclick = ()=>{ anexos.splice(i, 1); renderAnexos(); };
+    c.appendChild(x); anexosBox.appendChild(c);
+  });
+}
+function lerBase64(arq){
+  return new Promise((res, rej)=>{
+    const fr = new FileReader();
+    fr.onload = ()=> res(String(fr.result).split(',', 2)[1] || '');
+    fr.onerror = ()=> rej(fr.error); fr.readAsDataURL(arq);
+  });
+}
+async function anexarArquivos(lista){
+  for(const arq of Array.from(lista || [])){
+    if(arq.size > 80 * 1024 * 1024){ add('sistema', null, arq.name + ': arquivo grande demais (máx. 80 MB)'); continue; }
+    try{
+      const r = await fetch('/api/upload', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({nome: arq.name || 'colado.png', dados_b64: await lerBase64(arq)})});
+      const j = await r.json();
+      if(j.ok) anexos.push(j); else add('sistema', null, (arq.name || 'arquivo') + ': ' + (j.error || 'não aceito'));
+    }catch(e){ add('sistema', null, 'Falha ao anexar: ' + e.message); }
+  }
+  renderAnexos(); texto.focus();
+}
+const arqInput = document.getElementById('arq');
+document.getElementById('btn-anexo').onclick = ()=> arqInput.click();
+arqInput.onchange = ()=>{ anexarArquivos(arqInput.files); arqInput.value = ''; };
+['dragover', 'drop'].forEach(ev=> document.addEventListener(ev, e=>{
+  if(!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+  e.preventDefault();
+  if(ev === 'drop') anexarArquivos(e.dataTransfer.files);
+}));
+texto.addEventListener('paste', e=>{
+  const fs = Array.from((e.clipboardData && e.clipboardData.files) || []);
+  if(fs.length){ e.preventDefault(); anexarArquivos(fs); }
+});
+
+/* ---------------- atalhos /comando ---------------- */
+const menuAtalhos = document.getElementById('atalhos-menu');
+let sugestoes = [], atalhoSel = 0;
+function fecharAtalhos(){ sugestoes = []; menuAtalhos.hidden = true; }
+function mostrarAtalhos(){
+  if(!window.YvakorAtalhos){ return; }
+  sugestoes = YvakorAtalhos.sugerir(texto.value, listaAtalhos, 8);
+  if(!sugestoes.length){ fecharAtalhos(); return; }
+  atalhoSel = Math.min(atalhoSel, sugestoes.length - 1);
+  menuAtalhos.innerHTML = '';
+  sugestoes.forEach((a, i)=>{
+    const it = document.createElement('div'); it.className = 'item' + (i === atalhoSel ? ' sel' : '');
+    const b = document.createElement('b'); b.textContent = '/' + a.comando;
+    const sp = document.createElement('span'); sp.textContent = a.nome;
+    it.append(b, sp);
+    it.onmousedown = ev=>{ ev.preventDefault(); escolherAtalho(a); };
+    menuAtalhos.appendChild(it);
+  });
+  menuAtalhos.hidden = false;
+}
+function escolherAtalho(a){
+  texto.value = '/' + a.comando + ' '; fecharAtalhos(); texto.focus();
+}
+texto.addEventListener('input', ()=>{ atalhoSel = 0; mostrarAtalhos(); });
+texto.addEventListener('keydown', e=>{
+  if(sugestoes.length){
+    if(e.key === 'ArrowDown' || e.key === 'ArrowUp'){
+      e.preventDefault();
+      atalhoSel = (atalhoSel + (e.key === 'ArrowDown' ? 1 : sugestoes.length - 1)) % sugestoes.length;
+      mostrarAtalhos(); return;
+    }
+    if(e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)){
+      e.preventDefault(); e.stopImmediatePropagation(); escolherAtalho(sugestoes[atalhoSel]); return;
+    }
+    if(e.key === 'Escape'){ fecharAtalhos(); return; }
+  }
+}, true);
+document.addEventListener('keydown', e=>{
+  if(e.key === 'Escape' && enviando && !sugestoes.length) pararTarefa();
+});
 
 /* ---------------- conversas (sessões) ---------------- */
 let conversaAtiva = localStorage.getItem('yvk-conversa') || null;
@@ -2418,6 +2581,33 @@ body.vazio #chips{display:flex; flex-wrap:wrap; justify-content:center; gap:8px;
   .painel{top:0; left:0; right:0; bottom:0; height:auto}
   #btn-abrir-lateral{top:12px; bottom:auto; left:130px}
 }
+
+/* anexos, atalhos e ações por mensagem */
+#anexos{display:none; width:min(768px, calc(100% - 36px)); margin:0 auto 6px; gap:6px; flex-wrap:wrap}
+#anexos:not(:empty){display:flex}
+.chip-anexo{display:inline-flex; align-items:center; gap:4px; font-size:12.5px; padding:4px 10px;
+  border-radius:999px; background:var(--usuario); color:var(--areia); border:1px solid var(--linha)}
+.chip-anexo button{background:none; border:none; color:inherit; cursor:pointer; opacity:.6; font-size:14px; padding:0 2px}
+.chip-anexo button:hover{opacity:1}
+.anexos-msg{display:flex; flex-wrap:wrap; gap:5px; margin-top:6px}
+#atalhos-menu{width:min(768px, calc(100% - 36px)); margin:0 auto 6px; background:var(--papel);
+  border:1px solid var(--linha-forte); border-radius:14px; box-shadow:0 10px 34px var(--sombra);
+  max-height:240px; overflow-y:auto; padding:5px}
+#atalhos-menu[hidden]{display:none}
+#atalhos-menu .item{display:flex; gap:10px; padding:7px 10px; border-radius:8px; cursor:pointer; font-size:13.5px}
+#atalhos-menu .item b{min-width:96px; font-weight:600}
+#atalhos-menu .item span{opacity:.65}
+#atalhos-menu .item.sel,#atalhos-menu .item:hover{background:rgba(var(--vel),.07)}
+.acoes-msg{display:flex; gap:2px; margin-top:6px; opacity:0; transition:opacity .15s}
+.msg:hover .acoes-msg,.msg:focus-within .acoes-msg{opacity:1}
+.msg.voce{position:relative}
+.msg.voce .acoes-msg{position:absolute; right:0; top:100%; margin-top:1px; z-index:2}
+.acoes-msg button{background:none; border:none; color:var(--areia); opacity:.55; cursor:pointer;
+  font-size:14px; padding:3px 7px; border-radius:7px; font-family:var(--fonte-texto)}
+.acoes-msg button:hover{opacity:1; background:rgba(var(--vel),.08)}
+.acoes-msg button.nota.on{opacity:1; background:rgba(var(--acento-rgb),.15)}
+.msg.yvakor:not(:last-child) .regen{display:none}
+#enviar.parando{background:var(--areia); color:var(--noite)}
 </style>
 <script>
 /* ====== tema Claude: claro/escuro, saudação e tela inicial ====== */

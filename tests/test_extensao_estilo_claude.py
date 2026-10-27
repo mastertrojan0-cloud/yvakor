@@ -640,3 +640,38 @@ def test_modo_auto_nao_deixa_pedido_de_navegador_no_atalho_do_modelo_local():
         assert not AgentLoop._INTENCAO_NAVEGADOR.search(frase), frase
     src = (ROOT / "yvakor" / "orchestrator.py").read_text(encoding="utf-8")
     assert "not (_acao_navegador and self.router.modo == \"auto\")" in src
+
+
+def test_feedback_e_atalhos_js_servidos_pela_interface_web(tmp_path):
+    if str(ROOT / "tests") not in sys.path:
+        sys.path.insert(0, str(ROOT / "tests"))
+    import test_seguranca_e_processos as base
+    S, srv, port = base._servidor()
+    raiz_antiga = S.ROOT
+    S.ROOT = tmp_path                       # a avaliação NÃO vai para data/ real
+    try:
+        corpo = {"nota": 5, "pergunta": "oi", "resposta": "olá"}
+        assert base._req(port, "POST", "/api/feedback", body=corpo)[0] == 403      # sem token
+        assert base._req(port, "POST", "/api/feedback", token=S.TOKEN,
+                         body={"nota": 3})[0] == 400                                # só 1 ou 5
+        assert base._req(port, "POST", "/api/feedback", token=S.TOKEN, body=corpo)[0] == 200
+        linhas = (tmp_path / "data" / "avaliacoes.jsonl").read_text(encoding="utf-8").splitlines()
+        reg = json.loads(linhas[0])
+        assert reg["nota"] == 5 and reg["origem"] == "usuario" and reg["pergunta"] == "oi"
+        S.ROOT = raiz_antiga
+        st, js = base._req(port, "GET", "/atalhos.js")
+        assert st == 200 and b"YvakorAtalhos" in js
+    finally:
+        S.ROOT = raiz_antiga
+        base._fechar(S, srv)
+
+
+def test_interface_web_tem_as_funcoes_do_claude():
+    html = (ROOT / "interface" / "index.html").read_text(encoding="utf-8")
+    for pedaco in ('src="/atalhos.js"', "async function pararTarefa", "function barraAcoes",
+                   "anexarArquivos", 'id="btn-anexo"', "/api/feedback", "/api/chat/cancelar",
+                   'id="atalhos-menu"', "attachments"):
+        assert pedaco in html, pedaco
+    assert "THREE.WebGLRenderer" not in html            # sem a cena 3D
+    sp = (EXT / "sidepanel.js").read_text(encoding="utf-8")
+    assert "function barraAcoes" in sp and "/api/feedback" in sp

@@ -712,6 +712,14 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(corpo)
             return
 
+        # Atalhos "/comando": o mesmo módulo da extensão, servido à interface web
+        if self.path.split("?")[0] == "/atalhos.js":
+            alvo = ROOT / "chrome-extension" / "atalhos.js"
+            if not alvo.is_file():
+                return self._json(404, {"error": "atalhos.js ausente"})
+            return self._send(200, alvo.read_bytes(),
+                              "application/javascript; charset=utf-8")
+
         # Fontes locais da interface (sem depender do Google Fonts)
         if self.path.startswith("/fonts/"):
             import mimetypes
@@ -1350,6 +1358,24 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, {"ok": True, **pol.info()})
 
             # Botão Parar: interrompe a execução da conversa (ou todas).
+            # Polegar para cima/baixo da interface: grava a nota do usuário
+            if self.path == "/api/feedback":
+                try:
+                    nota = int(data.get("nota"))
+                except (TypeError, ValueError):
+                    return self._json(400, {"error": "nota inválida"})
+                if nota not in (1, 5):
+                    return self._json(400, {"error": "nota deve ser 1 ou 5"})
+                reg = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "nota": nota,
+                       "origem": "usuario",
+                       "pergunta": str(data.get("pergunta") or "")[:600],
+                       "resposta": str(data.get("resposta") or "")[:1200]}
+                arq = ROOT / "data" / "avaliacoes.jsonl"
+                arq.parent.mkdir(parents=True, exist_ok=True)
+                with arq.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(reg, ensure_ascii=False) + "\n")
+                return self._json(200, {"ok": True})
+
             if self.path == "/api/chat/cancelar":
                 alvos = ag.cancelar(str(data.get("session") or "") or None)
                 return self._json(200, {"ok": True, "cancelados": alvos})
