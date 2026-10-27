@@ -703,3 +703,45 @@ def test_atalhos_python_espelham_os_do_javascript():
     assert atalhos.expandir("/usr/bin/python").get("nao_atalho")
     assert atalhos.expandir("oi").get("nao_atalho")
     assert "Informação adicional: foco" in atalhos.expandir("/resumir foco")["prompt"]
+
+
+def test_comando_entregue_a_conexao_morta_volta_para_a_fila_e_resultado_espalhado_chega():
+    """Regressões achadas com a extensão REAL no Chromium."""
+    import http.client
+    import json as _json
+    import threading as _t
+    import time as _time
+    from yvakor.extensao_bridge import PonteExtensao
+    ponte = PonteExtensao()
+    saida = {}
+    _t.Thread(target=lambda: saida.update(r=ponte.comando("snapshot", {}, espera=5)), daemon=True).start()
+    _time.sleep(0.2)
+    entregues = ponte.pendentes(espera=1)
+    assert len(entregues) == 1 and ponte.pendentes() == []             # entregue uma vez
+    assert ponte.devolver([entregues[0]["id"]]) == 1                    # socket morto: volta para a fila
+    de_novo = ponte.pendentes(espera=1)
+    assert [c["id"] for c in de_novo] == [entregues[0]["id"]]           # e é entregue ao próximo poll
+    assert ponte.devolver(["nao-existe"]) == 0
+    ponte.resultado(de_novo[0]["id"], True, "", 7, "Título", {"elementos": [{"ref": "e1"}]})
+    _time.sleep(0.2)
+    assert saida["r"]["elementos"] == [{"ref": "e1"}]
+
+    # o servidor aceita o conteúdo espalhado no corpo ({id, ok, erro, ...dados}), como a extensão manda
+    from yvakor.extensao_bridge import PONTE
+    if str(ROOT / "tests") not in sys.path:
+        sys.path.insert(0, str(ROOT / "tests"))
+    import test_seguranca_e_processos as base
+    S, srv, port = base._servidor()
+    try:
+        res = {}
+        _t.Thread(target=lambda: res.update(r=PONTE.comando("snapshot", {}, espera=5)), daemon=True).start()
+        _time.sleep(0.3)
+        cmd = PONTE.pendentes(espera=2)[0]
+        st, _ = base._req(port, "POST", "/api/ext/resultado", token=S.TOKEN, body={
+            "id": cmd["id"], "ok": True, "erro": "", "tab_id": 3, "titulo": "T",
+            "elementos": [{"ref": "e1"}], "texto": "olá", "imagem_b64": "AAAA"})
+        _time.sleep(0.3)
+        assert st == 200 and res["r"]["elementos"] == [{"ref": "e1"}] and res["r"]["texto"] == "olá"
+        assert res["r"]["tab_id"] == 3 and res["r"]["titulo"] == "T"
+    finally:
+        base._fechar(S, srv)

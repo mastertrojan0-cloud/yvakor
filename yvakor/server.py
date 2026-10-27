@@ -546,7 +546,7 @@ class Handler(BaseHTTPRequestHandler):
                             b"Content-Length: " + str(len(jpg)).encode()
                             + b"\r\n\r\n" + jpg + b"\r\n")
                         self.wfile.flush()
-                    except (BrokenPipeError, ConnectionResetError):
+                    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                         return
                 if len(buffer) > 4_000_000:
                     buffer = buffer[-1_000_000:]
@@ -589,7 +589,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             return self._do_get()
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             return
         except Exception as exc:
             self._erro_interno("GET", exc)
@@ -1077,8 +1077,15 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 espera = 0.0
             PONTE.ping()   # a própria consulta prova que a extensão está viva
-            return self._json(200, {"ok": True,
-                                    "comandos": PONTE.pendentes(tipo, espera)})
+            comandos = PONTE.pendentes(tipo, espera)
+            try:
+                return self._json(200, {"ok": True, "comandos": comandos})
+            except OSError:
+                # Quem consultava (service worker do MV3 que dormiu/reiniciou, painel fechado)
+                # já tinha ido embora: o comando entregue a esse socket MORTO se perdia e o
+                # agente esperava 45 s por "a extensão não respondeu". Devolve à fila.
+                PONTE.devolver([c["id"] for c in comandos])
+                raise
         if self.path == "/api/ext/status":
             from yvakor.extensao_bridge import PONTE
             return self._json(200, {"ok": True, **PONTE.status()})
@@ -1190,7 +1197,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             return self._do_post()
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             return
         except Exception as exc:
             self._erro_interno("POST", exc)
@@ -1682,12 +1689,20 @@ class Handler(BaseHTTPRequestHandler):
 
             if self.path == "/api/ext/resultado":
                 from yvakor.extensao_bridge import PONTE
+                # A extensão manda o conteúdo (elementos, texto, imagem, abas, precisa_confirmar…)
+                # ESPALHADO no corpo ({id, ok, erro, ...dados}); só `dados` aninhado era lido,
+                # então o agente ficava cego: sem elementos, sem texto, sem captura e sem as
+                # perguntas de permissão. Aceita os dois formatos.
+                dados = dict(data.get("dados") or {})
+                for k, v in data.items():
+                    if k not in ("id", "ok", "erro", "tab_id", "titulo", "dados"):
+                        dados.setdefault(k, v)
                 PONTE.resultado(str(data.get("id") or ""),
                                 bool(data.get("ok", False)),
                                 str(data.get("erro") or ""),
                                 data.get("tab_id"),
                                 str(data.get("titulo") or ""),
-                                data.get("dados") or {})
+                                dados)
                 return self._json(200, {"ok": True})
 
             if self.path == "/api/voz/audio":

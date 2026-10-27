@@ -136,6 +136,18 @@ class PonteExtensao:
                                      "via": "extensao", **(dados or {})}
         ev.set()
 
+    def devolver(self, ids: list[str]) -> int:
+        """Põe de volta na fila comandos entregues a uma conexão que já tinha caído."""
+        n = 0
+        with self._cond:
+            for cid in ids:
+                c = self._comandos.get(cid)
+                if c is not None and c.pop("_entregue", None):
+                    n += 1
+            if n:
+                self._cond.notify_all()
+        return n
+
     def cancelar_pendentes(self, motivo: str = "cancelado pelo usuário") -> int:
         """Aborta TODOS os comandos em espera (botão Parar): quem aguarda em
         comando() acorda na hora com erro, em vez de esperar até 45s."""
