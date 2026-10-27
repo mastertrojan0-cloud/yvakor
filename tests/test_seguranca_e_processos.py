@@ -614,3 +614,20 @@ if __name__ == "__main__":
         if nome.startswith("test_") and callable(fn):
             fn()
             print("ok", nome)
+
+
+def test_json_de_ferramenta_nao_vaza_na_resposta_final():
+    from yvakor.agent import _extrair_resposta_final
+    bruto = ('Vou tentar outra coisa.\n\n{"acao": "usar_ferramenta", "ferramenta": '
+             '"pesquisa_web", "args": {"limite": 5}}\n\nNão consegui o resultado.')
+    r = _extrair_resposta_final(bruto)
+    assert "usar_ferramenta" not in r and "pesquisa_web" not in r
+    assert "Vou tentar outra coisa." in r and "Não consegui o resultado." in r
+    assert "\n\n\n" not in r
+    # JSON legítimo da resposta (sem 'acao') é preservado
+    assert '{"a": 1}' in _extrair_resposta_final('Veja: {"a": 1} ok')
+    # só protocolo → devolve o original (melhor que resposta vazia)
+    so = '{"acao":"usar_ferramenta","ferramenta":"x","args":{}}'
+    assert _extrair_resposta_final(so) == so
+    # formato responder continua extraindo o texto
+    assert _extrair_resposta_final('{"acao":"responder","texto":"oi"}') == "oi"

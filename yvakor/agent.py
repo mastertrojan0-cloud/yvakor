@@ -212,7 +212,34 @@ def _extrair_resposta_final(raw: str) -> str:
                 val = obj.get(chave)
                 if isinstance(val, str) and val.strip():
                     return val.strip()
-    return raw
+    return _sem_json_de_ferramenta(raw)
+
+
+def _sem_json_de_ferramenta(texto: str) -> str:
+    """Tira do texto final os blocos JSON de chamada de ferramenta que o modelo
+    deixou escapar no meio da prosa ({"acao":"usar_ferramenta",...}): são
+    protocolo interno, não resposta. Se só sobrar isso, devolve o original."""
+    dec = json.JSONDecoder()
+    saida, i = [], 0
+    while True:
+        j = texto.find("{", i)
+        if j < 0:
+            saida.append(texto[i:])
+            break
+        try:
+            obj, fim = dec.raw_decode(texto[j:])
+        except Exception:
+            saida.append(texto[i:j + 1])
+            i = j + 1
+            continue
+        if isinstance(obj, dict) and (
+                "acao" in obj or ("ferramenta" in obj and "args" in obj)):
+            saida.append(texto[i:j])
+        else:
+            saida.append(texto[i:j + fim])
+        i = j + fim
+    limpo = re.sub(r"\n{3,}", "\n\n", "".join(saida)).strip()
+    return limpo or texto
 
 
 def _parse_acao(raw: str, registry=None) -> dict | None:
