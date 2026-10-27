@@ -3614,6 +3614,11 @@ class App:
                 self._hist.append(("assistant", resposta))
             for a in artefatos:
                 self._adicionar_artefato(a)
+            passos = [str(x) for x in (j.get("passos") or []) if x]
+            if passos:                       # o que o agente fez para chegar nessa resposta
+                resumo = " › ".join(x[:46] for x in passos[:8])
+                self.chat.add("system", f"⚙ {len(passos)} passo(s): {resumo}"
+                                        + (" …" if len(passos) > 8 else ""), animar=False)
             self.set_status("pronto", OK)
         else:
             self.set_status("resposta pronta em outra conversa", GOLD)

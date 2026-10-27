@@ -325,6 +325,15 @@ def get_agent() -> Orchestrator:
         return _agent
 
 
+def _passos_da_resposta(ag, sid) -> list[str]:
+    """Ferramentas/etapas usadas nesta resposta (para a interface mostrar o que foi feito)."""
+    try:
+        passos = list(ag.get_progress(sid).get("steps") or [])
+    except Exception:
+        return []
+    return [str(p)[:90] for p in passos if str(p).strip()][-20:]
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code: int, body: bytes, ctype: str):
         self.send_response(code)
@@ -1342,6 +1351,7 @@ class Handler(BaseHTTPRequestHandler):
                                         "session": sid_chat,
                                         "private": privado,
                                         "attachments": anexos,
+                                        "passos": _passos_da_resposta(ag, sid_chat),
                                         "artefatos": getattr(
                                             ag, "ultimos_artefatos", [])})
 
@@ -1394,7 +1404,14 @@ class Handler(BaseHTTPRequestHandler):
                 arq.parent.mkdir(parents=True, exist_ok=True)
                 with arq.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(reg, ensure_ascii=False) + "\n")
-                return self._json(200, {"ok": True})
+                efeito = {}
+                try:   # a nota corrige o aprendizado do roteador e limpa respostas ruins do cache
+                    o = getattr(ag.router, "otim", None)
+                    if o is not None:
+                        efeito = o.feedback(reg["resposta"], nota)
+                except Exception:
+                    efeito = {}
+                return self._json(200, {"ok": True, "aprendizado": efeito})
 
             # Roda agora a rotina dos bancos: WAL, backup (forçado), logs, capturas
             if self.path == "/api/banco":

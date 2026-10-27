@@ -289,6 +289,10 @@ def avaliar(resposta: str, tarefa: str = "", finish: str | None = None,
 # --------------------------------------------------------------------------- #
 # Banco (livro-razão + cache + estatísticas do bandit)
 # --------------------------------------------------------------------------- #
+def hash_resposta(resposta: str) -> str:
+    return hashlib.sha1((resposta or "").strip()[:1200].encode("utf-8")).hexdigest()[:16]
+
+
 class Livro:
     def __init__(self, caminho: Path):
         from yvakor.memory.db import conectar
@@ -303,7 +307,8 @@ class Livro:
                     tok_in INTEGER DEFAULT 0, tok_out INTEGER DEFAULT 0,
                     tok_cache INTEGER DEFAULT 0, custo REAL DEFAULT 0,
                     ms REAL DEFAULT 0, qualidade REAL DEFAULT 1, ok INTEGER DEFAULT 1,
-                    economia_tok INTEGER DEFAULT 0, faixa INTEGER DEFAULT 0, detalhe TEXT DEFAULT '');
+                    economia_tok INTEGER DEFAULT 0, faixa INTEGER DEFAULT 0, detalhe TEXT DEFAULT '',
+                    resp_hash TEXT DEFAULT '');
                 CREATE INDEX IF NOT EXISTS idx_uso_ts ON uso(ts);
                 CREATE INDEX IF NOT EXISTS idx_uso_prov ON uso(provedor, tarefa);
                 CREATE TABLE IF NOT EXISTS cache (
@@ -312,6 +317,10 @@ class Livro:
                     sistema TEXT, assinatura TEXT, hits INTEGER DEFAULT 0);
                 CREATE INDEX IF NOT EXISTS idx_cache_sig ON cache(tarefa, sistema);
             """)
+            cols = {r[1] for r in self.conn.execute("PRAGMA table_info(uso)")}
+            if "resp_hash" not in cols:                       # bancos criados antes do feedback
+                self.conn.execute("ALTER TABLE uso ADD COLUMN resp_hash TEXT DEFAULT ''")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_uso_hash ON uso(resp_hash)")
             self.conn.execute("DELETE FROM uso WHERE ts < ?", (time.time() - 120 * 86400,))
             self.conn.execute("DELETE FROM cache WHERE ts + ttl < ?", (time.time(),))
 
@@ -321,13 +330,13 @@ class Livro:
             with self._lock, self.conn:
                 self.conn.execute(
                     "INSERT INTO uso (ts, provedor, modelo, tarefa, origem, tok_in, tok_out, tok_cache,"
-                    " custo, ms, qualidade, ok, economia_tok, faixa, detalhe) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " custo, ms, qualidade, ok, economia_tok, faixa, detalhe, resp_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (time.time(), k.get("provedor", ""), k.get("modelo", ""), k.get("tarefa", ""),
                      k.get("origem", "api"), int(k.get("tok_in", 0)), int(k.get("tok_out", 0)),
                      int(k.get("tok_cache", 0)), float(k.get("custo", 0)), float(k.get("ms", 0)),
                      float(k.get("qualidade", 1)), 1 if k.get("ok", True) else 0,
                      int(k.get("economia_tok", 0)), int(k.get("faixa", 0)),
-                     str(k.get("detalhe", ""))[:200]))
+                     str(k.get("detalhe", ""))[:200], k.get("resp_hash", "")))
         except sqlite3.DatabaseError:
             pass
 
@@ -403,6 +412,21 @@ class Livro:
             return (r[0] / (r[1] / 1000)) if r and r[0] and r[1] else None
         except sqlite3.DatabaseError:
             return None
+
+    def feedback(self, resposta: str, nota: int) -> dict:
+        """👍/👎 do usuário: corrige a qualidade registrada daquela resposta (alimenta o bandit) e,
+        se foi ruim, apaga a resposta do cache para ela não ser servida de novo."""
+        h = hash_resposta(resposta)
+        q, ok = (1.0, 1) if nota >= 4 else (0.0, 0)
+        try:
+            with self._lock, self.conn:
+                n = self.conn.execute("UPDATE uso SET qualidade=?, ok=? WHERE resp_hash=?", (q, ok, h)).rowcount
+                m = 0
+                if nota <= 2:
+                    m = self.conn.execute("DELETE FROM cache WHERE substr(trim(resposta),1,1200)=?", ((resposta or "").strip()[:1200],)).rowcount
+            return {"atualizadas": n, "cache_removido": m}
+        except sqlite3.DatabaseError:
+            return {"atualizadas": 0, "cache_removido": 0}
 
     # ---- cache ----
     def cache_get(self, chave: str) -> dict | None:
@@ -743,7 +767,8 @@ class Otimizador:
         self.livro.registrar(provedor=p.name, modelo=getattr(p, "model", ""), tarefa=plano.tarefa,
                              origem="api", tok_in=tok_in, tok_out=tok_out, tok_cache=tok_cache,
                              custo=custo, ms=ms, qualidade=q, ok=ok, economia_tok=eco,
-                             faixa=plano.faixa, detalhe=detalhe or plano.motivo)
+                             faixa=plano.faixa, detalhe=detalhe or plano.motivo,
+                             resp_hash=hash_resposta(resposta) if resposta else "")
         self._zona_cache = (0.0, self._zona_cache[1])
         return {"tok_in": tok_in, "tok_out": tok_out, "custo": custo}
 
@@ -751,6 +776,9 @@ class Otimizador:
         self.livro.registrar(provedor="cache", tarefa=plano.tarefa, origem="cache",
                              economia_tok=int(hit.get("tok_in", 0)) + int(hit.get("tok_out", 0)),
                              faixa=plano.faixa, detalhe=hit.get("tipo", ""))
+
+    def feedback(self, resposta: str, nota: int) -> dict:
+        return self.livro.feedback(resposta, nota)
 
     # ---------------- relatório ----------------
     def relatorio(self, dias: int = 7) -> dict:

@@ -534,3 +534,69 @@ def test_ferramenta_mercado_registrada_e_oferecida_ao_modelo():
     assert "mercado_analisar" in reg.tools
     escolhidas = selecionar(reg, "analise do btc com graficos e analise stocktwits")
     assert "mercado_analisar" in escolhidas[:3]
+
+
+# --------------------------------------------------------------------------- #
+# polegar do usuário ensina o roteador; pesquisa melhor; passos na resposta
+# --------------------------------------------------------------------------- #
+def test_polegar_para_baixo_derruba_a_qualidade_e_apaga_do_cache():
+    local, nuvem = Falso("ollama", [BOA]), Falso("deepseek", [BOA])
+    r = _router(local, nuvem)
+    m = _msgs("Explique o que é um índice de banco de dados.")
+    r.complete_messages("resposta_simples", m)
+    assert r.complete_messages("resposta_simples", m) == BOA and len(local.chamadas) == 1     # veio do cache
+    efeito = r.otim.feedback(BOA, 1)                                                           # 👎
+    assert efeito["atualizadas"] >= 1 and efeito["cache_removido"] == 1
+    r.complete_messages("resposta_simples", m)
+    assert len(local.chamadas) + len(nuvem.chamadas) == 2                                       # recalculou: a ruim saiu do cache
+    s, f = r.otim.livro.placar("ollama", r.otim.faixa(E.complexidade(m, "resposta_simples")))
+    assert f >= 1                                                                              # e o bandit contou a falha
+    assert r.otim.feedback(BOA, 5)["cache_removido"] == 0                                      # 👍 só reforça
+
+
+def test_endpoint_feedback_ensina_o_otimizador(tmp_path, monkeypatch):
+    import sys
+    from pathlib import Path
+    raiz = Path(__file__).resolve().parent.parent
+    if str(raiz / "tests") not in sys.path:
+        sys.path.insert(0, str(raiz / "tests"))
+    import test_seguranca_e_processos as base
+    r = _router(Falso("ollama", [BOA]), Falso("deepseek", [BOA]))
+    r.complete_messages("resposta_simples", _msgs("Explique recursão em uma frase."))
+    S, srv, port = base._servidor(base._AgenteFalso(r))
+    monkeypatch.setattr(S, "ROOT", tmp_path)
+    try:
+        st, corpo = base._req(port, "POST", "/api/feedback", token=S.TOKEN,
+                              body={"nota": 1, "pergunta": "p", "resposta": BOA})
+        assert st == 200 and json.loads(corpo)["aprendizado"]["atualizadas"] >= 1
+    finally:
+        base._fechar(S, srv)
+
+
+def test_pesquisa_limpa_pedido_filtra_lixo_e_usa_fontes_certas(monkeypatch):
+    from yvakor import pesquisa as P
+    assert P.limpar_consulta("pesquise sobre as últimas notícias do bitcoin") == "as últimas notícias do bitcoin"
+    assert P.limpar_consulta("me diga como instalar docker") == "como instalar docker"
+    lixo = [{"titulo": "Baixar Google Chrome", "url": "https://x.com/chrome"},
+            {"titulo": "Docker no Windows: guia", "url": "https://x.com/docker-windows"}]
+    monkeypatch.setattr(P, "_buscar_motores", lambda q, n=8: list(lixo))
+    monkeypatch.setattr(P, "buscar_stackoverflow", lambda q, n=4: [{"titulo": "Erro docker", "url": "https://so/1", "fonte": "stackoverflow"}])
+    monkeypatch.setattr(P, "buscar_brave", lambda q, n=8: [])
+    achados = P.buscar("como instalar docker no windows", 5)
+    urls = [a["url"] for a in achados]
+    assert "https://x.com/chrome" not in urls and "https://x.com/docker-windows" in urls and "https://so/1" in urls
+    # dicionário só aparece em pedido de definição
+    dic = [{"titulo": "recursão significado", "url": "https://www.dicio.com.br/recursao/"},
+           {"titulo": "Recursão em programação", "url": "https://x.com/recursao"}]
+    assert P.reordenar(dic, "explique recursão em programação")[0]["url"] == "https://x.com/recursao"
+    assert P.reordenar(dic, "qual o significado de recursão")[0]["url"].endswith("dicio.com.br/recursao/")
+
+
+def test_pesquisa_web_sem_resultado_relevante_orienta_o_agente(monkeypatch):
+    from yvakor import pesquisa as P
+    from yvakor.tools.registry import ToolRegistry
+    monkeypatch.setattr(P, "buscar", lambda q, n=8: [])
+    reg = ToolRegistry(load_settings())
+    P.registrar_ferramentas(reg, router=None)
+    r = reg.run("pesquisa_web", pergunta="algo")
+    assert r["ok"] and r["resultados"] == [] and "BRAVE_API_KEY" in r["aviso"] and "navegador_pesquisar" in r["aviso"]

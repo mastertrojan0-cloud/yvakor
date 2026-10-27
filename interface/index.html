@@ -1315,6 +1315,9 @@ async function mandar(forcado){
     if(j.session) conversaAtiva = j.session;
     clearInterval(poll); removerPensando();
     add('yvakor','yvakor', j.answer || j.error || 'sem resposta', j.artefatos);
+    if(j.passos && j.passos.length){   // o que foi feito para chegar nesta resposta
+      add('sistema', null, '⚙ ' + j.passos.length + ' passo(s): ' + j.passos.slice(0,8).map(function(x){return x.slice(0,46);}).join(' › ') + (j.passos.length>8?' …':''));
+    }
     if(falarRespostas) falar(j.answer || '');
     carregarConversas();   // atualiza título/contagem
   }catch(e){
