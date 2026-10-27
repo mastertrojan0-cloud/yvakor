@@ -141,3 +141,253 @@ def test_painel_e_background_tem_o_fluxo_do_botao_parar():
     assert 'msg.tipo === "parar"' in bg and "/api/chat/cancelar" in bg
     assert "function bannerNaPagina" in bg and "indicadorLigar(t.id)" in bg
     assert "YVAKOR está controlando esta aba" in bg
+
+
+# --------------------------------------------------------------------------- #
+# Etapa B — permissões por site e ações sensíveis
+# --------------------------------------------------------------------------- #
+def _politica():
+    import tempfile
+    from yvakor.extensao_politica import PoliticaSites
+    d = Path(tempfile.mkdtemp())
+    return PoliticaSites(d / "s.json", d / "prefs.json")
+
+
+def test_politica_hosts_subdominios_e_persistencia():
+    from yvakor.extensao_politica import PoliticaSites, host_de
+    assert host_de("https://www.Loja.com.br:8443/x?y=1") == "loja.com.br"
+    assert host_de("") == ""
+    p = _politica()
+    assert p.modo == "perguntar"                       # padrão: pede por site
+    assert not p.permitido("loja.com")
+    p.permitir("https://www.loja.com/x")
+    assert p.permitido("loja.com") and p.permitido("pay.loja.com")
+    assert not p.permitido("lojax.com")                # domínio parecido não herda
+    assert PoliticaSites(p.arquivo, p.prefs).permitido("loja.com")      # persistiu
+    p.bloquear("temp.com", so_nesta_sessao=True)
+    assert p.bloqueado("temp.com")
+    assert not PoliticaSites(p.arquivo, p.prefs).bloqueado("temp.com")  # só a sessão
+    assert p.remover("loja.com") and not p.permitido("loja.com")
+    try:
+        p.definir_modo("xyz")
+        assert False, "modo inválido deveria ser rejeitado"
+    except ValueError:
+        pass
+
+
+def test_navegar_site_novo_pergunta_buscador_livre_banco_sempre_pergunta():
+    p = _politica()
+    assert p.precisa_perguntar_navegacao("https://www.google.com/search?q=x") is None
+    assert p.precisa_perguntar_navegacao("https://loja.com/a") == "loja.com"
+    p.definir_modo("autonomo")
+    assert p.precisa_perguntar_navegacao("https://blog.com") is None
+    assert p.precisa_perguntar_navegacao("https://www.nubank.com.br") == "nubank.com.br"
+    p.permitir("nubank.com.br")                        # depois de permitir, não pergunta
+    assert p.precisa_perguntar_navegacao("https://www.nubank.com.br") is None
+
+
+class _PonteScript:
+    """PONTE.comando falso: devolve as respostas na ordem e guarda o que recebeu."""
+
+    def __init__(self, *respostas):
+        self.respostas = list(respostas)
+        self.chamadas = []
+
+    def __call__(self, tipo, args=None, espera=45.0):
+        self.chamadas.append((tipo, dict(args or {})))
+        return self.respostas.pop(0) if self.respostas else {"ok": True}
+
+
+def _eu_com_politica():
+    import types
+    from yvakor.orchestrator import Orchestrator
+    if str(ROOT / "tests") not in sys.path:
+        sys.path.insert(0, str(ROOT / "tests"))
+    from test_extensao_acoes import _orquestrador_falso
+    eu, pw = _orquestrador_falso()
+    eu.politica_sites = _politica()
+    for nome in ("_confirmar_extensao", "_permitir_navegacao"):
+        setattr(eu, nome, types.MethodType(getattr(Orchestrator, nome), eu))
+    return eu, pw
+
+
+def _com_confirmador(resposta, perguntas):
+    import yvakor.tools.guard as G
+
+    def fn(acao, detalhe):
+        perguntas.append((acao, detalhe))
+        return resposta
+    G.set_thread_confirmer(fn)
+
+
+def test_site_novo_aprovado_e_salvo_e_o_comando_e_reenviado_com_a_flag():
+    import yvakor.tools.guard as G
+    from yvakor.extensao_bridge import PONTE
+    from unittest import mock
+    eu, pw = _eu_com_politica()
+    ponte = _PonteScript({"ok": False, "precisa_confirmar": {"tipo": "site", "host": "loja.com"}},
+                         {"ok": True, "url": "https://loja.com"})
+    perguntas = []
+    _com_confirmador(True, perguntas)
+    try:
+        with mock.patch.object(PONTE, "comando", ponte):
+            r = eu.tools.run("navegador_clicar", alvo="e1")
+    finally:
+        G.clear_thread_confirmer()
+    assert r["ok"] is True and len(ponte.chamadas) == 2
+    primeira, segunda = ponte.chamadas[0][1], ponte.chamadas[1][1]
+    assert primeira["politica"]["modo"] == "perguntar" and "confirmado_site" not in primeira
+    assert segunda["confirmado_site"] is True
+    assert "loja.com" in segunda["politica"]["permitidos"]      # política atualizada
+    assert "Permitir que o YVAKOR aja em loja.com" in perguntas[0][0]
+    assert eu.politica_sites.permitido("loja.com")              # ficou salvo
+
+
+def test_site_negado_nao_age_e_vale_so_ate_reiniciar():
+    import yvakor.tools.guard as G
+    from yvakor.extensao_bridge import PONTE
+    from unittest import mock
+    eu, pw = _eu_com_politica()
+    ponte = _PonteScript({"ok": False, "precisa_confirmar": {"tipo": "site", "host": "spam.com"}})
+    _com_confirmador(False, [])
+    try:
+        with mock.patch.object(PONTE, "comando", ponte):
+            r = eu.tools.run("navegador_clicar", alvo="e1")
+    finally:
+        G.clear_thread_confirmer()
+    assert r["ok"] is False and r.get("negado") is True and "não permitiu" in r["erro"]
+    assert len(ponte.chamadas) == 1                              # não reenviou
+    assert eu.politica_sites.bloqueado("spam.com") and not eu.politica_sites._dados["bloqueados"]
+
+
+def test_sem_confirmador_na_duvida_nao_age():
+    import yvakor.tools.guard as G
+    from yvakor.extensao_bridge import PONTE
+    from unittest import mock
+    G.clear_thread_confirmer()
+    eu, pw = _eu_com_politica()
+    ponte = _PonteScript({"ok": False, "precisa_confirmar": {
+        "tipo": "acao", "host": "loja.com", "descricao": "Clicar em «Comprar agora»",
+        "motivo": "ação irreversível ou com custo"}})
+    with mock.patch.object(PONTE, "comando", ponte):
+        r = eu.tools.run("navegador_clicar", alvo="e1")
+    assert r["ok"] is False and len(ponte.chamadas) == 1
+
+
+def test_acao_sensivel_mostra_a_descricao_e_so_age_depois_de_aprovada():
+    import yvakor.tools.guard as G
+    from yvakor.extensao_bridge import PONTE
+    from unittest import mock
+    eu, pw = _eu_com_politica()
+    eu.politica_sites.permitir("loja.com")
+    ponte = _PonteScript({"ok": False, "precisa_confirmar": {
+        "tipo": "acao", "host": "loja.com", "descricao": "Clicar em «Comprar agora»",
+        "motivo": "ação irreversível ou com custo"}}, {"ok": True})
+    perguntas = []
+    _com_confirmador(True, perguntas)
+    try:
+        with mock.patch.object(PONTE, "comando", ponte):
+            r = eu.tools.run("navegador_clicar", alvo="e1")
+    finally:
+        G.clear_thread_confirmer()
+    assert r["ok"] is True
+    assert perguntas[0][0] == "Clicar em «Comprar agora»"
+    assert "loja.com" in perguntas[0][1] and "irreversível" in perguntas[0][1]
+    assert ponte.chamadas[1][1]["confirmado_acao"] is True
+
+
+def test_navegar_para_site_novo_pede_permissao_antes_de_enviar_o_comando():
+    import yvakor.tools.guard as G
+    from yvakor.extensao_bridge import PONTE
+    from unittest import mock
+    eu, pw = _eu_com_politica()
+    ponte = _PonteScript()
+    perguntas = []
+    _com_confirmador(False, perguntas)
+    try:
+        with mock.patch.object(PONTE, "comando", ponte):
+            r = eu.tools.run("navegador_ir", url="https://loja.com/produto")
+            assert r["ok"] is False and ponte.chamadas == []     # negado: nada enviado
+            eu.politica_sites.remover("loja.com")                # esquece o "negar da sessão"
+            eu.politica_sites._bloqueados_sessao.clear()
+            _com_confirmador(True, perguntas)
+            r = eu.tools.run("navegador_ir", url="https://loja.com/produto")
+            assert r["ok"] is True and len(ponte.chamadas) == 1
+            r = eu.tools.run("navegador_ir", url="https://loja.com/outra")   # já permitido
+            assert len(ponte.chamadas) == 2 and len(perguntas) == 2
+            eu.tools.run("navegador_pesquisar", termo="gatos")               # buscador: livre
+            assert len(perguntas) == 2
+    finally:
+        G.clear_thread_confirmer()
+
+
+def test_politica_so_vai_junto_em_acoes_com_efeito():
+    from yvakor.extensao_bridge import PONTE
+    from unittest import mock
+    eu, pw = _eu_com_politica()
+    ponte = _PonteScript()
+    with mock.patch.object(PONTE, "comando", ponte):
+        eu.tools.run("navegador_ver")
+        eu.tools.run("navegador_extrair", seletor="#x")
+        eu.tools.run("navegador_digitar", alvo="e1", texto="oi")
+    assert "politica" not in ponte.chamadas[0][1] and "politica" not in ponte.chamadas[1][1]
+    assert "politica" in ponte.chamadas[2][1]
+
+
+def test_endpoint_politica_get_post_com_token_e_validacao():
+    import yvakor.server as S
+    pol = _politica()
+    agente = SimpleNamespace(politica_sites=pol)
+    original = S.get_agent
+    S.get_agent = lambda: agente
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), S.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    def req(metodo, token=None, corpo=None):
+        c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=5)
+        h = {"Host": "127.0.0.1:7777", "Content-Type": "application/json"}
+        if token:
+            h["X-YVAKOR-Token"] = token
+        c.request(metodo, "/api/extensao/politica",
+                  body=json.dumps(corpo) if corpo is not None else None, headers=h)
+        r = c.getresponse()
+        return r.status, json.loads(r.read() or b"{}")
+    try:
+        st, j = req("GET")
+        assert st == 200 and j["modo"] == "perguntar"
+        assert [m["id"] for m in j["modos"]] == ["perguntar", "autonomo"]
+        assert req("POST", None, {"modo": "autonomo"})[0] == 403 and pol.modo == "perguntar"
+        assert req("POST", S.TOKEN, {"modo": "autonomo"})[0] == 200 and pol.modo == "autonomo"
+        assert req("POST", S.TOKEN, {"modo": "xyz"})[0] == 400
+        st, j = req("POST", S.TOKEN, {"permitir": "https://www.exemplo.com/a"})
+        assert st == 200 and j["permitidos"] == ["exemplo.com"]
+        st, j = req("POST", S.TOKEN, {"remover": "exemplo.com"})
+        assert st == 200 and j["permitidos"] == []
+    finally:
+        srv.shutdown()
+        S.get_agent = original
+
+
+def test_decisao_de_permissoes_do_background_no_node():
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        import pytest
+        pytest.skip("node não instalado")
+    r = subprocess.run([node, str(ROOT / "tests" / "extensao" / "politica_background.js")],
+                       capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", timeout=60)
+    assert r.returncode == 0, r.stderr[:400]
+    casos = json.loads(r.stdout)["casos"]
+    assert len(casos) >= 13
+    assert [c["nome"] for c in casos if not c["ok"]] == []
+
+
+def test_painel_tem_a_ui_de_permissoes():
+    painel = (EXT / "sidepanel.js").read_text(encoding="utf-8")
+    assert "/api/extensao/politica" in painel and "carregarPolitica" in painel
+    html = (EXT / "sidepanel.html").read_text(encoding="utf-8")
+    assert 'id="modo-acao"' in html and 'id="sites-lista"' in html
+    pagina = (EXT / "pagina.js").read_text(encoding="utf-8")
+    assert "descrever_acao" in pagina.split("window.__yvakorAcoes =")[-1]

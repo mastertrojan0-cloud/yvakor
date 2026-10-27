@@ -115,5 +115,33 @@ async function rodarTestes() {
   t("extrair devolve texto e links", r.ok && r.texto.length > 10 && r.links.some((l) => l.texto.includes("âncora")),
     r.links && r.links.length + " links");
 
+  // ---- permissões: pré-visualização das ações (SEM efeito) e o que é sensível ----
+  const D = (o) => A.descrever_acao(o);
+  const antes = { cliques: $("cliques").textContent, nome: $("nome").value, busca: $("r-busca").textContent };
+  let d = D({ acao: "clicar", alvo: "Comprar agora" });
+  t("sensível: clicar em 'Comprar agora'", d.sensivel === true && d.descricao.includes("«Comprar agora»"), d.descricao);
+  d = D({ acao: "clicar", alvo: "Clique aqui" });
+  t("clique comum NÃO é sensível", d.sensivel === false && d.descricao.includes("Clique aqui"), d.descricao);
+  d = D({ acao: "clicar", alvo: "#entrar" });
+  t("sensível: enviar formulário com senha", d.sensivel === true && /senha/.test(d.motivo), d.motivo);
+  d = D({ acao: "escrever", alvo: "#login-senha", texto: "MinhaSenhaSecreta1" });
+  t("sensível: digitar em campo de senha, sem ecoar o valor",
+    d.sensivel === true && !d.descricao.includes("MinhaSenhaSecreta1") && /oculto/.test(d.descricao), d.descricao);
+  d = D({ acao: "escrever", alvo: "#nome", texto: "Antonio" });
+  t("digitar texto comum NÃO é sensível e mostra o que digita", d.sensivel === false && d.descricao.includes("«Antonio»"), d.descricao);
+  t("o campo é nomeado pelo rótulo/placeholder, não pelo valor atual", d.descricao.includes("em «Seu nome»"), d.descricao);
+  d = D({ acao: "escrever", alvo: "#q", texto: "gatos", enviar: true });
+  t("buscar e enviar NÃO é sensível", d.sensivel === false && /e enviar/.test(d.descricao), d.descricao);
+  d = D({ acao: "pressionar", tecla: "Enter", alvo: "#usuario" });
+  t("sensível: Enter num formulário com senha", d.sensivel === true, d.descricao);
+  d = D({ acao: "selecionar", alvo: "#pais", valor: "Portugal" });
+  t("selecionar descreve a escolha", d.sensivel === false && d.descricao.includes("«Portugal»"), d.descricao);
+  t("a lista é nomeada pelo nome, não pelo texto de todas as opções", d.descricao.includes("em «pais»"), d.descricao);
+  d = D({ acao: "clicar", alvo: "elemento-que-nao-existe" });
+  t("alvo inexistente: avisa que a ação vai falhar", /não encontrado/.test(d.descricao), d.descricao);
+  t("a pré-visualização NÃO tem efeito (nada clicado, digitado ou enviado)",
+    $("cliques").textContent === antes.cliques && $("nome").value === antes.nome &&
+    $("r-busca").textContent === antes.busca);
+
   return { total: R.length, falhas: R.filter((x) => !x.ok), todos: R };
 }

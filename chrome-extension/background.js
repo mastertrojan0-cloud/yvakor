@@ -102,6 +102,18 @@ async function acaoPagina(nome, args = {}) {
     throw new Error("esta página do navegador (" + String(t.url).split(":")[0] +
                     ":) não aceita automação; abra um site normal");
   }
+  // A política (modo, sites permitidos/bloqueados) vem do núcleo em cada comando
+  // de ação. Quem decide é ESTE ponto, que conhece o host exato no momento.
+  const { politica, confirmado_site, confirmado_acao, ...limpo } = args;
+  if (ACOES_COM_EFEITO.has(nome)) {
+    const veto = await verificarPolitica(t, nome, limpo, politica || {},
+                                         !!confirmado_site, !!confirmado_acao);
+    if (veto) return { tab: t, resultado: veto };
+  }
+  return { tab: t, resultado: await executarNaPagina(t, nome, limpo) };
+}
+
+async function executarNaPagina(t, nome, args) {
   await indicadorLigar(t.id);
   await chrome.scripting.executeScript({
     target: { tabId: t.id }, files: ["overlay.js", "pagina.js"] });
@@ -114,7 +126,42 @@ async function acaoPagina(nome, args = {}) {
     args: [nome, args]
   });
   const resultado = r && r[0] && r[0].result;
-  return { tab: t, resultado: resultado || { ok: false, erro: "a página não respondeu" } };
+  return resultado || { ok: false, erro: "a página não respondeu" };
+}
+
+// ---- permissões (inspirado no Claude no Chrome) ----
+const ACOES_COM_EFEITO = new Set(["clicar", "escrever", "pressionar", "selecionar"]);
+const HOST_SENSIVEL = /(bank|banco|bradesco|itau|santander|caixa\.gov|nubank|inter\.co|c6bank|sicredi|sicoob|bancodobrasil|paypal|mercadopago|pagseguro|pagbank|picpay|stripe|wise\.com|binance|coinbase|mercadobitcoin|gov\.br|receita\.fazenda)/i;
+
+function hostDe(url) {
+  try { return new URL(url).hostname.replace(/^www\./, "").toLowerCase(); } catch (e) { return ""; }
+}
+const hostCombina = (host, regra) => !!host && !!regra && (host === regra || host.endsWith("." + regra));
+
+// Devolve null (pode agir) ou um resultado que NÃO executou nada: um bloqueio,
+// ou {precisa_confirmar} para o núcleo perguntar ao usuário e reenviar o comando
+// com confirmado_site / confirmado_acao.
+async function verificarPolitica(t, nome, args, pol, okSite, okAcao) {
+  const host = hostDe(t.url);
+  const modo = pol.modo === "autonomo" ? "autonomo" : "perguntar";
+  if ((pol.bloqueados || []).some((r) => hostCombina(host, r))) {
+    return { ok: false, bloqueado: true, host,
+             erro: "O usuário bloqueou o YVAKOR em " + host + "." };
+  }
+  const permitido = (pol.permitidos || []).some((r) => hostCombina(host, r));
+  const hostSensivel = HOST_SENSIVEL.test(host);
+  if (!okSite && !permitido && (modo === "perguntar" || hostSensivel)) {
+    return { ok: false, host, precisa_confirmar: { tipo: "site", host, host_sensivel: hostSensivel } };
+  }
+  if (!okAcao) {
+    const d = await executarNaPagina(t, "descrever_acao", Object.assign({ acao: nome }, args));
+    // ação sensível pede confirmação nos DOIS modos
+    if (d && d.sensivel) {
+      return { ok: false, host, precisa_confirmar: {
+        tipo: "acao", host, descricao: d.descricao || nome, sensivel: true, motivo: d.motivo || "" } };
+    }
+  }
+  return null;
 }
 
 // Se a ação iniciou uma navegação (clicar num link, enviar um formulário),
@@ -223,6 +270,10 @@ chrome.runtime.onMessage.addListener((msg, _remetente, responder) => {
   }
 });
 
+// Campos de política que o núcleo anexa a cada comando de ação.
+const politicaDe = (a) => ({ politica: a.politica, confirmado_site: a.confirmado_site,
+                             confirmado_acao: a.confirmado_acao });
+
 async function executarBG(c) {
   const a = c.args || {};
   if (c.tipo === "open") {
@@ -309,7 +360,7 @@ async function executarBG(c) {
     return Object.assign({ tab_id: tab.id }, resultado);
   }
   if (c.tipo === "click") {
-    const { tab, resultado } = await acaoPagina("clicar", { alvo: a.alvo || "" });
+    const { tab, resultado } = await acaoPagina("clicar", Object.assign({ alvo: a.alvo || "" }, politicaDe(a)));
     await aposAcaoBG(tab);
     return resultado;
   }
@@ -317,20 +368,20 @@ async function executarBG(c) {
   // acrescentando ao que já existe (a menos que limpar=true).
   if (c.tipo === "fill" || c.tipo === "type") {
     const limpar = c.tipo === "type" ? a.limpar === true : a.limpar !== false;
-    const { tab, resultado } = await acaoPagina("escrever", {
+    const { tab, resultado } = await acaoPagina("escrever", Object.assign({
       alvo: a.alvo || "", texto: String(a.valor != null ? a.valor : (a.texto || "")),
-      enviar: !!a.enviar, limpar, humano: !!a.humano });
+      enviar: !!a.enviar, limpar, humano: !!a.humano }, politicaDe(a)));
     if (a.enviar) await aposAcaoBG(tab);
     return resultado;
   }
   if (c.tipo === "press") {
-    const { tab, resultado } = await acaoPagina("pressionar", {
-      tecla: a.tecla || "Enter", alvo: a.alvo || "" });
+    const { tab, resultado } = await acaoPagina("pressionar", Object.assign({
+      tecla: a.tecla || "Enter", alvo: a.alvo || "" }, politicaDe(a)));
     await aposAcaoBG(tab);
     return resultado;
   }
   if (c.tipo === "select") {
-    const { resultado } = await acaoPagina("selecionar", { alvo: a.alvo || "", valor: String(a.valor || "") });
+    const { resultado } = await acaoPagina("selecionar", Object.assign({ alvo: a.alvo || "", valor: String(a.valor || "") }, politicaDe(a)));
     return resultado;
   }
   if (c.tipo === "hover") {

@@ -27,6 +27,7 @@ from yvakor.learning.absorber import KnowledgeAbsorber
 from yvakor.tools.registry import ToolRegistry
 from yvakor.tools.builtin import register_builtins
 from yvakor.connectors import ConnectorManager
+from yvakor.extensao_politica import PoliticaSites, host_de
 from yvakor.agent import AgentLoop
 from yvakor.cowork import CoworkManager
 from yvakor.maintenance import Maintenance
@@ -236,6 +237,8 @@ class Orchestrator:
         # leem a mensagem de outra.
         self._tl = threading.local()
         # Confirmação de ações protegidas via interface (popup no navegador)
+        # Permissões da extensão do navegador (por site, ações sensíveis).
+        self.politica_sites = PoliticaSites()
         # Tempo para o usuário responder ao popup; sem resposta → ação negada.
         # (Era 180s fixos: a conversa ficava "travada" 3 min esperando um aviso
         # que a interface nem sempre mostra.)
@@ -337,8 +340,31 @@ class Orchestrator:
                 return False
             return True
 
+        acoes_com_efeito = {"click", "fill", "type", "press", "select"}
+
         def chamar(tipo: str, _orig, **kw) -> dict:
-            r = PONTE.comando(tipo, kw)
+            pol = getattr(self, "politica_sites", None)
+            if pol is not None:
+                if tipo == "goto":
+                    veto = self._permitir_navegacao(pol, kw.get("url", ""))
+                    if veto:
+                        return veto
+                if tipo in acoes_com_efeito:
+                    kw["politica"] = pol.para_extensao()
+            r = {}
+            for _ in range(3):          # site novo e/ou ação sensível: até 2 perguntas
+                r = PONTE.comando(tipo, kw)
+                pc = r.get("precisa_confirmar")
+                if not pc or pol is None:
+                    break
+                veto = self._confirmar_extensao(pol, pc)
+                if veto:
+                    return veto
+                kw["confirmado_site" if pc.get("tipo") == "site"
+                   else "confirmado_acao"] = True
+                kw["politica"] = pol.para_extensao()   # a permissão acabou de mudar
+            if r.get("precisa_confirmar"):
+                return {"ok": False, "erro": "confirmação não concluída"}
             if r.get("ok"):
                 r["engine"] = "chrome (extensão)"
             # Captura de tela: a extensão devolve a imagem em base64; vira um
@@ -494,6 +520,11 @@ class Orchestrator:
                     # Tarefa em segundo plano (cowork) não troca a aba que o
                     # usuário está vendo; chat interativo continua ativando.
                     ativo = not getattr(self._tl, "segundo_plano", False)
+                    pol = getattr(self, "politica_sites", None)
+                    if pol is not None and url:
+                        veto = self._permitir_navegacao(pol, url)
+                        if veto:
+                            return {"ok": False, "error": veto["erro"]}
                     r = PONTE.comando(_tipo, {"url": url or "",
                                               "ativo": ativo})
                     if r.get("ok"):
@@ -1209,6 +1240,50 @@ class Orchestrator:
                              "content": str(m["content"])[:600]})
         msgs.append({"role": "user", "content": pergunta})
         return msgs
+
+    # ------------------------------------------------------------------ #
+    # Permissões da extensão (site novo / ação sensível)
+    # ------------------------------------------------------------------ #
+    def _confirmar_extensao(self, pol, pc: dict) -> dict | None:
+        """Pergunta ao usuário (popup do painel/janela). None = permitido;
+        senão devolve o resultado de erro. Sem confirmador (fora de uma
+        conversa) NEGA: na dúvida, não age."""
+        from yvakor.tools.guard import _thread_confirmer
+        host = pc.get("host", "")
+        site = pc.get("tipo") == "site"
+        if site:
+            acao = f"Permitir que o YVAKOR aja em {host}"
+            detalhe = ("Ele poderá clicar, digitar e navegar neste site. A "
+                       "permissão fica salva e pode ser revogada no painel."
+                       + (" Atenção: site de banco/pagamento." if pc.get("host_sensivel") else ""))
+        else:
+            acao = pc.get("descricao") or "Ação sensível"
+            detalhe = f"Em {host}. Motivo: {pc.get('motivo') or 'ação sensível'}."
+        fn = _thread_confirmer()
+        try:
+            ok = bool(fn(acao, detalhe)) if fn else False
+        except Exception:
+            ok = False
+        if ok:
+            if site and host:
+                pol.permitir(host)
+            return None
+        if site and host:
+            pol.bloquear(host, so_nesta_sessao=True)   # "negar" vale até reiniciar
+        return {"ok": False, "negado": True,
+                "erro": f"O usuário não permitiu: {acao}."}
+
+    def _permitir_navegacao(self, pol, url: str) -> dict | None:
+        """Navegar para um site novo pede permissão (buscadores são livres)."""
+        h = host_de(url)
+        if h and pol.bloqueado(h):
+            return {"ok": False, "negado": True,
+                    "erro": f"O usuário bloqueou o YVAKOR em {h}."}
+        alvo = pol.precisa_perguntar_navegacao(url)
+        if alvo is None:
+            return None
+        return self._confirmar_extensao(
+            pol, {"tipo": "site", "host": alvo, "host_sensivel": pol.sensivel(alvo)})
 
     def _system_compacto(self, pergunta: str, extra_context: str | None,
                          contexto_cerebro: str | None) -> str:

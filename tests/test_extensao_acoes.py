@@ -225,7 +225,8 @@ def test_js_da_extensao_tem_sintaxe_valida():
         pytest.skip("node não instalado")
     for nome in ("background.js", "pagina.js", "overlay.js", "sidepanel.js"):
         r = subprocess.run([node, "--check", str(ROOT / "chrome-extension" / nome)],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace")
         assert r.returncode == 0, f"{nome}: {r.stderr[:300]}"
 
 

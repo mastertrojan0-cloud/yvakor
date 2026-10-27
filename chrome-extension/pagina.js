@@ -531,10 +531,21 @@
     "submit|send|post|publish|delete|remove|subscribe|transfer|authorize)\\b", "i");
   const SENSIVEL_CAMPO = /(card|cart[aã]o|cvv|cvc|cpf|ssn|senha|password|passwd|otp|iban|pix)/i;
 
+  // Nome que o USUÁRIO reconhece. Campos de formulário são nomeados por rótulo/
+  // placeholder/nome — NUNCA pelo valor atual (viraria "Digitar X em «z»") nem
+  // pelo texto interno (um <select> devolveria todas as opções juntas).
   function nomeDe(el) {
+    const tag = el.tagName.toLowerCase();
+    const tipo = (el.type || "").toLowerCase();
+    const campo = tag === "textarea" || tag === "select" ||
+      (tag === "input" && !["button", "submit", "reset", "image"].includes(tipo));
+    if (campo) {
+      const rot = el.labels && el.labels[0] ? el.labels[0].innerText : "";
+      return curto(el.getAttribute("aria-label") || rot || el.placeholder ||
+                   el.name || el.id || tag, 60);
+    }
     return curto(el.innerText || el.getAttribute("aria-label") || el.title ||
-                 el.value || el.placeholder || el.name || el.id ||
-                 el.tagName.toLowerCase(), 60);
+                 el.value || el.placeholder || el.name || el.id || tag, 60);
   }
 
   function descrever_acao({ acao = "", alvo = "", texto = "", valor = "",

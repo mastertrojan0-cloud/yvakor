@@ -635,6 +635,9 @@ class Handler(BaseHTTPRequestHandler):
             import os as _os
             return self._json(200, {"ok": True, "pid": _os.getpid(),
                                     "ts": time.time()})
+        # Permissões da extensão: modo, sites permitidos e bloqueados.
+        if self.path == "/api/extensao/politica":
+            return self._json(200, {"ok": True, **get_agent().politica_sites.info()})
         # Seletor de modelo: modo atual, modos disponíveis e modelos locais.
         if self.path == "/api/modelo":
             return self._json(200, {"ok": True, **_info_modelo(get_agent())})
@@ -1291,6 +1294,22 @@ class Handler(BaseHTTPRequestHandler):
                 cid = self.path[len("/api/connectors/"):-len("/authorize")]
                 r = ag.connectors.authorize_url(cid)
                 return self._json(200 if r.get("ok") else 400, r)
+
+            # Permissões da extensão: {"modo"?, "permitir"?, "bloquear"?, "remover"?}
+            if self.path == "/api/extensao/politica":
+                pol = ag.politica_sites
+                try:
+                    if data.get("modo"):
+                        pol.definir_modo(str(data["modo"]))
+                    if data.get("permitir"):
+                        pol.permitir(str(data["permitir"]))
+                    if data.get("bloquear"):
+                        pol.bloquear(str(data["bloquear"]))
+                    if data.get("remover"):
+                        pol.remover(str(data["remover"]))
+                except ValueError as exc:
+                    return self._json(400, {"error": str(exc)})
+                return self._json(200, {"ok": True, **pol.info()})
 
             # Botão Parar: interrompe a execução da conversa (ou todas).
             if self.path == "/api/chat/cancelar":

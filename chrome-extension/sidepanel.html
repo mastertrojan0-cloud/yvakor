@@ -22,7 +22,17 @@
   <div class="contexto" id="contexto">
     <span class="ctx-dot"></span>
     <span id="ctx-titulo">Lendo a página…</span>
+    <select id="modo-acao" title="Permissões do agente" aria-label="Permissões do agente"></select>
+    <button id="btn-sites" type="button" title="Sites permitidos" aria-label="Sites permitidos">🔒</button>
   </div>
+  <section id="sites-painel" class="sites-painel oculto" aria-label="Sites permitidos">
+    <div class="sites-topo">SITES EM QUE O YVAKOR PODE AGIR</div>
+    <div id="sites-lista" class="sites-lista"></div>
+    <form id="sites-form" class="sites-form">
+      <input id="sites-novo" type="text" placeholder="exemplo.com" aria-label="Adicionar site">
+      <button type="submit">Permitir</button>
+    </form>
+  </section>
 
   <main class="painel">
     <div class="chat" id="chat">

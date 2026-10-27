@@ -70,13 +70,72 @@ async function ping() {
     await api("/api/ping", { timeout: 2500 });
     statusEl.textContent = "online";
     statusEl.className = "pill ok";
-    if (!modeloCarregado) carregarModelo();   // voltou do offline: recarrega
+    if (!modeloCarregado) { carregarModelo(); carregarPolitica(); }   // voltou do offline
   } catch (e) {
     statusEl.textContent = "offline";
     statusEl.className = "pill erro";
     modeloCarregado = false;
   }
 }
+
+/* --------------------- permissões do agente (sites) ------------------ */
+// "Pedir permissão por site" (padrão) ou "Agir sem pedir". Ações sensíveis e
+// sites de banco/pagamento pedem confirmação nos dois modos.
+const modoSel = $("modo-acao");
+const sitesPainel = $("sites-painel");
+function pintarSites(j) {
+  const lista = $("sites-lista");
+  lista.innerHTML = "";
+  const permitidos = j.permitidos || [];
+  if (!permitidos.length) {
+    const v = document.createElement("div");
+    v.className = "sites-vazio";
+    v.textContent = "Nenhum site permitido ainda. O YVAKOR pergunta na primeira vez.";
+    lista.appendChild(v);
+  }
+  for (const host of permitidos) {
+    const linha = document.createElement("div");
+    linha.className = "site";
+    const nome = document.createElement("span");
+    nome.textContent = host;
+    const x = document.createElement("button");
+    x.type = "button";
+    x.textContent = "✕";
+    x.title = "Revogar " + host;
+    x.setAttribute("aria-label", "Revogar " + host);
+    x.addEventListener("click", () => atualizarPolitica({ remover: host }));
+    linha.append(nome, x);
+    lista.appendChild(linha);
+  }
+}
+async function carregarPolitica() {
+  try {
+    const j = await api("/api/extensao/politica", { timeout: 4000 });
+    modoSel.innerHTML = "";
+    for (const m of j.modos || []) {
+      const o = document.createElement("option");
+      o.value = m.id; o.textContent = m.rotulo; o.title = m.descricao;
+      o.selected = m.id === j.modo;
+      modoSel.appendChild(o);
+    }
+    pintarSites(j);
+  } catch (e) { /* núcleo offline */ }
+}
+async function atualizarPolitica(corpo) {
+  try {
+    pintarSites(await api("/api/extensao/politica", { method: "POST", body: corpo, timeout: 5000 }));
+  } catch (e) {
+    add("agente", "Não consegui atualizar as permissões: " + e.message);
+  }
+  carregarPolitica();
+}
+modoSel.addEventListener("change", () => atualizarPolitica({ modo: modoSel.value }));
+$("btn-sites").addEventListener("click", () => sitesPainel.classList.toggle("oculto"));
+$("sites-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const v = $("sites-novo").value.trim();
+  if (v) { atualizarPolitica({ permitir: v }); $("sites-novo").value = ""; }
+});
 
 /* ------------------------- seletor de modelo ------------------------ */
 // Local (padrão) / Automático / DeepSeek. A escolha é salva no núcleo.
