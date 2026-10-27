@@ -2838,7 +2838,8 @@ class App:
                 j = api("/api/avaliacoes", timeout=10)
                 itens = j.get("avaliacoes") or []
             except Exception as exc:
-                self._post(lambda: caixa.insert("end", f"Erro: {exc}"))
+                erro = f"Erro: {exc}"       # `exc` some ao sair do except: a lambda roda depois
+                self._post(lambda: caixa.insert("end", erro))
                 return
 
             def pintar():

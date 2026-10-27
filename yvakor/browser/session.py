@@ -442,6 +442,13 @@ class BrowserSession:
         return {"ok": True, "aba": chave}
 
     def grupos(self) -> dict:
+        # Chamado a cada atualização de status (GUI/web fazem polling). Com o navegador
+        # FECHADO não pode abri-lo: antes, `_ensure_browser()` aqui lançava o Chrome
+        # real (CDP) poucos segundos depois de o núcleo subir.
+        with self._state_lock:
+            if self._ctx is None:
+                return {"ok": True, "grupos": {}}
+
         def run():
             self._ensure_browser()
             saida = {}

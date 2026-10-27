@@ -13,6 +13,21 @@ MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho",
          "agosto", "setembro", "outubro", "novembro", "dezembro"]
 
 
+
+def _expressao_da_conta(texto: str) -> str:
+    """Só a conta: "quanto é 2+2? responda só o número" → "2+2".
+    Pega o maior trecho feito de dígitos, operadores e parênteses depois do gatilho."""
+    resto = re.sub(r"^.*?(?:quanto (?:e|é)|calcule|calcular|resultado de)\s*", "",
+                   texto, flags=re.I).strip()
+    pct = re.search(r"\d+(?:[.,]\d+)?\s*%\s*de\s*\d+(?:[.,]\d+)?", resto, re.I)
+    if pct:                                   # "15% de 200"
+        return pct.group(0)
+    trechos = re.findall(r"[\d(][\d\s+\-*/%x×÷().,^]*", resto)
+    trechos = [t.strip().rstrip("+-*/x×÷^,. ") for t in trechos]
+    trechos = [t for t in trechos if re.search(r"\d", t) and re.search(r"[+\-*/%x×÷^]", t)]
+    return max(trechos, key=len) if trechos else resto.rstrip("?").strip()
+
+
 def detectar(texto: str) -> dict | None:
     low = normalizar(texto or "")
     if low in ("nao funciona", "não funciona", "nao esta funcionando",
@@ -82,9 +97,7 @@ def detectar(texto: str) -> dict | None:
     if m_proj:
         return {"acao": "projeto_abrir", "texto": m_proj.group(1).strip()}
     if re.search(r"(quanto (?:e|é)|calcule|calcular|resultado de)", low):
-        expr = re.sub(
-            r"^.*?(?:quanto (?:e|é)|calcule|calcular|resultado de)\s*",
-            "", texto, flags=re.I).strip().rstrip("?")
+        expr = _expressao_da_conta(texto)
         if re.search(r"\d", expr) and re.search(r"[+\-*/%x×÷]", expr):
             return {"acao": "conta", "texto": texto}
     if (any(p in low for p in ("liste", "listar", "mostre", "o que tem"))
@@ -356,8 +369,7 @@ def executar(orchestrator, intent: dict, ultima: str = "") -> str:
 
     if acao == "conta":
         from yvakor.capacidades import calcular
-        expr = re.sub(r"^.*?(?:quanto (?:e|é)|calcule|calcular|resultado de)\s*",
-                      "", texto, flags=re.I).strip().rstrip("?")
+        expr = _expressao_da_conta(texto)
         r = calcular(expr)
         return (f"{expr} = {r.get('resultado')}" if r.get("ok")
                 else f"Não consegui calcular: {r.get('erro')}")

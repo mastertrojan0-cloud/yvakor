@@ -386,3 +386,21 @@ def test_voz_de_assinatura_e_masculina_grave_e_muda_o_cache(tmp_path):
     crua = dict(s["voz"], tom="+0Hz", taxa="+0%", efeito="nenhum")
     s2 = dict(s, voz=crua)
     assert T.TTS(s2)._cache_path("oi", "edge", "x") != t._cache_path("oi", "edge", "x")   # trocar a voz invalida o cache
+
+
+def test_status_do_navegador_nao_abre_o_chrome():
+    """Regressão: GET /api/status e /api/browser chamavam grupos() → _ensure_browser(),
+    que lançava o Chrome real (a "janela que abria sozinha" depois de subir o núcleo)."""
+    import threading
+    from yvakor.browser.session import BrowserSession
+    s = object.__new__(BrowserSession)
+    s._state_lock = threading.RLock()
+    s._ctx = None
+    s._grupos = {}
+    chamado = []
+    s._ensure_browser = lambda: chamado.append(1)
+    s._call = lambda fn, timeout=60: fn()
+    assert s.grupos() == {"ok": True, "grupos": {}}
+    assert chamado == []                                   # navegador fechado: nada é aberto
+    s._ctx = object()                                      # aberto: aí sim consulta as abas
+    assert s.grupos()["ok"] and chamado == [1]

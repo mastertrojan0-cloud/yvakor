@@ -48,9 +48,19 @@ def _avaliar(no):
     raise ValueError("expressão não permitida")
 
 
+def _normalizar_conta(expr: str) -> str:
+    """Notação do dia a dia → Python: "10 x 3", "8 ÷ 2", "2^10", "15% de 200", "3,5 + 1"."""
+    e = str(expr).strip()
+    e = re.sub(r"(\d+(?:[.,]\d+)?)\s*%\s*de\s*(\d+(?:[.,]\d+)?)", r"(\g<2>*\g<1>/100)", e, flags=re.I)
+    e = re.sub(r"(?<=[\d)])\s*[x×]\s*(?=[\d(])", "*", e)
+    e = e.replace("÷", "/").replace("^", "**")
+    e = re.sub(r"(\d),(\d)", r"\1.\2", e)
+    return e
+
+
 def calcular(expressao: str) -> dict:
     try:
-        valor = _avaliar(ast.parse(str(expressao), mode="eval"))
+        valor = _avaliar(ast.parse(_normalizar_conta(expressao), mode="eval"))
         return {"ok": True, "expressao": expressao, "resultado": valor}
     except Exception as exc:
         return {"ok": False, "erro": f"cálculo inválido: {exc}"}

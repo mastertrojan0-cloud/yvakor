@@ -395,3 +395,46 @@ def test_resposta_vazia_do_local_escala_mas_nao_poe_o_local_em_cooldown():
     assert r.complete_messages("resposta_simples", _msgs("Explique o que é um mutex.")) == BOA
     assert "ollama" not in r._cooldown                      # falha de qualidade ≠ provedor fora do ar
     assert len(nuvem.chamadas) == 1
+
+
+# --------------------------------------------------------------------------- #
+# regressões achadas na verificação geral
+# --------------------------------------------------------------------------- #
+def test_conta_em_linguagem_natural_e_extraida_e_calculada():
+    from yvakor.capacidades import calcular
+    from yvakor.voz.diretos import _expressao_da_conta as conta
+    casos = {"quanto é 2+2? responda só o número": 4, "calcule 15% de 200": 30.0,
+             "quanto e 10 x 3?": 30, "calcule 2^10": 1024, "quanto é 3,5 + 1,5": 5.0,
+             "quanto é (3+4)*5 por favor": 35}
+    for frase, esperado in casos.items():
+        assert calcular(conta(frase))["resultado"] == esperado, frase
+    assert calcular("__import__('os').system('x')")["ok"] is False        # continua seguro
+
+
+def test_pdf_com_pouco_texto_e_lido_mesmo_sem_ocr(tmp_path):
+    import pymupdf
+    from yvakor import documentos
+    pdf = tmp_path / "curto.pdf"
+    doc = pymupdf.open()
+    doc.new_page().insert_text((72, 72), "Texto curto do PDF")
+    doc.save(str(pdf))
+    doc.close()
+    r = documentos.ler_documento(pdf)
+    assert r["ok"] and "Texto curto" in r["texto"]
+
+
+def test_avaliar_resposta_tolera_modelo_que_foge_do_json():
+    from yvakor.colaboracao import avaliar_resposta
+
+    class Router:
+        def __init__(self, saidas):
+            self.saidas, self.n = list(saidas), 0
+        def complete_messages(self, tarefa, msgs, **k):
+            self.n += 1
+            return self.saidas.pop(0)
+    r = Router(["Claro! A resposta é boa.", '{"nota": 4, "problemas": []}'])
+    out = avaliar_resposta(r, "2+2?", "4")
+    assert out["ok"] and out["nota"] == 4 and r.n == 2                 # reperguntou e conseguiu
+    out = avaliar_resposta(Router(["Dou nota 5 porque está correta.", "Nota: 5, correta"]), "p", "r")
+    assert out["ok"] and out["nota"] == 5 and out["aproximada"]       # nota solta no texto
+    assert avaliar_resposta(Router(["sem nada", "ainda nada"]), "p", "r")["ok"] is False

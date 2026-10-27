@@ -1,6 +1,8 @@
 """YVAKOR — subagentes paralelos e avaliação de qualidade."""
 from __future__ import annotations
 
+import re
+
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -55,13 +57,23 @@ def avaliar_resposta(router, pergunta: str, resposta: str) -> dict:
         '"clareza": 1-5, "problemas": ["..."], "melhoria": "..."}\n\n'
         f"PERGUNTA: {pergunta}\n\nRESPOSTA: {resposta[:6000]}")
     try:
-        bruto = router.complete_messages(
-            "analise_complexa",
-            [{"role": "system", "content": "Responda apenas JSON válido."},
-             {"role": "user", "content": prompt}]) or ""
-        dados = _json_ou_texto(bruto)
+        mensagens = [{"role": "system", "content": "Responda apenas JSON válido."},
+                     {"role": "user", "content": prompt}]
+        dados, bruto = None, ""
+        for tentativa in range(2):       # o modelo local às vezes foge do formato: 1 nova chance
+            bruto = router.complete_messages("analise_complexa", mensagens) or ""
+            dados = _json_ou_texto(bruto)
+            if dados:
+                break
+            mensagens = mensagens + [
+                {"role": "assistant", "content": bruto[:400]},
+                {"role": "user", "content": 'Responda SOMENTE o JSON, ex.: {"nota": 4, "problemas": [], '
+                                            '"melhoria": ""}'}]
         if not dados:
-            return {"ok": False, "erro": "avaliação não retornou JSON"}
+            m = re.search(r"nota\D{0,15}([1-5])", bruto, re.I)      # último recurso: a nota solta no texto
+            if not m:
+                return {"ok": False, "erro": "avaliação não retornou JSON"}
+            dados = {"nota": int(m.group(1)), "aproximada": True}
         dados["ok"] = True
         return dados
     except Exception as exc:

@@ -78,16 +78,20 @@ def _ocr_pdf(caminho: Path, max_paginas: int = 20) -> dict:
             if len(t) > 60:
                 textos.append(t)
                 continue
-            try:
+            achou_ocr = False
+            try:                         # página quase sem texto: pode ser escaneada
                 pix = pagina.get_pixmap(dpi=200)
                 temp = TEMP / f"pdf_{hashlib.md5(str(caminho).encode()).hexdigest()[:8]}_{i}.png"
                 pix.save(str(temp))
                 ocr = ocr_imagem(temp)
-                if ocr.get("ok"):
+                if ocr.get("ok") and len(ocr["texto"]) >= len(t):
                     textos.append(ocr["texto"])
+                    achou_ocr = True
                 temp.unlink(missing_ok=True)
             except Exception:
                 pass
+            if t and not achou_ocr:      # sem OCR (ou ele não achou mais): fica o texto curto que já existe
+                textos.append(t)
         doc.close()
     except Exception as exc:
         return {"ok": False, "erro": f"{type(exc).__name__}: {exc}"}
