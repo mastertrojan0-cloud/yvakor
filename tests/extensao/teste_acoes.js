@@ -143,5 +143,37 @@ async function rodarTestes() {
     $("cliques").textContent === antes.cliques && $("nome").value === antes.nome &&
     $("r-busca").textContent === antes.busca);
 
+  // ---- procurar (find): achar por descrição, sem ler a página inteira ----
+  const snap = A.snapshot({ max: 80 });
+  const e1Antes = document.querySelector('[data-yvakor-ref="e1"]');
+  let f = A.procurar({ consulta: "campo de busca" });
+  t("procurar 'campo de busca' acha o campo de pesquisa em 1º", f.ok && f.itens[0].id === "q", f.itens[0] && f.itens[0].id);
+  f = A.procurar({ consulta: "botão comprar" });
+  t("procurar 'botão comprar' acha o botão certo em 1º", f.itens[0] && f.itens[0].id === "comprar", f.itens[0] && f.itens[0].id);
+  f = A.procurar({ consulta: "senha" });
+  // a página tem DOIS campos de senha (#senha e #login-senha): ambos são acertos
+  t("procurar 'senha' devolve só campos de senha", f.itens.length === 2 && f.itens.every((i) => i.tipo === "password"), f.itens.map((i) => i.id).join(","));
+  f = A.procurar({ consulta: "lista de país" });
+  t("procurar 'lista de país' acha o <select>", f.itens[0] && f.itens[0].id === "pais", f.itens[0] && f.itens[0].id);
+  f = A.procurar({ consulta: "e-mail" });
+  t("procurar acha o CAMPO pelo <label> (não o próprio label), sem duplicar",
+    f.itens[0] && f.itens[0].id === "email" && f.itens.filter((i) => i.tag === "label").length === 0 && f.itens.length === 1,
+    f.itens.map((i) => i.tag + "#" + i.id).join(","));
+  f = A.procurar({ consulta: "xyzabc inexistente" });
+  t("procurar sem resultado → lista vazia com aviso", f.ok && f.itens.length === 0 && /nada encontrado/.test(f.aviso));
+  f = A.procurar({ consulta: "de da o" });
+  t("consulta só de palavras vazias → erro claro", !f.ok && /descreva/.test(f.erro));
+  f = A.procurar({ consulta: "botão", max: 2 });
+  t("respeita o limite de resultados", f.itens.length <= 2, f.itens.length);
+  t("procurar NÃO apaga as refs do último snapshot", document.querySelector('[data-yvakor-ref="e1"]') === e1Antes && !!e1Antes);
+  f = A.procurar({ consulta: "campo de busca" });
+  const refAchada = f.itens[0].ref;
+  await A.escrever({ alvo: refAchada, texto: "via ref do procurar", enviar: true });
+  t("a ref devolvida pelo procurar funciona nas outras ações",
+    $("r-busca").textContent === "BUSCOU:via ref do procurar", $("r-busca").textContent);
+  t("refs novas não colidem com as do snapshot",
+    new Set(Array.from(document.querySelectorAll("[data-yvakor-ref]")).map((e) => e.getAttribute("data-yvakor-ref"))).size ===
+    document.querySelectorAll("[data-yvakor-ref]").length);
+
   return { total: R.length, falhas: R.filter((x) => !x.ok), todos: R };
 }

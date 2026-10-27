@@ -36,7 +36,8 @@ GRUPOS = {
                      "acess", "screenshot", "print", "captur"),
         # Ordem de importância: o limite de ferramentas corta pelo FIM, e a
         # ordem de registro punha navegador_pesquisar na 11ª posição.
-        "prioridade": ("navegador_ver", "navegador_pesquisar", "navegador_ir",
+        "prioridade": ("navegador_ver", "navegador_procurar", "navegador_pesquisar",
+                       "navegador_ir",
                        "navegador_clicar", "navegador_preencher",
                        "navegador_digitar", "navegador_pressionar",
                        "navegador_selecionar", "navegador_esperar",

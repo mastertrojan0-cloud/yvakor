@@ -480,6 +480,13 @@ class Orchestrator:
                     alvo=k.get("alvo", ""), valor=k.get("valor", ""),
                     navegador=k.get("navegador", ""))
                  ) if preencher_pw else None),
+            "navegador_procurar": (
+                "find", ("consulta", "max"),
+                "Acha elementos da página por DESCRIÇÃO (ex.: 'campo de busca', "
+                "'botão comprar', 'link de contato') e devolve só os melhores, "
+                "com refs (e1…) para clicar/digitar. Mais leve que navegador_ver "
+                "em páginas grandes.",
+                {"consulta": "str", "max": "int?", "navegador": "str?"}, None),
             "navegador_passar_mouse": (
                 "hover", ("alvo",),
                 "Passa o mouse sobre um elemento (abre menus e dicas).",

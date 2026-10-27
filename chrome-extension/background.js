@@ -354,6 +354,11 @@ async function executarBG(c) {
              elementos_total: (s.items || []).length, resumo: s.resumo || "",
              elementos: s.items || [], tab_id: r.tab.id };
   }
+  if (c.tipo === "find") {
+    const { tab, resultado } = await acaoPagina("procurar", {
+      consulta: a.consulta || "", max: Number(a.max) || 20 });
+    return Object.assign({ tab_id: tab.id }, resultado);
+  }
   if (c.tipo === "extract") {
     const { tab, resultado } = await acaoPagina("extrair", {
       max_chars: Number(a.max_chars) || 6000, seletor: a.seletor || a.selector || "" });

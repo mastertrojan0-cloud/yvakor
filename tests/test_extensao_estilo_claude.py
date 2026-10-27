@@ -391,3 +391,31 @@ def test_painel_tem_a_ui_de_permissoes():
     assert 'id="modo-acao"' in html and 'id="sites-lista"' in html
     pagina = (EXT / "pagina.js").read_text(encoding="utf-8")
     assert "descrever_acao" in pagina.split("window.__yvakorAcoes =")[-1]
+
+
+# --------------------------------------------------------------------------- #
+# Etapa E (parcial) — navegador_procurar (o "find" por descrição)
+# --------------------------------------------------------------------------- #
+def test_navegador_procurar_chega_a_extensao_e_e_oferecido_ao_modelo_local():
+    from unittest import mock
+    from yvakor.extensao_bridge import PONTE
+    if str(ROOT / "tests") not in sys.path:
+        sys.path.insert(0, str(ROOT / "tests"))
+    import test_extensao_acoes as base
+    eu, pw = base._orquestrador_falso()
+    ponte = _PonteScript({"ok": True, "itens": []})
+    with mock.patch.object(PONTE, "comando", ponte):
+        eu.tools.run("navegador_procurar", consulta="campo de busca", max=5)
+    assert ponte.chamadas == [("find", {"consulta": "campo de busca", "max": 5})]
+    assert pw == []
+    ag = base._agente()
+    nomes = base._sel(ag, "pesquise gatos fofos no google", 5)     # modo compacto
+    assert "navegador_procurar" in nomes and len(nomes) == 8
+    assert nomes.index("navegador_ver") < nomes.index("navegador_procurar") < nomes.index("navegador_pesquisar")
+
+
+def test_background_e_motor_expoem_o_procurar():
+    bg = (EXT / "background.js").read_text(encoding="utf-8")
+    assert 'c.tipo === "find"' in bg and 'acaoPagina("procurar"' in bg
+    pagina = (EXT / "pagina.js").read_text(encoding="utf-8")
+    assert "procurar }" in pagina.split("window.__yvakorAcoes =")[-1]

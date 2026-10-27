@@ -24,7 +24,7 @@ _ORDEM_NAVEGADOR = ("abrir", "ir", "ver", "clicar", "preencher", "pressionar", "
                     "esperar", "extrair", "captura", "pesquisar", "abas", "nova_aba",
                     "trocar_aba", "fechar_aba", "fechar", "grupo", "motores",
                     "conectar", "google_login", "google_status", "digitar",
-                    "selecionar", "historico", "passar_mouse")
+                    "selecionar", "historico", "passar_mouse", "procurar")
 
 
 def _registry():

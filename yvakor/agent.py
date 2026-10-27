@@ -102,6 +102,8 @@ Regras do navegador:
   substitui o conteúdo. Sem `alvo` usa o campo focado/de busca. Funciona em
   editores de texto rico (Gmail, Notion, chats). Caixa de marcar: preencher com
   "sim"/"não".
+- Página grande? `navegador_procurar` {{"consulta":"campo de busca"}} acha só o
+  elemento descrito (com ref), sem ler a página toda.
 - Listas: `navegador_selecionar` {{"alvo":"e5","valor":"Portugal"}}.
 - Teclas: `navegador_pressionar` {{"tecla":"Enter"}} (aceita Control+A, Tab,
   Escape, ArrowDown…). Menus que abrem ao passar o mouse: `navegador_passar_mouse`.
@@ -430,7 +432,8 @@ class AgentLoop:
                           "depois aja pela ref com navegador_clicar / "
                           "navegador_digitar / navegador_preencher; para buscar use "
                           "navegador_pesquisar. Depois de clicar ou navegar, chame "
-                          "navegador_ver de novo.\n")
+                          "navegador_ver de novo. Em página grande, "
+                          "navegador_procurar acha só o elemento descrito.\n")
             return base_system + "\n\n" + texto
         return base_system + "\n\n" + PROTOCOLO.format(
             manifesto=self.registry.manifest(nomes))

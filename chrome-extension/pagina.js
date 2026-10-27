@@ -521,6 +521,64 @@
              painel_interno: !!alvoRolagem, url: location.href };
   }
 
+  // ---- procurar: achar elementos por DESCRIÇÃO ("campo de busca") ----
+  // Em vez de ler a página inteira, devolve só os melhores candidatos, já com
+  // refs que as outras ações entendem. Pontuação por palavras + sinônimos de
+  // papel (botão/campo/link/lista…): é heurística local, sem modelo de IA.
+  const PARADAS = new Set(["de", "do", "da", "dos", "das", "o", "a", "os", "as", "um",
+    "uma", "no", "na", "em", "para", "pra", "com", "que", "the", "of", "to", "in"]);
+  const SINONIMOS = {
+    botao: ["button", "submit", "btn"], botoes: ["button", "submit"],
+    campo: ["input", "textarea", "textbox", "searchbox"], caixa: ["input", "textarea", "checkbox"],
+    texto: ["input", "textarea", "textbox"], busca: ["search", "pesquis", "procur", "buscar"],
+    pesquisa: ["search", "busca", "procur"], pesquisar: ["search", "busca"],
+    link: ["a", "href"], lista: ["select", "listbox", "combobox"], menu: ["menu", "nav"],
+    senha: ["password"], email: ["e-mail", "mail"], enviar: ["submit", "send", "enviar"],
+    entrar: ["login", "sign in", "signin", "entrar"], login: ["entrar", "sign in"],
+    marcar: ["checkbox"], opcao: ["radio", "option"], aba: ["tab"],
+  };
+  function procurar({ consulta = "", max = 20 } = {}) {
+    const q = norm(consulta);
+    const palavras = q.split(" ").filter((p) => p.length >= 2 && !PARADAS.has(p));
+    if (!palavras.length) return { ok: false, erro: "descreva o que procurar (ex.: campo de busca)" };
+    const melhor = new Map();                 // elemento -> maior pontuação
+    for (const bruto of consultar(SEL_INTERATIVO)) {
+      if (!visivel(bruto)) continue;
+      // Um <label> "E-mail" casa com o texto; o que se quer é o CAMPO que ele
+      // rotula (mesma regra do achar). Mantém a maior pontuação, sem duplicar.
+      const el = bruto.tagName === "LABEL" && bruto.control ? bruto.control : bruto;
+      const tag = el.tagName.toLowerCase();
+      const feno = norm([rotulo(el), tag, el.type, el.getAttribute("role"), el.name, el.id,
+                         el.placeholder, el.title, el.getAttribute("autocomplete"),
+                         tag === "a" ? "link" : ""].join(" "));
+      let pontos = 0;
+      for (const p of palavras) {
+        if (feno.includes(p)) pontos += 2;
+        else if ((SINONIMOS[p] || []).some((s) => feno.includes(s))) pontos += 1;
+      }
+      if (q && feno.includes(q)) pontos += 3;               // a frase inteira
+      if (pontos > 0) pontos += editavel(el) && /campo|caixa|texto|busca|pesquis|senha|email/.test(q) ? 0.5 : 0;
+      if (pontos > 0 && pontos > (melhor.get(el) || 0)) melhor.set(el, pontos);
+    }
+    const pontuados = Array.from(melhor, ([el, pontos]) => ({ el, pontos }));
+    pontuados.sort((a, b) => b.pontos - a.pontos);
+    const top = pontuados.slice(0, Math.max(1, Math.min(20, Number(max) || 20)));
+    // refs novas continuam a numeração, SEM apagar as do último snapshot
+    let n = 0;
+    for (const e of consultar("[data-yvakor-ref]")) {
+      n = Math.max(n, parseInt((e.getAttribute("data-yvakor-ref") || "e0").slice(1), 10) || 0);
+    }
+    const itens = top.map(({ el, pontos }) => {
+      let ref = el.getAttribute("data-yvakor-ref");
+      if (!ref) { ref = "e" + (++n); el.setAttribute("data-yvakor-ref", ref); }
+      return Object.assign(descrever(el, ref), { relevancia: pontos });
+    });
+    const resumo = itens.map((e) => "[" + e.ref + "] <" + e.tag + (e.tipo ? " type=" + e.tipo : "") +
+      (e.placeholder ? ' placeholder="' + e.placeholder + '"' : "") + "> " + e.texto).join("\n");
+    return { ok: true, consulta, total: pontuados.length, itens, resumo,
+             aviso: itens.length ? "" : "nada encontrado — use navegador_ver para ver a página", url: location.href };
+  }
+
   // ---- pré-visualização (SEM efeito): o que a ação faria e se é sensível ----
   // Alimenta o pedido de confirmação ("Clicar em «Comprar agora»") antes de agir.
   const SENSIVEL_TEXTO = new RegExp(
@@ -603,5 +661,5 @@
 
   window.__yvakorAcoes = { snapshot, extrair, clicar, escrever, pressionar,
                            selecionar, passar_mouse, esperar, rolar,
-                           descrever_acao };
+                           descrever_acao, procurar };
 })();
