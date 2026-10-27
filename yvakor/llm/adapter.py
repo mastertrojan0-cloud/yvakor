@@ -26,7 +26,8 @@ class LLMProvider:
     def __init__(self, name: str, base_url: str, model: str,
                  api_key: str | None = None,
                  temperature: float = 0.3, max_tokens: int = 4096,
-                 timeout: float = 120):
+                 timeout: float = 120, num_thread: int | None = None,
+                 keep_alive: str = "5m"):
         self.name = name
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -34,13 +35,19 @@ class LLMProvider:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout = timeout
+        # Só para o Ollama: limita as threads de inferência (deixa núcleo(s)
+        # livre(s) p/ a interface). O endpoint /v1 compatível com OpenAI ignora
+        # `num_thread`, então com isso definido usamos a API nativa /api/chat.
+        self.num_thread = num_thread
+        self.keep_alive = keep_alive
 
     def _url(self) -> str:
         return (f"{self.base_url}/v1/chat/completions"
                 if "ollama" in self.name or "11434" in self.base_url
                 else f"{self.base_url}/chat/completions")
 
-    def _post(self, payload: dict, timeout: float | None = None) -> dict:
+    def _post_bruto(self, url: str, payload: dict,
+                    timeout: float | None = None) -> dict:
         """POST + parse. Levanta ERRO em qualquer falha (HTTP, rede, payload de
         erro com 200) para que o roteador caia no próximo provider (ex.: o
         local). Antes, HTTPError perdia o corpo e {"error":...} com 200 não
@@ -49,7 +56,7 @@ class LLMProvider:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         req = urllib.request.Request(
-            self._url(), data=json.dumps(payload).encode(),
+            url, data=json.dumps(payload).encode(),
             headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=timeout or self.timeout) as resp:
@@ -81,9 +88,28 @@ class LLMProvider:
                 fatal=bool(re.search(
                     r"insufficient|balance|quota|payment|saldo|credit",
                     str(msg), re.I)))
+        return data
+
+    def _post(self, payload: dict, timeout: float | None = None) -> dict:
+        """Endpoint OpenAI-compatível (DeepSeek e Ollama /v1)."""
+        data = self._post_bruto(self._url(), payload, timeout)
         if not (data.get("choices")):
             raise ProviderErro(f"{self.name}: resposta sem 'choices'")
         return data
+
+    def _chat_ollama_nativo(self, messages: list[dict], timeout: float | None,
+                            max_tokens: int | None) -> str:
+        """API nativa do Ollama (/api/chat): aceita `num_thread` e `keep_alive`.
+        Medido neste PC (4 núcleos): 4 threads = 7,7 tok/s; 3 threads = 7,2
+        tok/s (-6%) — deixar um núcleo livre custa pouco e evita que a máquina
+        inteira engasgue enquanto o modelo gera."""
+        data = self._post_bruto(f"{self.base_url}/api/chat", {
+            "model": self.model, "messages": messages, "stream": False,
+            "keep_alive": self.keep_alive,
+            "options": {"temperature": self.temperature,
+                        "num_predict": max_tokens or self.max_tokens,
+                        "num_thread": self.num_thread}}, timeout)
+        return (data.get("message") or {}).get("content") or ""
 
     def chat(self, system: str, user: str) -> str:
         return self.chat_messages([
@@ -104,13 +130,16 @@ class LLMProvider:
         """Completa a partir de uma lista de mensagens (multi-turno).
         `timeout`/`max_tokens` sobrescrevem o padrão do provider só nesta chamada
         (ex.: o agente local precisa de muito mais tempo que a resposta rápida)."""
-        data = self._post({
-            "model": self.model,
-            "temperature": self.temperature,
-            "max_tokens": max_tokens or self.max_tokens,
-            "messages": messages,
-        }, timeout=timeout)
-        conteudo = (data["choices"][0].get("message") or {}).get("content")
+        if self.num_thread:
+            conteudo = self._chat_ollama_nativo(messages, timeout, max_tokens)
+        else:
+            data = self._post({
+                "model": self.model,
+                "temperature": self.temperature,
+                "max_tokens": max_tokens or self.max_tokens,
+                "messages": messages,
+            }, timeout=timeout)
+            conteudo = (data["choices"][0].get("message") or {}).get("content")
         if not (conteudo and conteudo.strip()):
             # Resposta vazia conta como falha → o roteador tenta o próximo
             # provider (o local), em vez de devolver "" ao agente.
@@ -130,4 +159,22 @@ def build_provider(name: str, cfg: dict) -> LLMProvider:
         temperature=cfg.get("temperature", 0.3),
         max_tokens=cfg.get("max_tokens", 4096),
         timeout=float(cfg.get("timeout_s", 120)),
+        num_thread=(_threads_ollama(cfg) if _eh_ollama(name, cfg) else None),
+        keep_alive=str(cfg.get("keep_alive", "5m")),
     )
+
+
+def _eh_ollama(name: str, cfg: dict) -> bool:
+    return "ollama" in name or "11434" in str(cfg.get("base_url", ""))
+
+
+def _threads_ollama(cfg: dict) -> int | None:
+    """num_thread do modelo local: "auto" = núcleos-1 (em máquinas com 4+),
+    número = fixo, 0/false = desligado (usa o endpoint /v1 e as threads padrão)."""
+    valor = cfg.get("num_thread", "auto")
+    if valor in (0, False, None, "0", "off"):
+        return None
+    if isinstance(valor, int) or str(valor).isdigit():
+        return max(1, int(valor))
+    nucleos = os.cpu_count() or 1
+    return nucleos - 1 if nucleos >= 4 else None

@@ -46,6 +46,12 @@ llm:
       temperature: 0.2
       max_tokens: 512
       timeout_s: 50          # resposta local curta; acima disso cai para API
+      # Threads de inferência: "auto" = núcleos-1 (em máquinas com 4+), deixando
+      # um núcleo livre p/ a interface não engasgar enquanto o modelo gera.
+      # Medido aqui (4 núcleos): 4 thr = 7,7 tok/s · 3 thr = 7,2 · 2 thr = 6,3.
+      # Use um número fixo, ou 0 para desligar (volta ao endpoint /v1 padrão).
+      num_thread: "auto"
+      keep_alive: "5m"       # quanto o modelo fica na RAM após a última chamada
 
   # Roteador: LOCAL primeiro, DeepSeek para tarefas mais profundas.
   # - Tudo que NÃO está em 'external' é respondido pelo modelo local primeiro

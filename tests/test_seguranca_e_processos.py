@@ -494,6 +494,121 @@ def test_menu_de_modelo_da_janela_desktop():
         raiz.destroy()
 
 
+# --------------------------------------------------------------------------- #
+# "Sistema trava": seletor do modo compacto e confirmação que parava a conversa
+# --------------------------------------------------------------------------- #
+def _registry_grande():
+    from yvakor.tools.registry import ToolRegistry
+    reg = ToolRegistry({"tools": {"guarded_actions": [], "always_confirm": [
+        "executar_shell", "arquivos_apagar", "arquivos_escrever"]}})
+    nomes = (["executar_shell", "arquivos_listar", "arquivos_ler", "arquivos_apagar",
+              "arquivos_escrever", "cerebro_buscar", "pesquisa_web", "http_get"]
+             + [f"rede_x{i}" for i in range(140)])
+    for n in nomes:
+        reg.register(n, lambda **k: {"ok": True}, "descricao longa " * 12, {"a": "str"})
+    return reg
+
+
+def test_modo_compacto_respeita_o_limite_mesmo_quando_nada_casa():
+    """Regressão: selecionar() devolvia TODAS as ferramentas quando nada casava
+    (ignorando o limite) → prompt gigante no modelo local (~110s por 7k chars)."""
+    from yvakor.agent import AgentLoop
+    ag = AgentLoop(router=None, registry=_registry_grande(), roteador=True)
+    for msg in ("como esta o mercado do btc?", "xyzabc qwerty"):
+        nomes = ag._selecionar([{"role": "user", "content": msg}], 5)
+        assert len(nomes) == 5
+        assert len(ag.system_with_tools("base", nomes, compacto=True)) < 2000
+        assert "pesquisa_web" in nomes                # base segura p/ cotação etc.
+
+
+def test_modo_compacto_so_oferece_shell_e_apagar_em_pedido_explicito():
+    """O 3B chamava `bitcoin-cli` no shell p/ uma pergunta de mercado."""
+    from yvakor.agent import AgentLoop
+    ag = AgentLoop(router=None, registry=_registry_grande(), roteador=True)
+    perigosas = {"executar_shell", "arquivos_apagar", "arquivos_escrever"}
+    for msg in ("como esta o mercado do btc?", "liste os arquivos da pasta interface",
+                "quem foi Santos Dumont"):
+        assert not perigosas & set(ag._selecionar([{"role": "user", "content": msg}], 5)), msg
+    assert "executar_shell" in ag._selecionar(
+        [{"role": "user", "content": "execute o comando dir"}], 5)
+    assert "arquivos_apagar" in ag._selecionar(
+        [{"role": "user", "content": "apague o arquivo x.txt"}], 5)
+
+
+def test_confirmacao_sem_resposta_e_negada_no_prazo_configurado():
+    import time
+    from yvakor.orchestrator import ConfirmationBroker
+    b = ConfirmationBroker(timeout=0.3)             # antes: 180s fixos
+    t0 = time.time()
+    assert b.request("S", "executar_shell", "dir") is False
+    assert time.time() - t0 < 3
+    assert b.pending_for("S") is None               # não deixa pendência fantasma
+
+
+def test_pendencia_informa_o_prazo_e_resposta_libera_a_conversa():
+    from yvakor.orchestrator import ConfirmationBroker
+    b = ConfirmationBroker(timeout=5)
+    resultado = {}
+    t = threading.Thread(target=lambda: resultado.update(
+        r=b.request("S", "executar_shell", "dir")))
+    t.start()
+    for _ in range(50):
+        if b.pending_for("S"):
+            break
+        threading.Event().wait(0.02)
+    pend = b.pending_for("S")
+    assert pend["action"] == "executar_shell" and pend["timeout"] == 5
+    assert b.resolve("S", True) is True
+    t.join(2)
+    assert resultado["r"] is True
+
+
+def test_ollama_deixa_um_nucleo_livre_e_a_nuvem_nao_muda():
+    from unittest import mock
+    from yvakor.llm import adapter
+    with mock.patch("os.cpu_count", return_value=4):
+        assert adapter._threads_ollama({}) == 3                 # auto = núcleos-1
+        assert adapter._threads_ollama({"num_thread": 2}) == 2   # fixo
+        assert adapter._threads_ollama({"num_thread": 0}) is None   # desligado
+    with mock.patch("os.cpu_count", return_value=2):
+        assert adapter._threads_ollama({}) is None               # máquina pequena
+    with mock.patch("os.cpu_count", return_value=8):
+        assert adapter._threads_ollama({}) == 7
+    cfg_ds = {"base_url": "https://api.deepseek.com", "model": "m"}
+    assert adapter.build_provider("deepseek", cfg_ds).num_thread is None
+
+
+def test_ollama_usa_api_nativa_com_num_thread_e_a_nuvem_usa_v1():
+    from yvakor.llm.adapter import LLMProvider
+    capturado = {}
+
+    def falso(url, payload, timeout=None):
+        capturado.update(url=url, payload=payload)
+        return {"message": {"content": "olá"}, "choices": [
+            {"message": {"content": "olá"}}]}
+
+    local = LLMProvider("ollama", "http://localhost:11434", "qwen2.5:3b",
+                        num_thread=3, max_tokens=512)
+    local._post_bruto = falso
+    assert local.chat_messages([{"role": "user", "content": "oi"}]) == "olá"
+    assert capturado["url"].endswith("/api/chat")
+    assert capturado["payload"]["options"]["num_thread"] == 3
+    assert capturado["payload"]["options"]["num_predict"] == 512
+    assert capturado["payload"]["stream"] is False
+
+    nuvem = LLMProvider("deepseek", "https://api.deepseek.com", "deepseek-chat")
+    nuvem._post_bruto = falso
+    assert nuvem.chat_messages([{"role": "user", "content": "oi"}]) == "olá"
+    assert capturado["url"].endswith("/chat/completions")        # inalterado
+    assert "options" not in capturado["payload"]
+
+
+def test_ha_registro_de_quem_abre_o_chrome_do_agente():
+    from yvakor.browser import chrome_cdp
+    assert hasattr(chrome_cdp, "_registrar_abertura")
+    assert "_registrar_abertura(porta)" in Path(chrome_cdp.__file__).read_text(encoding="utf-8")
+
+
 if __name__ == "__main__":
     for nome, fn in list(globals().items()):
         if nome.startswith("test_") and callable(fn):
