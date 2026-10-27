@@ -304,6 +304,43 @@ def indicadores(d: dict) -> dict:
 # --------------------------------------------------------------------------- #
 # gráficos
 # --------------------------------------------------------------------------- #
+CONECTADO = lambda cid: False        # o orquestrador troca por ConnectorManager.is_connected
+
+
+def _extras_conectores(simbolo: str, tipo: str, intervalo: str, avisos: list) -> dict:
+    """Dados dos conectores de cripto LIGADOS (Configurações → Conectores), em paralelo."""
+    if tipo != "cripto":
+        return {}
+    from concurrent.futures import ThreadPoolExecutor
+    from yvakor.connectors import cripto as C
+    tarefas = {}
+    if CONECTADO("cripto_tradingview"):
+        tarefas["tv"] = lambda: C.tradingview_analise(simbolo, intervalo)
+    if CONECTADO("cripto_binance"):
+        tarefas["livro"] = lambda: C.binance_livro(simbolo)
+    if CONECTADO("cripto_coingecko"):
+        tarefas["cg"] = lambda: C._coingecko_moeda({})(simbolo)
+        tarefas["cg_global"] = lambda: C._coingecko_global({})()
+    if CONECTADO("cripto_cryptopanic"):
+        tarefas["noticias"] = lambda: C._cryptopanic({})(simbolo, "hot", 4)
+    if not tarefas:
+        return {}
+    saida = {}
+    with ThreadPoolExecutor(max_workers=len(tarefas)) as ex:
+        futuros = {k: ex.submit(f) for k, f in tarefas.items()}
+        for k, fut in futuros.items():
+            try:
+                r = fut.result(timeout=25)
+            except Exception as exc:
+                avisos.append(f"{k}: {str(exc)[:50]}")
+                continue
+            if r.get("ok"):
+                saida[k] = r
+            else:
+                avisos.append(f"{k}: {r.get('erro', 'falhou')}")
+    return saida
+
+
 def _grafico_preco(d: dict, ind: dict, nome: str, intervalo: str, destino: Path) -> Path:
     import matplotlib
     matplotlib.use("Agg")
@@ -342,7 +379,8 @@ def _grafico_preco(d: dict, ind: dict, nome: str, intervalo: str, destino: Path)
     ax.axhline(ind["preco"], color=acento, lw=1.1)
     ax.text(t[-1], ind["preco"], f" {_fmt(ind['preco'])}", color="white", fontsize=9, va="center",
             bbox=dict(boxstyle="round,pad=.25", fc=acento, ec="none"))
-    ax.set_title(f"{nome} · {intervalo} · {ind['veredito']} (score {ind['score']:+d})  —  fonte: {d['fonte']}",
+    tv = f" · TradingView: {ind['tv']}" if ind.get("tv") else ""
+    ax.set_title(f"{nome} · {intervalo} · {ind['veredito']} (score {ind['score']:+d}){tv}  —  fonte: {d['fonte']}",
                  color=tinta, fontsize=11, loc="left")
     ax.legend(loc="upper left", fontsize=8, frameon=False, ncol=4)
     axv.bar(t, v, width=larg, color=cores, alpha=.7)
@@ -429,6 +467,9 @@ def analisar(ativo: str = "BTC", intervalo: str = "1d", sentimento: bool = True)
     if len(d["c"]) < 30:
         return {"ok": False, "erro": f"poucos candles para {simbolo} ({len(d['c'])})", "avisos": avisos}
     ind = indicadores(d)
+    extras = _extras_conectores(simbolo, tipo, intervalo, avisos)
+    if extras.get("tv"):
+        ind["tv"] = extras["tv"]["consenso"]
     preco, a14 = ind["preco"], float(ind["atr"][-1]) if not np.isnan(ind["atr"][-1]) else preco * 0.03
     quando = datetime.now()
     st = fg = None
@@ -484,6 +525,24 @@ def analisar(ativo: str = "BTC", intervalo: str = "1d", sentimento: bool = True)
           f"invalidação perto de US$ {_fmt(preco - 1.5 * a14)}.",
           f"- Baixista: perda de US$ {_fmt(sup[0] if sup else preco - a14)} leva a ~US$ {_fmt(alvo_b)}; "
           f"invalidação acima de US$ {_fmt(preco + 1.5 * a14)}."]
+    if extras:
+        md += ["", "## Conectores"]
+        if extras.get("tv"):
+            tv = extras["tv"]
+            md.append(f"**TradingView ({intervalo}):** consenso **{tv['consenso']}** — médias móveis {tv['medias_moveis']}, "
+                      f"osciladores {tv['osciladores']} · ADX {tv['indicadores']['ADX']} · [abrir gráfico]({tv['link_grafico']})")
+        if extras.get("livro"):
+            lv = extras["livro"]
+            md.append(f"**Livro de ofertas (Binance):** {lv['leitura']} ({lv['desequilibrio']:+.0%}) · spread {lv['spread_pct']:.3f}% · "
+                      f"parede de compra em US$ {_fmt(lv['parede_compra'][0])}, de venda em US$ {_fmt(lv['parede_venda'][0])}")
+        if extras.get("cg"):
+            cg = extras["cg"]
+            md.append(f"**CoinGecko:** #{cg['ranking']} em valor de mercado (US$ {_fmt(cg['valor_mercado'] / 1e9, 1)} bi) · "
+                      f"{abs(cg['dist_maxima_pct'] or 0):.1f}% abaixo da máxima histórica (US$ {_fmt(cg['maxima_historica'])})"
+                      + (f" · dominância BTC {extras['cg_global']['dominancia'].get('BTC')}%" if extras.get("cg_global") else ""))
+        if extras.get("noticias") and extras["noticias"]["noticias"]:
+            md.append("**Notícias (CryptoPanic):**")
+            md += [f"- {n['titulo']} — {n['fonte']}" for n in extras["noticias"]["noticias"][:4]]
     if st or fg:
         md += ["", "## Sentimento"]
     if st and st["mensagens"]:

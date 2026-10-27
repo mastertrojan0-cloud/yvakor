@@ -345,3 +345,7 @@ CATALOGO: dict[str, dict] = {
         "register": _google.gmail_register,
     },
 }
+
+# Análise gráfica de cripto (Binance, TradingView, CoinGecko, CryptoPanic, sentimento)
+from yvakor.connectors.cripto import CATALOGO_CRIPTO as _CRIPTO  # noqa: E402
+CATALOGO.update(_CRIPTO)

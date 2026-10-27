@@ -140,8 +140,10 @@ class Orchestrator:
         self.tools = ToolRegistry(self.settings)
         from yvakor.capacidades import register_capacidades_tools
         register_capacidades_tools(self.tools, self.router)
+        from yvakor import mercado as _mercado
         from yvakor.mercado import registrar_ferramentas as _reg_mercado
         _reg_mercado(self.tools)
+        _mercado.CONECTADO = lambda cid: bool(getattr(self, "connectors", None) and self.connectors.is_connected(cid))
         from yvakor.projetos import GerenciadorProjetos, registrar_ferramentas
         self.projetos = GerenciadorProjetos()
         registrar_ferramentas(self.tools, self.projetos)

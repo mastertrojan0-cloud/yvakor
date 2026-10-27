@@ -227,14 +227,16 @@ conectores(p){
   if(!(D.conectores||[]).length) p.innerHTML += '<div class="cartao">Nenhum conector disponível.</div>';
   (D.conectores||[]).forEach(cn=>{
     const c = document.createElement('div'); c.className='cartao'; p.appendChild(c);
+    const soAtivar = (cn.fields||[]).length===1 && cn.fields[0].key==='ativo';   // conector público: um clique
     const campos = (cn.fields||[]).map(f=>`<label>${esc(f.label)}</label><input type="${f.type==='password'?'password':'text'}" data-k="${esc(f.key)}" autocomplete="off" placeholder="${f.preenchido?'•••••• preenchido — deixe vazio para manter':esc(f.placeholder||'')}" value="${(!f.preenchido&&f.default)?esc(f.default):''}">`).join('');
     c.innerHTML = `<div class="conector"><div class="ic">${cn.icon||'🔌'}</div><div class="corpo"><div class="linha"><h3 style="margin:0">${esc(cn.name)}</h3><span class="chip ${cn.connected?'ok':''}">${cn.connected?'conectado':'desligado'}</span></div>
       <div class="desc" style="margin:2px 0 0">${esc(cn.desc||'')}</div><div class="form" hidden>${campos}${cn.oauth?'<div class="desc" style="margin-top:8px">No app OAuth, registre a URI de redirecionamento: <b>http://localhost:7777/api/oauth/callback</b></div>':''}
       <div class="linha" style="margin-top:10px"><button class="pri sv">${cn.connected?'Atualizar':'Conectar'}</button></div></div>
-      <div class="linha" style="margin-top:10px">${cn.oauth&&!cn.connected?`<button class="pri ent">${cn.can_signin?'Entrar com '+esc(cn.name):'Configurar '+esc(cn.name)}</button>`:''}<button class="ed">${cn.connected?'Editar credenciais':'Credenciais'}</button>${cn.connected?'<button class="perigo ds">Desconectar</button>':''}</div>
+      <div class="linha" style="margin-top:10px">${cn.oauth&&!cn.connected?`<button class="pri ent">${cn.can_signin?'Entrar com '+esc(cn.name):'Configurar '+esc(cn.name)}</button>`:''}${(!cn.connected&&soAtivar)?'<button class="pri lig">Ligar</button>':''}${soAtivar?'':`<button class="ed">${cn.connected?'Editar credenciais':'Credenciais'}</button>`}${cn.connected?'<button class="perigo ds">Desligar</button>':''}</div>
       <div class="msg"></div></div></div>`;
     const ms=c.querySelector('.msg'), form=c.querySelector('.form');
-    c.querySelector('.ed').onclick=()=>form.hidden=!form.hidden;
+    const ed=c.querySelector('.ed'); if(ed) ed.onclick=()=>form.hidden=!form.hidden;
+    const lig=c.querySelector('.lig'); if(lig) lig.onclick=async()=>{ try{ const r=await api(`/api/connectors/${cn.id}/connect`,{fields:{}}); if(r.ok){aviso(cn.name+' ligado'); await carregar();} else msg(ms,r.erro||'falhou',false);}catch(e){msg(ms,e.message,false);} };
     c.querySelector('.sv').onclick=async()=>{ const fields={}; c.querySelectorAll('input[data-k]').forEach(i=>{if(i.value.trim())fields[i.dataset.k]=i.value.trim();});
       try{ const r=await api(`/api/connectors/${cn.id}/connect`,{fields}); if(r.ok){aviso('Conector salvo'); await carregar();} else msg(ms,r.erro||'falhou',false);}catch(e){msg(ms,e.message,false);} };
     const ds=c.querySelector('.ds'); if(ds) ds.onclick=async()=>{ if(!confirm('Desconectar '+cn.name+'?'))return; await api(`/api/connectors/${cn.id}/disconnect`,{}); aviso('Desconectado'); await carregar(); };

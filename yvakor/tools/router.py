@@ -47,7 +47,7 @@ GRUPOS = {
                        "navegador_passar_mouse", "navegador_captura"),
     },
     "mercado": {
-        "prefixos": ("mercado_",),
+        "prefixos": ("mercado_", "binance_", "tradingview_", "coingecko_", "cryptopanic_", "stocktwits_", "medo_"),
         "palavras": ("btc", "bitcoin", "eth", "ethereum", "cripto", "criptomoeda", "stocktwits",
                      "rsi", "macd", "candle", "candles", "cotacao", "cotação", "ativo", "ticker",
                      "binance", "solana", "zcash", "dogecoin", "bolsa", "acao", "ação", "acoes",
