@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YVAKOR — Configurações</title>
+<style>
+  @font-face{font-family:'Inter';src:url('/fonts/Inter.ttf') format('truetype');font-weight:100 900;font-display:swap}
+  @font-face{font-family:'Lora';src:url('/fonts/Lora.ttf') format('truetype');font-weight:400 700;font-display:swap}
+  :root{
+    --bg:#faf9f5; --lateral:#f5f4ee; --card:#ffffff; --txt:#1f1e1d; --dim:#6b6a64; --linha:rgba(31,30,29,.12);
+    --linha2:rgba(31,30,29,.2); --acento:#c96442; --acento-rgb:201,100,66; --ok:#4d8a5f; --erro:#b4443b;
+    --hover:rgba(31,30,29,.06); --sombra:rgba(0,0,0,.07); color-scheme:light;
+    --serif:'Lora',Georgia,serif; --sans:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-tema="claro"]){
+    --bg:#262624; --lateral:#1f1e1d; --card:#30302e; --txt:#faf9f5; --dim:#a8a69e; --linha:rgba(250,249,245,.12);
+    --linha2:rgba(250,249,245,.2); --acento:#d97757; --acento-rgb:217,119,87; --ok:#7fbf8f; --erro:#e07a70;
+    --hover:rgba(250,249,245,.08); --sombra:rgba(0,0,0,.3); color-scheme:dark}}
+  :root[data-tema="escuro"]{
+    --bg:#262624; --lateral:#1f1e1d; --card:#30302e; --txt:#faf9f5; --dim:#a8a69e; --linha:rgba(250,249,245,.12);
+    --linha2:rgba(250,249,245,.2); --acento:#d97757; --acento-rgb:217,119,87; --ok:#7fbf8f; --erro:#e07a70;
+    --hover:rgba(250,249,245,.08); --sombra:rgba(0,0,0,.3); color-scheme:dark}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);font-family:var(--sans);font-size:14.5px;line-height:1.55;height:100vh;display:flex;overflow:hidden}
+  nav{width:260px;background:var(--lateral);border-right:1px solid var(--linha);padding:20px 12px;display:flex;flex-direction:column;gap:2px;overflow-y:auto;flex:0 0 auto}
+  nav h1{font-family:var(--serif);font-weight:500;font-size:22px;padding:0 10px 4px}
+  nav h1 b{color:var(--acento);font-weight:500}
+  nav .sub{font-size:12px;color:var(--dim);padding:0 10px 14px}
+  nav a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;color:var(--txt);text-decoration:none;cursor:pointer;font-size:14px;opacity:.85}
+  nav a:hover{background:var(--hover);opacity:1}
+  nav a.on{background:var(--hover);font-weight:600;opacity:1}
+  nav a .i{width:20px;text-align:center}
+  nav .voltar{margin-top:auto;font-size:13px;color:var(--dim)}
+  main{flex:1;overflow-y:auto;padding:34px 48px 80px}
+  .pagina{max-width:760px;margin:0 auto}
+  .pagina>h2{font-family:var(--serif);font-weight:500;font-size:28px;margin-bottom:4px}
+  .pagina>.lead{color:var(--dim);margin-bottom:26px}
+  .cartao{background:var(--card);border:1px solid var(--linha);border-radius:14px;padding:18px 20px;margin-bottom:16px}
+  .cartao h3{font-size:15px;font-weight:600;margin-bottom:2px}
+  .cartao .desc{color:var(--dim);font-size:13px;margin-bottom:12px}
+  label{display:block;font-size:12.5px;color:var(--dim);margin:10px 0 4px}
+  input[type=text],input[type=password],input[type=number],select,textarea{width:100%;background:var(--bg);color:var(--txt);border:1px solid var(--linha2);border-radius:9px;padding:9px 11px;font:inherit;outline:none}
+  input:focus,select:focus,textarea:focus{border-color:var(--acento);box-shadow:0 0 0 3px rgba(var(--acento-rgb),.14)}
+  textarea{min-height:110px;resize:vertical}
+  .linha{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .linha>*{flex:0 0 auto}.linha>.f{flex:1 1 180px}
+  button{font:inherit;cursor:pointer;border-radius:9px;border:1px solid var(--linha2);background:var(--card);color:var(--txt);padding:8px 14px}
+  button:hover{background:var(--hover)}
+  button.pri{background:var(--acento);border-color:var(--acento);color:#fff}
+  button.pri:hover{filter:brightness(1.08)}
+  button.perigo{color:var(--erro)}
+  button:disabled{opacity:.5;cursor:wait}
+  .chip{display:inline-block;font-size:11.5px;padding:2px 9px;border-radius:999px;border:1px solid var(--linha2);color:var(--dim)}
+  .chip.ok{color:var(--ok);border-color:var(--ok)}.chip.erro{color:var(--erro);border-color:var(--erro)}
+  .msg{font-size:13px;margin-top:8px;min-height:18px}.msg.ok{color:var(--ok)}.msg.erro{color:var(--erro)}
+  .grade{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+  .opcao{border:1px solid var(--linha2);border-radius:12px;padding:14px;cursor:pointer;background:var(--bg)}
+  .opcao:hover{background:var(--hover)}
+  .opcao.on{border-color:var(--acento);box-shadow:0 0 0 3px rgba(var(--acento-rgb),.14)}
+  .opcao b{display:block;margin-bottom:2px}.opcao span{font-size:12.5px;color:var(--dim)}
+  .chave{border-top:1px solid var(--linha);padding:14px 0}.chave:first-of-type{border-top:none}
+  .chave .topo{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.chave .topo b{font-weight:600}
+  .chave .ajuda{font-size:12.5px;color:var(--dim);margin:2px 0 8px}
+  .chave a{color:var(--acento);font-size:12.5px}
+  .grupo{font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--dim);margin:20px 0 6px}
+  .conector{display:flex;gap:14px;align-items:flex-start}
+  .conector .ic{font-size:24px;line-height:1}.conector .corpo{flex:1}
+  .barra{height:8px;border-radius:99px;background:var(--hover);overflow:hidden;margin:6px 0}
+  .barra i{display:block;height:100%;background:var(--ok);transition:width .3s}
+  .barra.economico i{background:#d4a017}.barra.critico i,.barra.bloqueado i{background:var(--erro)}
+  .tag{display:inline-flex;gap:6px;align-items:center;background:var(--hover);border-radius:8px;padding:3px 9px;margin:3px 4px 3px 0;font-size:13px}
+  .tag button{border:none;background:none;padding:0 2px;color:var(--dim)}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--linha)}th{color:var(--dim);font-weight:500}
+  .chaveveio{position:relative}.chaveveio button.olho{position:absolute;right:4px;top:3px;border:none;background:none}
+  .interruptor{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:10px 0;border-top:1px solid var(--linha)}
+  .interruptor:first-of-type{border-top:none}.interruptor small{display:block;color:var(--dim);font-size:12.5px}
+  .interruptor input{width:40px;height:22px;accent-color:var(--acento)}
+  #aviso{position:fixed;right:20px;bottom:20px;background:var(--txt);color:var(--bg);padding:10px 16px;border-radius:10px;opacity:0;transition:opacity .25s;pointer-events:none;max-width:360px}
+  #aviso.ver{opacity:1}
+  @media (max-width:800px){
+    body{flex-direction:column}
+    nav{width:100%;flex-direction:row;overflow-x:auto;padding:8px;border-right:none;border-bottom:1px solid var(--linha);gap:4px}
+    nav h1,nav .sub,nav .voltar{display:none}
+    nav a{white-space:nowrap;padding:6px 10px}
+    main{padding:22px 16px 60px}
+  }
+</style>
+</head>
+<body>
+<nav id="menu">
+  <h1>YVA<b>KOR</b></h1><div class="sub">Configurações</div>
+  <a data-s="geral" class="on"><span class="i">☺</span> Geral</a>
+  <a data-s="modelos"><span class="i">✦</span> Modelos e consumo</a>
+  <a data-s="chaves"><span class="i">🔑</span> Chaves de API</a>
+  <a data-s="conectores"><span class="i">🔌</span> Conectores</a>
+  <a data-s="integracoes"><span class="i">🧩</span> Integrações (MCP)</a>
+  <a data-s="voz"><span class="i">🎙</span> Voz</a>
+  <a data-s="navegador"><span class="i">🌐</span> Navegador e extensão</a>
+  <a data-s="memoria"><span class="i">🧠</span> Memória e dados</a>
+  <a data-s="sobre"><span class="i">ⓘ</span> Sobre</a>
+  <a class="voltar" href="/">← Voltar ao chat</a>
+</nav>
+<main><div class="pagina" id="pagina"></div></main>
+<div id="aviso"></div>
+
+<script>
+const $ = (s, r=document) => r.querySelector(s);
+let D = null, secao = 'geral';
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function api(caminho, corpo){
+  const r = await fetch(caminho, corpo===undefined ? {} : {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(corpo)});
+  let j = {}; try{ j = await r.json(); }catch(e){}
+  if(!r.ok) throw new Error(j.error || j.erro || ('HTTP '+r.status));
+  return j;
+}
+function aviso(t){ const a=$('#aviso'); a.textContent=t; a.classList.add('ver'); setTimeout(()=>a.classList.remove('ver'),2600); }
+function msg(el, t, ok){ el.textContent=t; el.className='msg '+(ok?'ok':'erro'); }
+async function carregar(){ D = await api('/api/ajustes'); desenhar(); }
+
+function desenhar(){
+  document.querySelectorAll('#menu a[data-s]').forEach(a=>a.classList.toggle('on', a.dataset.s===secao));
+  const p = $('#pagina'); p.innerHTML = '';
+  (SECOES[secao]||SECOES.geral)(p);
+  main_scroll();
+}
+function main_scroll(){ $('main').scrollTop = 0; }
+document.querySelectorAll('#menu a[data-s]').forEach(a=>a.onclick=()=>{ secao=a.dataset.s; location.hash=secao; desenhar(); });
+
+function cartao(p, titulo, desc){
+  const c = document.createElement('div'); c.className='cartao';
+  c.innerHTML = `<h3>${esc(titulo)}</h3>` + (desc?`<div class="desc">${esc(desc)}</div>`:'');
+  p.appendChild(c); return c;
+}
+function cabeca(p, titulo, lead){ p.innerHTML += `<h2>${esc(titulo)}</h2><div class="lead">${esc(lead)}</div>`; }
+async function salvarSecao(nome, valores, el){
+  try{ const r = await api('/api/ajustes', {secao:nome, valores}); Object.assign(D[nome], r.valores); msg(el,'Salvo.',true); aviso('Salvo'); }
+  catch(e){ msg(el, 'Não salvou: '+e.message, false); }
+}
+
+const SECOES = {
+/* ------------------------------ GERAL ------------------------------ */
+geral(p){
+  cabeca(p,'Geral','Como o YVAKOR conversa com você e como ele aparece.');
+  const c = cartao(p,'Perfil','Estas informações entram em TODA conversa, como as "preferências pessoais" do Claude.');
+  c.innerHTML += `<label>Como devo te chamar?</label><input type="text" id="g-nome" maxlength="60" value="${esc(D.perfil.nome)}" placeholder="seu nome">
+    <label>Preferências pessoais (tom, formato, o que lembrar)</label>
+    <textarea id="g-pref" maxlength="2000" placeholder="Ex.: Responda curto e direto. Sou desenvolvedor Python no Windows. Prefiro código com comentários em português.">${esc(D.perfil.preferencias)}</textarea>
+    <div class="linha" style="margin-top:10px"><button class="pri" id="g-salvar">Salvar</button><span class="msg" id="g-msg"></span></div>`;
+  $('#g-salvar').onclick = ()=> salvarSecao('perfil', {nome:$('#g-nome').value, preferencias:$('#g-pref').value}, $('#g-msg'));
+  const t = cartao(p,'Aparência','Tema das telas do YVAKOR (o app nativo aplica ao reabrir).');
+  t.innerHTML += `<div class="grade" id="g-tema"></div><div class="msg" id="t-msg"></div>`;
+  [['auto','Automático','Segue o tema do sistema'],['claro','Claro','Fundo creme'],['escuro','Escuro','Cinza quente']].forEach(([id,nome,d])=>{
+    const o=document.createElement('div'); o.className='opcao'+(D.aparencia.tema===id?' on':''); o.innerHTML=`<b>${nome}</b><span>${d}</span>`;
+    o.onclick=async()=>{ await salvarSecao('aparencia',{tema:id},$('#t-msg'));
+      try{ id==='auto'?localStorage.removeItem('yv_tema'):localStorage.setItem('yv_tema',id==='claro'?'light':'dark'); }catch(e){}
+      document.documentElement.setAttribute('data-tema', id==='auto'?'':id); if(id==='auto')document.documentElement.removeAttribute('data-tema'); desenhar(); };
+    $('#g-tema').appendChild(o);
+  });
+},
+/* ----------------------------- MODELOS ----------------------------- */
+async modelos(p){
+  cabeca(p,'Modelos e consumo','Qual IA responde e quanto você aceita gastar com APIs.');
+  const m = D.modelo;
+  const c = cartao(p,'Modo do modelo','Local é grátis e privado; Automático usa a nuvem só nas tarefas pesadas.');
+  c.innerHTML += `<div class="grade" id="m-modos"></div><div class="msg" id="m-msg"></div>`;
+  (m.modos||[]).forEach(x=>{
+    const o=document.createElement('div'); o.className='opcao'+(m.modo===x.id?' on':''); o.innerHTML=`<b>${esc(x.rotulo)}</b><span>${esc(x.descricao)}</span>`;
+    o.onclick=async()=>{ try{ const r=await api('/api/modelo',{modo:x.id}); D.modelo=r; desenhar(); aviso('Modo: '+x.rotulo);}catch(e){msg($('#m-msg'),e.message,false);} };
+    $('#m-modos').appendChild(o);
+  });
+  const l = cartao(p,'Modelo local (Ollama)','Instalado neste computador, sem custo por token.');
+  const locais = m.locais||[]; const atual = (m.local||{}).modelo||'';
+  l.innerHTML += `<select id="m-local">${locais.map(n=>`<option ${n===atual?'selected':''}>${esc(n)}</option>`).join('')||`<option>${esc(atual)||'nenhum modelo encontrado'}</option>`}</select>
+    <div class="desc" style="margin-top:8px">Para instalar outro: <code>ollama pull nome-do-modelo</code></div><div class="msg" id="l-msg"></div>`;
+  $('#m-local').onchange=async e=>{ try{ D.modelo=await api('/api/modelo',{local:e.target.value}); msg($('#l-msg'),'Modelo local trocado.',true);}catch(x){msg($('#l-msg'),x.message,false);} };
+  const ds = (D.chaves||[]).find(k=>k.nome==='DEEPSEEK_API_KEY')||{};
+  const n = cartao(p,'Nuvem (DeepSeek)','');
+  n.innerHTML += `<div class="linha"><span class="chip ${ds.definida?'ok':'erro'}">${ds.definida?'chave definida '+esc(ds.mascara):'sem chave'}</span>
+    <button id="m-ir">Gerenciar chave →</button><button id="m-test">Testar saldo</button></div><div class="msg" id="n-msg"></div>`;
+  $('#m-ir').onclick=()=>{secao='chaves';desenhar();};
+  $('#m-test').onclick=async()=>{ const r=await api('/api/ajustes/chave/testar',{nome:'DEEPSEEK_API_KEY'}); msg($('#n-msg'), r.ok?r.detalhe:r.erro, r.ok); };
+  const o = D.consumo.orcamento||{};
+  const b = cartao(p,'Orçamento de API','Limites por dia/mês. A 70% o YVAKOR economiza, a 90% usa só o local, a 100% bloqueia a nuvem. 0 = sem limite.');
+  b.innerHTML += `<div class="barra ${D.consumo.zona}"><i id="b-barra" style="width:0%"></i></div><div class="desc" id="b-info">Carregando uso…</div>
+    <div class="linha"><div class="f"><label>Por dia (US$)</label><input type="number" step="0.1" min="0" id="b-dia" value="${o.diario_usd}"></div>
+    <div class="f"><label>Por mês (US$)</label><input type="number" step="1" min="0" id="b-mes" value="${o.mensal_usd}"></div>
+    <div class="f"><label>Tokens por dia</label><input type="number" step="10000" min="0" id="b-tok" value="${o.diario_tokens}"></div></div>
+    <div class="linha" style="margin-top:12px"><button class="pri" id="b-salvar">Salvar orçamento</button><span class="msg" id="b-msg"></span></div>`;
+  $('#b-salvar').onclick=()=>salvarSecao('consumo',{diario_usd:$('#b-dia').value,mensal_usd:$('#b-mes').value,diario_tokens:$('#b-tok').value},$('#b-msg'));
+  try{
+    const u = await api('/api/consumo');
+    const pct = Math.min(100, Math.round((u.uso_relativo||0)*100));
+    $('#b-barra').style.width = pct+'%';
+    $('#b-info').textContent = `Hoje: ${(u.hoje.tokens||0).toLocaleString('pt-BR')} tokens · US$ ${(u.hoje.custo||0).toFixed(4)} · zona ${u.zona} · cache respondeu ${u.cache_pct||0}% · ${(u.tokens_economizados||0).toLocaleString('pt-BR')} tokens economizados (7 dias)`;
+  }catch(e){ $('#b-info').textContent='Sem dados de consumo ainda.'; }
+},
+/* ------------------------------ CHAVES ----------------------------- */
+chaves(p){
+  cabeca(p,'Chaves de API','Ficam no arquivo .env deste computador. Depois de salvas, nunca são mostradas de volta — só uma máscara.');
+  const grupos = {}; D.chaves.forEach(k=>(grupos[k.grupo]=grupos[k.grupo]||[]).push(k));
+  Object.keys(grupos).forEach(g=>{
+    p.insertAdjacentHTML('beforeend',`<div class="grupo">${esc(g)}</div>`);
+    const c = cartao(p,'','');  c.querySelector('h3').remove();
+    grupos[g].forEach(k=>{
+      const d = document.createElement('div'); d.className='chave';
+      d.innerHTML = `<div class="topo"><b>${esc(k.rotulo)}</b><span class="chip ${k.definida?'ok':''}">${k.definida?'definida · '+esc(k.mascara):'não definida'}</span>${k.origem==='ambiente'?'<span class="chip">variável de ambiente</span>':''}</div>
+        <div class="ajuda">${esc(k.ajuda)} ${k.link?`<a href="${esc(k.link)}" target="_blank" rel="noopener">obter chave ↗</a>`:''}</div>
+        <div class="linha"><div class="f chaveveio"><input type="password" autocomplete="off" placeholder="${k.definida?'cole para substituir':'cole a chave aqui'}"><button class="olho" type="button" title="Mostrar/ocultar">👁</button></div>
+        <button class="pri sv">Salvar</button>${k.testavel?'<button class="ts">Testar</button>':''}${k.definida?'<button class="perigo rm">Remover</button>':''}</div><div class="msg"></div>`;
+      const inp=d.querySelector('input'), ms=d.querySelector('.msg');
+      d.querySelector('.olho').onclick=()=>inp.type = inp.type==='password'?'text':'password';
+      d.querySelector('.sv').onclick=async()=>{ if(!inp.value.trim()){msg(ms,'Cole a chave primeiro.',false);return;}
+        try{ const r=await api('/api/ajustes/chave',{nome:k.nome,valor:inp.value}); D.chaves=r.chaves; msg(ms,'Salva. Já vale sem reiniciar.',true); aviso(k.rotulo+' salva'); setTimeout(desenhar,700);}catch(e){msg(ms,e.message,false);} };
+      const ts=d.querySelector('.ts'); if(ts) ts.onclick=async()=>{ ts.disabled=true; msg(ms,'Testando…',true);
+        try{ const r=await api('/api/ajustes/chave/testar',{nome:k.nome, valor:inp.value.trim()||null}); msg(ms, r.ok?('✓ '+r.detalhe):('✗ '+r.erro), r.ok);}catch(e){msg(ms,e.message,false);} ts.disabled=false; };
+      const rm=d.querySelector('.rm'); if(rm) rm.onclick=async()=>{ if(!confirm('Remover '+k.rotulo+'?'))return;
+        try{ const r=await api('/api/ajustes/chave',{nome:k.nome,remover:true}); D.chaves=r.chaves; aviso('Removida'); desenhar(); }catch(e){msg(ms,e.message,false);} };
+      c.appendChild(d);
+    });
+  });
+},
+/* ----------------------------- CONECTORES -------------------------- */
+conectores(p){
+  cabeca(p,'Conectores','Serviços que o YVAKOR pode usar por você (e-mail, agenda, GitHub, mensagens…). Cada ação sensível pede sua confirmação.');
+  if(!(D.conectores||[]).length) p.innerHTML += '<div class="cartao">Nenhum conector disponível.</div>';
+  (D.conectores||[]).forEach(cn=>{
+    const c = document.createElement('div'); c.className='cartao'; p.appendChild(c);
+    const campos = (cn.fields||[]).map(f=>`<label>${esc(f.label)}</label><input type="${f.type==='password'?'password':'text'}" data-k="${esc(f.key)}" autocomplete="off" placeholder="${f.preenchido?'•••••• preenchido — deixe vazio para manter':esc(f.placeholder||'')}" value="${(!f.preenchido&&f.default)?esc(f.default):''}">`).join('');
+    c.innerHTML = `<div class="conector"><div class="ic">${cn.icon||'🔌'}</div><div class="corpo"><div class="linha"><h3 style="margin:0">${esc(cn.name)}</h3><span class="chip ${cn.connected?'ok':''}">${cn.connected?'conectado':'desligado'}</span></div>
+      <div class="desc" style="margin:2px 0 0">${esc(cn.desc||'')}</div><div class="form" hidden>${campos}${cn.oauth?'<div class="desc" style="margin-top:8px">No app OAuth, registre a URI de redirecionamento: <b>http://localhost:7777/api/oauth/callback</b></div>':''}
+      <div class="linha" style="margin-top:10px"><button class="pri sv">${cn.connected?'Atualizar':'Conectar'}</button></div></div>
+      <div class="linha" style="margin-top:10px">${cn.oauth&&!cn.connected?`<button class="pri ent">${cn.can_signin?'Entrar com '+esc(cn.name):'Configurar '+esc(cn.name)}</button>`:''}<button class="ed">${cn.connected?'Editar credenciais':'Credenciais'}</button>${cn.connected?'<button class="perigo ds">Desconectar</button>':''}</div>
+      <div class="msg"></div></div></div>`;
+    const ms=c.querySelector('.msg'), form=c.querySelector('.form');
+    c.querySelector('.ed').onclick=()=>form.hidden=!form.hidden;
+    c.querySelector('.sv').onclick=async()=>{ const fields={}; c.querySelectorAll('input[data-k]').forEach(i=>{if(i.value.trim())fields[i.dataset.k]=i.value.trim();});
+      try{ const r=await api(`/api/connectors/${cn.id}/connect`,{fields}); if(r.ok){aviso('Conector salvo'); await carregar();} else msg(ms,r.erro||'falhou',false);}catch(e){msg(ms,e.message,false);} };
+    const ds=c.querySelector('.ds'); if(ds) ds.onclick=async()=>{ if(!confirm('Desconectar '+cn.name+'?'))return; await api(`/api/connectors/${cn.id}/disconnect`,{}); aviso('Desconectado'); await carregar(); };
+    const ent=c.querySelector('.ent'); if(ent) ent.onclick=async()=>{
+      if(!cn.can_signin){ form.hidden=false; msg(ms,'Informe Client ID/Secret (ou defina em Chaves de API) e clique de novo.',true); return; }
+      try{ const r=await api(`/api/connectors/${cn.id}/authorize`,{}); if(!r.ok){msg(ms,r.erro||'falhou',false);return;} window.open(r.auth_url,'_blank'); msg(ms,'Autorize na aba aberta… aguardando.',true);
+        let n=0; const it=setInterval(async()=>{ n++; try{ const j=await api('/api/connectors'); const x=(j.connectors||[]).find(y=>y.id===cn.id); if(x&&x.connected){clearInterval(it); await carregar();} }catch(e){} if(n>40)clearInterval(it); },3000);
+      }catch(e){msg(ms,e.message,false);} };
+  });
+},
+/* ---------------------------- INTEGRAÇÕES MCP ---------------------- */
+integracoes(p){
+  cabeca(p,'Integrações (MCP)','Servidores MCP dão novas ferramentas ao YVAKOR (arquivos, bancos de dados, APIs…). Cada servidor é um programa que roda no seu PC: só adicione os que você confia.');
+  const lista = D.mcp||[];
+  const topo = cartao(p,'Servidores configurados','');
+  topo.innerHTML += `<div class="linha"><button id="x-novo" class="pri">+ Adicionar servidor</button><button id="x-rein">Reiniciar integrações</button><span class="msg" id="x-msg"></span></div>`;
+  $('#x-rein').onclick=async()=>{ try{ const r=await api('/api/ajustes/mcp',{acao:'reiniciar'}); D.mcp=r.mcp; msg($('#x-msg'),'Integrações reiniciadas.',true); desenhar(); }catch(e){msg($('#x-msg'),e.message,false);} };
+  const caixa = document.createElement('div'); p.appendChild(caixa);
+  const form = (s)=>{
+    const c = document.createElement('div'); c.className='cartao';
+    const env = s?Object.entries(s.env||{}).map(([k,v])=>k+'='+v).join('\n'):'';
+    c.innerHTML = `<h3>${s?'Editar '+esc(s.nome):'Novo servidor MCP'}</h3><div class="desc">Exemplo: comando <code>npx</code>, argumentos <code>-y @modelcontextprotocol/server-filesystem E:\\pasta</code></div>
+      <label>Nome (minúsculas, números, - e _)</label><input type="text" id="f-nome" value="${s?esc(s.nome):''}" ${s?'disabled':''} placeholder="filesystem">
+      <label>Comando</label><input type="text" id="f-cmd" value="${s?esc(s.command):''}" placeholder="npx">
+      <label>Argumentos (separados por espaço)</label><input type="text" id="f-args" value="${s?esc((s.args||[]).join(' ')):''}">
+      <label>Pasta de trabalho (opcional)</label><input type="text" id="f-cwd" value="${s?esc(s.cwd||''):''}">
+      <label>Variáveis de ambiente (uma por linha: NOME=valor)</label><textarea id="f-env" style="min-height:70px">${esc(env)}</textarea>
+      <div class="interruptor"><div>Ativo<small>Inicia junto com o YVAKOR</small></div><input type="checkbox" id="f-on" ${!s||s.enabled?'checked':''}></div>
+      <div class="linha"><button class="pri" id="f-sv">Salvar</button><button id="f-cancel">Cancelar</button><span class="msg" id="f-msg"></span></div>`;
+    caixa.innerHTML=''; caixa.appendChild(c);
+    $('#f-cancel').onclick=()=>caixa.innerHTML='';
+    $('#f-sv').onclick=async()=>{ const envo={}; $('#f-env').value.split('\n').forEach(l=>{const i=l.indexOf('='); if(i>0)envo[l.slice(0,i).trim()]=l.slice(i+1).trim();});
+      try{ const r=await api('/api/ajustes/mcp',{acao:'salvar',nome:s?s.nome:$('#f-nome').value.trim(),config:{command:$('#f-cmd').value,args:$('#f-args').value,cwd:$('#f-cwd').value,env:envo,enabled:$('#f-on').checked}});
+        D.mcp=r.mcp; aviso('Servidor salvo — clique em "Reiniciar integrações" para aplicar'); desenhar(); }catch(e){msg($('#f-msg'),e.message,false);} };
+  };
+  $('#x-novo').onclick=()=>form(null);
+  if(!lista.length) p.insertAdjacentHTML('beforeend','<div class="cartao desc">Nenhum servidor configurado ainda.</div>');
+  lista.forEach(s=>{
+    const c = document.createElement('div'); c.className='cartao'; p.appendChild(c);
+    c.innerHTML = `<div class="linha"><h3 style="margin:0">${esc(s.nome)}</h3><span class="chip ${s.vivo?'ok':''}">${s.vivo?'rodando · '+(s.ferramentas||[]).length+' ferramentas':(s.enabled?'parado':'desativado')}</span></div>
+      <div class="desc" style="margin:6px 0"><code>${esc(s.command)} ${esc((s.args||[]).join(' '))}</code></div>${s.erro?`<div class="msg erro">${esc(s.erro)}</div>`:''}
+      <div class="linha"><button class="ed">Editar</button><button class="perigo rm">Remover</button></div>`;
+    c.querySelector('.ed').onclick=()=>{ form(s); caixa.scrollIntoView({behavior:'smooth'}); };
+    c.querySelector('.rm').onclick=async()=>{ if(!confirm('Remover o servidor '+s.nome+'?'))return; const r=await api('/api/ajustes/mcp',{acao:'remover',nome:s.nome}); D.mcp=r.mcp; aviso('Removido'); desenhar(); };
+  });
+},
+/* ------------------------------- VOZ ------------------------------- */
+voz(p){
+  cabeca(p,'Voz','A voz do YVAKOR e como ele fala com você.');
+  const v = D.voz;
+  const c = cartao(p,'Voz de resposta','');
+  c.innerHTML += `<div class="interruptor"><div>Voz ativada<small>Permite falar e ouvir</small></div><input type="checkbox" id="v-hab" ${v.habilitado?'checked':''}></div>
+    <div class="interruptor"><div>Narrar o que está fazendo<small>Avisa em voz alta durante as tarefas</small></div><input type="checkbox" id="v-nar" ${v.narrar?'checked':''}></div>
+    <label>Voz</label><select id="v-voz">${(D.vozes_disponiveis||[]).map(n=>`<option ${n===v.voz_edge?'selected':''}>${esc(n)}</option>`).join('')}</select>
+    <div class="linha"><div class="f"><label>Motor</label><select id="v-tts">${['auto','edge','sapi'].map(x=>`<option ${x===v.tts?'selected':''}>${x}</option>`).join('')}</select></div>
+    <div class="f"><label>Tom (ex.: -12Hz)</label><input type="text" id="v-tom" value="${esc(v.tom)}"></div>
+    <div class="f"><label>Ritmo (ex.: -5%)</label><input type="text" id="v-taxa" value="${esc(v.taxa)}"></div>
+    <div class="f"><label>Acabamento</label><select id="v-efe">${['assinatura','nenhum'].map(x=>`<option ${x===v.efeito?'selected':''}>${x}</option>`).join('')}</select></div></div>
+    <div class="linha" style="margin-top:14px"><button class="pri" id="v-sv">Salvar</button><button id="v-ts">▶ Ouvir</button><span class="msg" id="v-msg"></span></div>`;
+  $('#v-sv').onclick=()=>salvarSecao('voz',{habilitado:$('#v-hab').checked,narrar:$('#v-nar').checked,voz_edge:$('#v-voz').value,tts:$('#v-tts').value,tom:$('#v-tom').value,taxa:$('#v-taxa').value,efeito:$('#v-efe').value},$('#v-msg'));
+  $('#v-ts').onclick=async()=>{ await $('#v-sv').onclick(); try{ await api('/api/ajustes/voz/testar',{}); msg($('#v-msg'),'Falando…',true);}catch(e){msg($('#v-msg'),e.message,false);} };
+},
+/* ---------------------------- NAVEGADOR ---------------------------- */
+navegador(p){
+  cabeca(p,'Navegador e extensão','O que o YVAKOR pode fazer nos sites, pela extensão do Chrome.');
+  const e = D.extensao||{modo:'perguntar',permitidos:[],bloqueados:[],modos:[]};
+  const c = cartao(p,'Permissões','Bancos e pagamentos sempre perguntam, em qualquer modo.');
+  c.innerHTML += `<div class="grade" id="n-modos"></div><div class="msg" id="n-msg"></div>`;
+  (e.modos||[{id:'perguntar',rotulo:'Perguntar antes',descricao:'Pede permissão em cada site novo'},{id:'autonomo',rotulo:'Autônomo',descricao:'Age sem perguntar (menos em ações sensíveis)'}]).forEach(x=>{
+    const o=document.createElement('div'); o.className='opcao'+(e.modo===x.id?' on':''); o.innerHTML=`<b>${esc(x.rotulo||x.id)}</b><span>${esc(x.descricao||'')}</span>`;
+    o.onclick=async()=>{ try{ D.extensao=await api('/api/extensao/politica',{modo:x.id}); desenhar(); aviso('Modo atualizado'); }catch(er){msg($('#n-msg'),er.message,false);} };
+    $('#n-modos').appendChild(o);
+  });
+  [['permitidos','Sites permitidos','permitir'],['bloqueados','Sites bloqueados','bloquear']].forEach(([chave,titulo,acao])=>{
+    const l = cartao(p,titulo,'');
+    l.innerHTML += `<div>${(e[chave]||[]).map(h=>`<span class="tag">${esc(h)}<button title="Remover" data-h="${esc(h)}">×</button></span>`).join('')||'<span class="desc">Nenhum.</span>'}</div>
+      <div class="linha" style="margin-top:10px"><div class="f"><input type="text" placeholder="exemplo.com" class="novo"></div><button class="add">Adicionar</button></div>`;
+    l.querySelectorAll('.tag button').forEach(b=>b.onclick=async()=>{ D.extensao=await api('/api/extensao/politica',{remover:b.dataset.h}); desenhar(); });
+    l.querySelector('.add').onclick=async()=>{ const v=l.querySelector('.novo').value.trim(); if(!v)return; try{ D.extensao=await api('/api/extensao/politica',{[acao]:v}); desenhar(); }catch(er){aviso(er.message);} };
+  });
+},
+/* ------------------------------ MEMÓRIA ---------------------------- */
+memoria(p){
+  cabeca(p,'Memória e dados','O que o YVAKOR aprende, guarda e quanto espaço usa.');
+  const m = D.memoria;
+  const c = cartao(p,'Aprendizado','');
+  c.innerHTML += `<div class="interruptor"><div>Aprender com o modelo local<small>Extrai fatos e skills em segundo plano mesmo sem a nuvem (usa CPU)</small></div><input type="checkbox" id="me-apr" ${m.aprender_local?'checked':''}></div>
+    <label>Guardar registros operacionais por (dias)</label><input type="number" min="1" max="365" id="me-dias" value="${m.reter_operacionais_dias}">
+    <div class="linha" style="margin-top:12px"><button class="pri" id="me-sv">Salvar</button><span class="msg" id="me-msg"></span></div>`;
+  $('#me-sv').onclick=()=>salvarSecao('memoria',{aprender_local:$('#me-apr').checked,reter_operacionais_dias:$('#me-dias').value},$('#me-msg'));
+  const s = D.sistema;
+  const b = cartao(p,'Bancos de dados e backups',`Espaço livre no disco: ${(s.livre_mb/1024).toFixed(1)} GB. O YVAKOR repara e faz backup sozinho (a cada 6 h, guarda os 5 últimos).`);
+  b.innerHTML += `<table><tr><th>Banco</th><th>Tamanho</th><th>Backups</th></tr>${Object.keys(s.bancos).map(n=>`<tr><td>${esc(n)}</td><td>${s.bancos[n]} MB</td><td>${s.backups[n]||0}</td></tr>`).join('')}</table>
+    <div class="linha" style="margin-top:12px"><button id="me-bk">Fazer backup agora</button><span class="msg" id="bk-msg"></span></div>`;
+  $('#me-bk').onclick=async()=>{ $('#me-bk').disabled=true; try{ await api('/api/banco',{}); msg($('#bk-msg'),'Backup feito.',true); await carregar(); }catch(e){msg($('#bk-msg'),e.message,false);} };
+},
+/* ------------------------------- SOBRE ----------------------------- */
+sobre(p){
+  cabeca(p,'Sobre','');
+  const c = cartao(p,'YVAKOR','Agente pessoal evolutivo — local primeiro, com a nuvem só quando precisa.');
+  c.innerHTML += `<table><tr><td>Versão</td><td>${esc(D.versao)}</td></tr><tr><td>Build</td><td>${esc(D.build)}</td></tr><tr><td>Pasta</td><td><code>${esc(D.sistema.raiz)}</code></td></tr></table>
+    <div class="linha" style="margin-top:14px"><a href="/galeria"><button>Galeria</button></a><a href="/dispositivos"><button>Dispositivos</button></a><a href="/api/health"><button>Saúde do sistema</button></a></div>`;
+  const a = cartao(p,'Atalhos','');
+  a.innerHTML += `<table><tr><td><code>Ctrl+K</code></td><td>Buscar conversas</td></tr><tr><td><code>Ctrl+N</code></td><td>Nova conversa</td></tr><tr><td><code>Ctrl+Shift+T</code></td><td>Alternar tema (app nativo)</td></tr><tr><td><code>Esc</code></td><td>Parar a resposta</td></tr><tr><td><code>/resumir /pesquisar /explicar…</code></td><td>Atalhos de comando no chat</td></tr></table>`;
+}
+};
+
+try{ const t=localStorage.getItem('yv_tema'); if(t) document.documentElement.setAttribute('data-tema', t==='dark'?'escuro':'claro'); }catch(e){}
+secao = (location.hash||'#geral').slice(1); if(!SECOES[secao]) secao='geral';
+carregar().catch(e=>{ $('#pagina').innerHTML='<div class="cartao">Não consegui carregar as configurações: '+esc(e.message)+'</div>'; });
+</script>
+</body>
+</html>

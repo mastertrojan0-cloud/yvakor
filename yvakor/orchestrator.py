@@ -692,6 +692,12 @@ class Orchestrator:
             "(“e agora?”, “isso”, “ele”, “sim”, “não”, “faça”), use os turnos "
             "anteriores; não peça ao usuário para repetir o contexto.")
         parts = [identity, principles, regras]
+        try:
+            from yvakor.ajustes import bloco_perfil
+            if bloco_perfil():
+                parts.append(bloco_perfil())
+        except Exception:
+            pass
         if relevant_skills:
             parts.append("## SKILLS RELEVANTES (siga estes procedimentos)\n"
                          + "\n---\n".join(s[:1200] for s in relevant_skills))
@@ -1385,6 +1391,12 @@ class Orchestrator:
             "(Windows). Responda em português do Brasil, direto. Aja em vez de "
             "perguntar; só afirme que fez algo se uma ferramenta confirmou; se "
             f"não souber, diga. Agora são {agora}."]
+        try:
+            from yvakor.ajustes import bloco_perfil
+            if bloco_perfil():
+                partes.append(bloco_perfil()[:700])
+        except Exception:
+            pass
         if contexto_cerebro:
             partes.append("Contexto conhecido:\n" + contexto_cerebro[:600])
         if extra_context:

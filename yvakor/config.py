@@ -26,4 +26,9 @@ def load_settings() -> dict:
     if yaml is None:
         raise RuntimeError("Instale pyyaml: pip install -r requirements.txt")
     with open(cfg_path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        cfg = yaml.safe_load(f)
+    try:
+        from yvakor.ajustes import aplicar_ao_settings
+        return aplicar_ao_settings(cfg)
+    except Exception:
+        return cfg

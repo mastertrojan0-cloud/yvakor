@@ -2284,6 +2284,11 @@ class App:
         self.btn_cam.pack(side="right")
         self._hover(self.btn_cam, BG, PANEL2, fg_normal=MUTED, fg_hover=TEAL)
         self.btn_cam.bind("<Button-1>", lambda e: self.abrir_cameras())
+        self.btn_ajustes = tk.Label(topo, text="⚙ AJUSTES", bg=BG, fg=MUTED,
+                                    font=(UI_SEMI, 7), padx=9, cursor="hand2")
+        self.btn_ajustes.pack(side="right", padx=(0, 4))
+        self._hover(self.btn_ajustes, BG, PANEL2, fg_normal=MUTED, fg_hover=GOLD)
+        self.btn_ajustes.bind("<Button-1>", lambda e: webbrowser.open(BASE + "/ajustes"))
         self.btn_tela = tk.Label(topo, text="TELA", bg=BG, fg=MUTED,
                                  font=(UI_SEMI, 7), padx=9,
                                  cursor="hand2")

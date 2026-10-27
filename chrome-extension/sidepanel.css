@@ -543,7 +543,7 @@ body { font-size: 14px; }
 .marca-texto p { display: none; }
 .pill { font-size: 10.5px; padding: 3px 9px; background: transparent; border-color: var(--linha-forte); }
 .pill.ok { color: var(--agua); border-color: var(--linha-forte); }
-#nova, #voz { width: 30px; height: 30px; border: 0; background: transparent; border-radius: 8px;
+#nova, #voz, #ajustes { width: 30px; height: 30px; border: 0; background: transparent; border-radius: 8px;
   color: var(--texto); font-size: 17px; }
 #voz { font-size: 14px; }
 #nova:hover, #voz:hover { background: var(--hover); }
@@ -631,3 +631,6 @@ body { font-size: 14px; }
 .acoes-msg button:hover { opacity: 1; background: var(--hover); }
 .acoes-msg button.nota.on { opacity: 1; background: var(--ouro-claro); }
 .msg.agente:not(:last-child) .regen { display: none; }
+
+#ajustes { width: 30px; height: 30px; border: 0; background: transparent; border-radius: 8px; color: var(--texto); font-size: 15px; cursor: pointer; }
+#ajustes:hover { background: var(--hover); }

@@ -753,6 +753,9 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && ocupado && $("confirmacao").classList.contains("oculto")) pararTarefa();
 });
 $("nova").addEventListener("click", limparConversa);
+$("ajustes").addEventListener("click", () => {
+  try { chrome.tabs.create({ url: BASE + "/ajustes" }); } catch (e) { window.open(BASE + "/ajustes", "_blank"); }
+});
 
 /* ------------------------------ voz -------------------------------- */
 function limparFala(t) {

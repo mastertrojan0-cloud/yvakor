@@ -325,6 +325,45 @@ def get_agent() -> Orchestrator:
         return _agent
 
 
+def _mcp_snapshot(ag) -> list[dict]:
+    from yvakor import ajustes
+    vivos = {}
+    m = getattr(ag, "mcp", None)
+    if m is not None:
+        vivos = {n: {"vivo": bool(c.proc and c.proc.poll() is None), "ferramentas": [t.get("name") for t in c.tools],
+                     "erro": c.erro} for n, c in m.clientes.items()}
+    return [{**s, **vivos.get(s["nome"], {"vivo": False, "ferramentas": [], "erro": ""})} for s in ajustes.mcp_listar()]
+
+
+def _snapshot_ajustes(ag) -> dict:
+    """Tudo que a tela de Ajustes precisa — sem nenhum segredo (só máscaras)."""
+    from yvakor import ajustes, banco
+    aj = ajustes.obter()
+    o = getattr(ag.router, "otim", None)
+    try:
+        conectores = ag.connectors.catalog()
+    except Exception:
+        conectores = []
+    try:
+        politica = ag.politica_sites.info()
+    except Exception:
+        politica = {}
+    return {
+        "versao": VERSAO, "build": BUILD,
+        "perfil": aj["perfil"], "aparencia": aj["aparencia"], "voz": aj["voz"], "memoria": aj["memoria"],
+        "vozes_disponiveis": ajustes.VOZES_EDGE,
+        "modelo": _info_modelo(ag),
+        "consumo": {"orcamento": (o.cfg["orcamento"] if o else aj["consumo"]), "zona": (o.zona() if o else "normal")},
+        "chaves": ajustes.estado_chaves(),
+        "conectores": conectores,
+        "mcp": _mcp_snapshot(ag),
+        "extensao": politica,
+        "sistema": {"raiz": str(ROOT), "bancos": {p.name: round(p.stat().st_size / 1048576, 2) for p in banco.descobrir()},
+                    "backups": {p.name: len(banco.backups_de(p)) for p in banco.descobrir()},
+                    "livre_mb": round(banco.espaco_livre_mb())},
+    }
+
+
 def _passos_da_resposta(ag, sid) -> list[str]:
     """Ferramentas/etapas usadas nesta resposta (para a interface mostrar o que foi feito)."""
     try:
@@ -564,6 +603,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(403, {"error": "host não autorizado"})
         if self.path.startswith("/camera/"):
             return self._camera_janela()
+        if self.path in ("/ajustes", "/ajustes/", "/configuracoes", "/configuracoes/"):
+            html = (INTERFACE / "ajustes.html").read_bytes()
+            return self._send(200, _injetar_token(html), "text/html; charset=utf-8")
+        if self.path == "/api/ajustes":
+            return self._json(200, _snapshot_ajustes(get_agent()))
         if self.path in ("/dispositivos", "/dispositivos/"):
             html = (INTERFACE / "dispositivos.html").read_bytes()
             return self._send(200, _injetar_token(html),
@@ -1431,6 +1475,57 @@ class Handler(BaseHTTPRequestHandler):
                 except (TypeError, ValueError):
                     return self._json(400, {"error": "valores inválidos"})
                 return self._json(200, {"ok": True, "orcamento": novo, "zona": o.zona()})
+
+            # ---------------- Ajustes (central de configurações) ----------------
+            if self.path == "/api/ajustes":
+                from yvakor import ajustes
+                try:
+                    novo = ajustes.salvar_secao(str(data.get("secao") or ""), data.get("valores") or {})
+                    ajustes.aplicar_vivo(ag, data["secao"], {k: novo[k] for k in (data.get("valores") or {}) if k in novo})
+                except ValueError as exc:
+                    return self._json(400, {"error": str(exc)})
+                return self._json(200, {"ok": True, "valores": novo})
+            if self.path == "/api/ajustes/chave":
+                from yvakor import ajustes
+                nome = str(data.get("nome") or "")
+                try:
+                    if data.get("remover"):
+                        r = ajustes.remover_chave(nome)
+                    else:
+                        r = ajustes.definir_chave(nome, data.get("valor"))
+                except ValueError as exc:
+                    return self._json(400, {"error": str(exc)})
+                ajustes.recarregar_provedores(ag)
+                return self._json(200, {"ok": True, **r, "chaves": ajustes.estado_chaves()})
+            if self.path == "/api/ajustes/chave/testar":
+                from yvakor import ajustes
+                return self._json(200, ajustes.testar_chave(str(data.get("nome") or ""), data.get("valor") or None))
+            if self.path == "/api/ajustes/voz/testar":
+                tts = getattr(getattr(ag, "voz", None), "tts", None)
+                if tts is None:
+                    return self._json(400, {"error": "voz indisponível"})
+                r = tts.falar(str(data.get("texto") or "Olá, eu sou o YVAKOR. Esta é a minha voz."),
+                              assincrono=True, prioridade=3)
+                return self._json(200, {"ok": bool(r.get("ok", True)), **{k: r[k] for k in ("voz", "motor") if k in r}})
+            if self.path == "/api/ajustes/mcp":
+                from yvakor import ajustes
+                acao = str(data.get("acao") or "")
+                try:
+                    if acao == "salvar":
+                        ajustes.mcp_salvar(str(data.get("nome") or ""), data.get("config") or {})
+                    elif acao == "remover":
+                        ajustes.mcp_remover(str(data.get("nome") or ""))
+                    elif acao == "reiniciar":
+                        m = getattr(ag, "mcp", None)
+                        if m is not None:
+                            m.parar()
+                            m.clientes.clear()
+                            m.iniciar()
+                    else:
+                        return self._json(400, {"error": "ação inválida"})
+                except ValueError as exc:
+                    return self._json(400, {"error": str(exc)})
+                return self._json(200, {"ok": True, "mcp": _mcp_snapshot(ag)})
 
             if self.path == "/api/chat/cancelar":
                 alvos = ag.cancelar(str(data.get("session") or "") or None)
