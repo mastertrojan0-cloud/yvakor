@@ -40,6 +40,7 @@ from yvakor import proc as _ywproc
 import threading
 import time
 import urllib.parse
+import urllib.request
 from datetime import datetime
 
 # Console Windows usa cp1252 por padrão e quebra com emojis/acentos.
@@ -247,14 +248,41 @@ def _injetar_token(html: bytes) -> bytes:
     return html[:pos] + shim + html[pos:]
 
 
-def _provedor_efetivo(agent) -> str:
-    padrao = agent.settings["llm"]["default_provider"]
+def _modelos_locais(agent) -> list[str]:
+    """Modelos de CHAT instalados no Ollama (exclui o de visão e embeddings)."""
     try:
-        if agent.router.sem_externos() and "ollama" in agent.settings["llm"]["providers"]:
-            return "ollama"
+        base = agent.settings["llm"]["providers"]["ollama"]["base_url"].rstrip("/")
+        with urllib.request.urlopen(base + "/api/tags", timeout=2) as r:
+            nomes = [m["name"] for m in json.loads(r.read().decode()).get("models", [])]
     except Exception:
-        pass
-    return padrao
+        return []
+    visao = str((agent.settings.get("visao") or {}).get("modelo") or "").split(":")[0]
+    return [n for n in nomes
+            if not (visao and n.split(":")[0] == visao)
+            and not any(k in n.lower() for k in ("embed", "nomic", "bge-"))]
+
+
+def _info_modelo(agent) -> dict:
+    info = agent.router.info()
+    info["locais"] = _modelos_locais(agent)
+    return info
+
+
+def _provedor_efetivo(agent) -> str:
+    """Quem responde AGORA, segundo o estado vivo do roteador (modo escolhido,
+    nuvem fora, etc.) — não o YAML estático."""
+    try:
+        return agent.router.info()["efetivo"]
+    except Exception:
+        return agent.settings["llm"]["default_provider"]
+
+
+def _modelo_efetivo(agent) -> str:
+    nome = _provedor_efetivo(agent)
+    try:
+        return agent.router.providers[nome].model
+    except Exception:
+        return agent.settings["llm"]["providers"].get(nome, {}).get("model", "")
 
 
 def get_agent() -> Orchestrator:
@@ -607,6 +635,9 @@ class Handler(BaseHTTPRequestHandler):
             import os as _os
             return self._json(200, {"ok": True, "pid": _os.getpid(),
                                     "ts": time.time()})
+        # Seletor de modelo: modo atual, modos disponíveis e modelos locais.
+        if self.path == "/api/modelo":
+            return self._json(200, {"ok": True, **_info_modelo(get_agent())})
         # Bootstrap do token para clientes de navegador (a extensão). O CORS
         # só deixa origens confiáveis LEREM esta resposta; um site qualquer
         # consegue disparar a requisição, mas não consegue ler o token.
@@ -682,8 +713,8 @@ class Handler(BaseHTTPRequestHandler):
                 # saldo) a interface mostra o modelo local que está respondendo,
                 # em vez de "deepseek" enquanto quem responde é o ollama.
                 "provider": _provedor_efetivo(agent),
-                "model": agent.settings["llm"]["providers"][
-                    _provedor_efetivo(agent)]["model"],
+                "modo_modelo": agent.router.modo,
+                "model": _modelo_efetivo(agent),
                 "skills": skills,
                 "episodes": episodes,
                 "cowork_pending": agent.cowork.pending_count(),
@@ -1261,6 +1292,22 @@ class Handler(BaseHTTPRequestHandler):
                 r = ag.connectors.authorize_url(cid)
                 return self._json(200 if r.get("ok") else 400, r)
 
+            # Escolha do modelo: {"modo": local|auto|deepseek, "local": "<nome>"}
+            if self.path == "/api/modelo":
+                try:
+                    if data.get("local"):
+                        nome = str(data["local"]).strip()
+                        if nome not in _modelos_locais(ag):
+                            return self._json(400, {
+                                "error": f"modelo '{nome}' não está instalado "
+                                         "no Ollama (use: ollama pull <nome>)"})
+                        ag.router.definir_modelo_local(nome)
+                    if data.get("modo"):
+                        ag.router.definir_modo(str(data["modo"]))
+                except ValueError as exc:
+                    return self._json(400, {"error": str(exc)})
+                return self._json(200, {"ok": True, **_info_modelo(ag)})
+
             # resposta do usuário a uma ação protegida (popup da interface)
             if self.path == "/api/confirm":
                 sid = data.get("session") or ag.episodic.active_id
@@ -1546,8 +1593,8 @@ class Handler(BaseHTTPRequestHandler):
             msg = str(e)
             if "401" in msg or "unauthorized" in msg.lower():
                 msg = ("A chave da IA foi recusada pelo provedor (HTTP 401). "
-                       "Edite E:\\YVAKOR\\yvakor\\.env e coloque uma "
-                       "DEEPSEEK_API_KEY válida, depois reinicie o YVAKOR. "
+                       "Escolha o modelo Local no seletor de modelo, ou "
+                       "configure uma chave válida no arquivo .env e reinicie. "
                        "O resto do sistema (navegador, rede, arquivos, voz, "
                        "cérebro) continua funcionando sem ela.")
             return self._json(500, {"error": msg})

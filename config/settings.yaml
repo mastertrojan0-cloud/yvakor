@@ -8,6 +8,10 @@ agent:
   timeout_s: 180             # teto duro por execução do agente
   reflection_enabled: true   # loop de autoavaliação pós-tarefa
   avaliar_auto: true         # avalia qualidade da resposta em segundo plano
+  # Aprender/avaliar em segundo plano quando só há o modelo local (modo "local"
+  # ou nuvem fora). Padrão false: o 3B em CPU leva minutos por extração e
+  # competiria com o chat pela CPU. Ligue se tiver um modelo local rápido.
+  aprender_local: false
   ferramentas_nativas: false # opt-in: o provedor atual trava com tools; JSON é o padrão
   router_ferramentas: true   # envia somente as ferramentas relevantes
   max_ferramentas: 14        # teto por mensagem
@@ -18,8 +22,14 @@ contexto:
   max_blocos: 32             # seções/parágrafos mantidos por mensagem
 
 llm:
-  # Provider padrão enquanto o local não está pronto
-  default_provider: "deepseek"
+  # Modo de uso do modelo — o usuário troca em tempo de execução (rodapé da
+  # interface / painel da extensão / POST /api/modelo) e a escolha é salva em
+  # data/preferencias.json. Este valor é só o padrão de uma instalação nova:
+  #   local    → só o modelo local (Ollama); nunca chama a nuvem   (PADRÃO)
+  #   auto     → local primeiro; DeepSeek nas tarefas mais profundas
+  #   deepseek → DeepSeek primeiro; o local entra se ele falhar
+  modo_padrao: "local"
+  default_provider: "ollama"
 
   providers:
     deepseek:

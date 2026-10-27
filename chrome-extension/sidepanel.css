@@ -447,3 +447,17 @@ body {
 /* Painel de processo: cabeçalho clicável (expande/recolhe os passos) */
 .proc-topo { cursor: pointer; user-select: none; }
 .proc-topo:hover { opacity: .85; }
+
+/* Seletor de modelo no cabeçalho */
+#modelo {
+  max-width: 104px;
+  font-size: 9px;
+  padding: 3px 4px;
+  border: 1px solid var(--linha-forte);
+  border-radius: 6px;
+  background: #fff;
+  color: #555047;
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+#modelo:hover { border-color: var(--ouro); }

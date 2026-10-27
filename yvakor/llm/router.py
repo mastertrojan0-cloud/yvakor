@@ -2,12 +2,29 @@
 É aqui que a independência de IA externa acontece gradualmente:
 mova categorias de 'external' para 'local' no settings.yaml."""
 from __future__ import annotations
+import json
 import logging
 import re
 import threading
 import time
 
+from yvakor.config import ROOT
 from yvakor.llm.adapter import build_provider
+
+# Modos de uso do modelo (escolhidos pelo usuário, salvos em preferencias.json).
+MODOS = {
+    "local": {
+        "rotulo": "Local",
+        "descricao": "Só o modelo local (Ollama). Nunca chama a nuvem."},
+    "auto": {
+        "rotulo": "Automático",
+        "descricao": "Local primeiro; DeepSeek nas tarefas mais profundas."},
+    "deepseek": {
+        "rotulo": "DeepSeek",
+        "descricao": "DeepSeek primeiro; o local entra se ele falhar."},
+}
+MODO_PADRAO = "local"
+ARQ_PREFS = ROOT / "data" / "preferencias.json"
 
 _log = logging.getLogger("yvakor.llm")
 # Erros em que insistir não adianta (sem saldo / credencial inválida).
@@ -50,6 +67,71 @@ class LLMRouter:
         self._cooldown: dict[str, float] = {}
         self._probe_ok_ate = 0.0
         self._lock = threading.Lock()
+        # Modo escolhido pelo usuário (preferência salva) > settings > padrão.
+        padrao = str(llm.get("modo_padrao") or MODO_PADRAO).lower()
+        self.modo = padrao if padrao in MODOS else MODO_PADRAO
+        salvo = str(self._ler_pref("modelo_modo") or "").lower()
+        if salvo in MODOS:
+            self.modo = salvo
+        local = self._ler_pref("modelo_local")
+        if local and "ollama" in self.providers:
+            self.providers["ollama"].model = str(local)
+
+    # ------------------------------------------------------------------ #
+    # Escolha do modelo (persistida)
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _ler_pref(chave: str):
+        try:
+            return json.loads(ARQ_PREFS.read_text(encoding="utf-8")).get(chave)
+        except Exception:
+            return None
+
+    def _gravar_pref(self, chave: str, valor) -> None:
+        with self._lock:
+            try:
+                dados = json.loads(ARQ_PREFS.read_text(encoding="utf-8"))
+                if not isinstance(dados, dict):
+                    dados = {}
+            except Exception:
+                dados = {}
+            dados[chave] = valor
+            ARQ_PREFS.parent.mkdir(parents=True, exist_ok=True)
+            ARQ_PREFS.write_text(
+                json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def definir_modo(self, modo: str) -> None:
+        modo = str(modo or "").lower()
+        if modo not in MODOS:
+            raise ValueError(f"modo inválido: {modo!r} "
+                             f"(use: {', '.join(MODOS)})")
+        self.modo = modo
+        self._gravar_pref("modelo_modo", modo)
+        # Trocar de modo é um "tentar de novo": o usuário pode ter recarregado
+        # o saldo do DeepSeek, então zera o breaker e o cache do probe.
+        with self._lock:
+            self._cooldown.clear()
+            self._probe_ok_ate = 0.0
+
+    def definir_modelo_local(self, nome: str) -> None:
+        nome = str(nome or "").strip()
+        if not nome or "ollama" not in self.providers:
+            raise ValueError("modelo local inválido")
+        self.providers["ollama"].model = nome
+        self._gravar_pref("modelo_local", nome)
+
+    def info(self) -> dict:
+        ds = self._cooldown.get("deepseek", 0.0) - time.time()
+        return {
+            "modo": self.modo,
+            "modos": [{"id": k, **v} for k, v in MODOS.items()],
+            "efetivo": ("ollama" if self.sem_externos()
+                        else self.pick_provider("analise_complexa").name),
+            "local": {"modelo": getattr(self.providers.get("ollama"), "model", "")},
+            "deepseek": {
+                "modelo": getattr(self.providers.get("deepseek"), "model", ""),
+                "indisponivel_s": max(0, round(ds)) if ds > 0 else 0},
+        }
 
     def classify(self, message: str) -> str:
         """Classificação leve por keywords (zero custo).
@@ -70,8 +152,10 @@ class LLMRouter:
         # (código, arquitetura, análise complexa, pesquisa, prospecção — e o
         # loop de ferramentas do agente, que usa 'analise_complexa'). Em ambos
         # os casos o outro provider entra como fallback.
+        if self.modo == "local" and "ollama" in self.providers:
+            return self.providers["ollama"]
         profundas = set(self.routing.get("external", []))
-        if task_type in profundas:
+        if self.modo == "deepseek" or task_type in profundas:
             order = self.routing["fallback_order"]            # deepseek primeiro
         else:
             resto = [n for n in self.routing["fallback_order"] if n != "ollama"]
@@ -126,6 +210,8 @@ class LLMRouter:
     def sem_externos(self) -> bool:
         """True se há provider externo configurado e TODOS estão em cooldown
         (ex.: DeepSeek sem saldo). Não faz chamada de rede."""
+        if self.modo == "local":
+            return True            # escolha do usuário: só o modelo local
         ext = self.externos()
         return bool(ext) and all(self._em_cooldown(n) for n in ext)
 
@@ -133,6 +219,8 @@ class LLMRouter:
         """Algum provider externo está respondendo? Faz um probe BARATO
         (1 token) só quando o resultado anterior expirou. Evita gastar o 1º
         passo do agente, com prompt pesado, num provider que está sem saldo."""
+        if self.modo == "local":
+            return False           # modo local: nem tenta a nuvem
         ext = self.externos()
         if not ext:
             return False
@@ -153,6 +241,10 @@ class LLMRouter:
         return False
 
     def _ordem(self, task_type: str, forcar: str | None) -> list:
+        if self.modo == "local" and "ollama" in self.providers:
+            # Estrito: mesmo um `forcar="deepseek"` explícito (absorção etc.)
+            # fica no local — o usuário escolheu não usar a nuvem.
+            return [self.providers["ollama"]]
         primeiro = self.providers.get(forcar) if forcar else None
         primeiro = primeiro or self.pick_provider(task_type)
         resto = [self.providers[n] for n in self.routing["fallback_order"]

@@ -70,11 +70,60 @@ async function ping() {
     await api("/api/ping", { timeout: 2500 });
     statusEl.textContent = "online";
     statusEl.className = "pill ok";
+    if (!modeloCarregado) carregarModelo();   // voltou do offline: recarrega
   } catch (e) {
     statusEl.textContent = "offline";
     statusEl.className = "pill erro";
+    modeloCarregado = false;
   }
 }
+
+/* ------------------------- seletor de modelo ------------------------ */
+// Local (padrão) / Automático / DeepSeek. A escolha é salva no núcleo.
+const modeloSel = $("modelo");
+let modeloCarregado = false;
+async function carregarModelo() {
+  try {
+    const j = await api("/api/modelo", { timeout: 4000 });
+    modeloSel.innerHTML = "";
+    for (const m of j.modos || []) {
+      const o = document.createElement("option");
+      o.value = "modo:" + m.id;
+      o.textContent = m.id === "local" && (j.local || {}).modelo
+        ? `${m.rotulo} · ${j.local.modelo}` : m.rotulo;
+      o.title = m.descricao;
+      o.selected = m.id === j.modo;
+      modeloSel.appendChild(o);
+    }
+    const locais = j.locais || [];
+    if (locais.length > 1) {                    // só oferece se houver escolha
+      const g = document.createElement("optgroup");
+      g.label = "Modelo local";
+      for (const n of locais) {
+        const o = document.createElement("option");
+        o.value = "local:" + n;
+        o.textContent = n;
+        g.appendChild(o);
+      }
+      modeloSel.appendChild(g);
+    }
+    modeloCarregado = true;
+  } catch (e) { /* núcleo offline */ }
+}
+modeloSel.addEventListener("change", async () => {
+  const [tipo, ...resto] = modeloSel.value.split(":");
+  const valor = resto.join(":");
+  try {
+    const j = await api("/api/modelo", {
+      method: "POST", body: tipo === "modo" ? { modo: valor } : { local: valor } });
+    const rot = ((j.modos || []).find(m => m.id === j.modo) || {}).rotulo || j.modo;
+    add("agente", `Modelo: **${rot}**` +
+        ((j.local || {}).modelo ? ` · local: ${j.local.modelo}` : ""));
+  } catch (e) {
+    add("agente", "Não consegui trocar o modelo: " + e.message);
+  }
+  carregarModelo();
+});
 
 async function carregarBuild() {
   try {

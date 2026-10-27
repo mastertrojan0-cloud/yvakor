@@ -103,6 +103,14 @@
   .painel header em{font-style:normal; font-size:9px; letter-spacing:.06em;
     color:var(--solimoes); white-space:nowrap; overflow:hidden;
     text-overflow:ellipsis; max-width:160px}
+  /* seletor de modelo no cabeçalho */
+  .painel header .sel-modelo{background:transparent; color:var(--solimoes);
+    border:1px solid currentColor; border-radius:6px; font:inherit;
+    font-size:10px; padding:2px 4px; max-width:150px; cursor:pointer;
+    opacity:.85}
+  .painel header .sel-modelo:hover{opacity:1}
+  .painel header .sel-modelo option{background:#0c1a23; color:#eae4d3}
+  .painel header .sel-modelo[hidden]{display:none}
   /* estado do canal no cabeçalho */
   .painel header .estado-canal{display:flex; align-items:center; gap:7px;
     font-size:9px; letter-spacing:.2em; text-transform:uppercase; opacity:.7;
@@ -732,6 +740,8 @@
       <button id="btn-falar" title="Falar as respostas em voz alta">🔊</button>
     </nav>
     <em id="hd-provider"></em>
+    <select id="sel-modelo" class="sel-modelo" title="Modelo de IA: Local, Automático ou DeepSeek" aria-label="Modo do modelo de IA"></select>
+    <select id="sel-local" class="sel-modelo" title="Modelo local (Ollama)" aria-label="Modelo local" hidden></select>
   </header>
   <div id="fluxo">
     <div class="msg sistema">As duas águas se encontram. O núcleo está ativo.</div>
@@ -2101,18 +2111,63 @@ function alternarEscuta(){
 }
 if(btnEscuta) btnEscuta.onclick = alternarEscuta;
 
+/* seletor de modelo: Local (padrão) / Automático / DeepSeek + modelo local */
+async function carregarModelos(){
+  const selModo = document.getElementById('sel-modelo');
+  const selLocal = document.getElementById('sel-local');
+  if(!selModo) return;
+  try{
+    const j = await (await fetch('/api/modelo')).json();
+    selModo.innerHTML = '';
+    (j.modos||[]).forEach(m=>{
+      const o = document.createElement('option');
+      o.value = m.id; o.textContent = m.rotulo; o.title = m.descricao;
+      if(m.id === j.modo) o.selected = true;
+      selModo.appendChild(o);
+    });
+    const locais = j.locais || [];
+    selLocal.innerHTML = '';
+    locais.forEach(n=>{
+      const o = document.createElement('option');
+      o.value = n; o.textContent = n;
+      if(n === (j.local||{}).modelo) o.selected = true;
+      selLocal.appendChild(o);
+    });
+    selLocal.hidden = locais.length < 2;     // só mostra se houver escolha
+  }catch(e){ /* núcleo offline: o status inicial já avisa */ }
+}
+async function trocarModelo(corpo){
+  try{
+    const r = await fetch('/api/modelo', {method:'POST', body: JSON.stringify(corpo)});
+    const j = await r.json();
+    if(!r.ok){ add('sistema', null, 'Modelo: ' + (j.error||('HTTP '+r.status))); }
+    else {
+      const rot = ((j.modos||[]).find(m=>m.id===j.modo)||{}).rotulo || j.modo;
+      add('sistema', null, `Modelo: ${rot} · ${(j.local||{}).modelo||''}`);
+      document.getElementById('hd-provider').textContent = rot;
+    }
+  }catch(e){ add('sistema', null, 'Modelo: falha ao falar com o núcleo.'); }
+  carregarModelos();
+}
+(function(){
+  const a = document.getElementById('sel-modelo'), b = document.getElementById('sel-local');
+  if(a) a.onchange = ()=> trocarModelo({modo: a.value});
+  if(b) b.onchange = ()=> trocarModelo({local: b.value});
+})();
+
 /* estado inicial do agente */
 (async function status(){
   try{
     const j = await (await fetch('/api/status')).json();
+    carregarModelos();
     document.getElementById('st-modelo').textContent =
-      `${j.provider} · ${j.model}`;
+      `${j.modo_modelo||j.provider} · ${j.model}`;
     document.getElementById('st-mem').textContent =
       `${j.episodes} episódios`;
     document.getElementById('st-skills').textContent =
       `${j.skills.length} skill${j.skills.length===1?'':'s'}`;
     document.getElementById('st-build').textContent = j.build || '—';
-    document.getElementById('hd-provider').textContent = j.provider;
+    document.getElementById('hd-provider').textContent = j.modo_modelo || j.provider;
     setEstado('em escuta', false);
     carregarConversas().then(()=>{
       if(conversaAtiva) abrirConversa(conversaAtiva);

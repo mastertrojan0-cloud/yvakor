@@ -860,8 +860,11 @@ class Orchestrator:
         # Pergunta sobre a página/arquivo em foco (extra_context) precisa do
         # conteúdo completo → vai para o agente (DeepSeek), não para o 3B local,
         # que aqui responderia sem ver a página.
-        if (forcar is None and not extra_context and _tipo_simples in (
-                "resposta_simples", "resumo_curto", "classificacao")):
+        # No modo "deepseek" o usuário pediu a nuvem primeiro: sem atalho local.
+        if (forcar is None and not extra_context
+                and self.router.modo != "deepseek"
+                and _tipo_simples in (
+                    "resposta_simples", "resumo_curto", "classificacao")):
             forcar = "ollama"
 
         # Caminho local rápido: prompt curto, sem ferramentas. O 3B em CPU não
@@ -995,7 +998,9 @@ class Orchestrator:
             threading.Thread(target=self._aprender_fundo,
                              args=(user_message, answer, task_type),
                              daemon=True, name="yvakor-aprender").start()
-        elif self.settings["agent"].get("avaliar_auto") and not private:
+        elif (self.settings["agent"].get("avaliar_auto") and not private
+              and (not self.router.sem_externos()
+                   or self.settings["agent"].get("aprender_local", False))):
             # Reflexão desligada: ainda avaliamos (telemetria de qualidade).
             threading.Thread(target=self._avaliar_fundo,
                              args=(user_message, answer),
@@ -1182,7 +1187,8 @@ class Orchestrator:
         # Sem provedor externo só sobra o 3B local (CPU): avaliar/extrair fatos
         # em segundo plano competiria com o chat e a qualidade seria ruim.
         try:
-            if self.router.sem_externos():
+            if (self.router.sem_externos()
+                    and not self.settings["agent"].get("aprender_local", False)):
                 return
         except Exception:
             pass

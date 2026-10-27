@@ -60,11 +60,42 @@ def test_settings_protege_nomes_reais_das_ferramentas():
 # --------------------------------------------------------------------------- #
 # Servidor: token, Host, Content-Type
 # --------------------------------------------------------------------------- #
-def _servidor():
+class _AgenteFalso:
+    """Agente mínimo para os testes de servidor: NÃO instancia o Orchestrator
+    real (que abriria o banco/tarefas cowork reais dentro do pytest)."""
+
+    def __init__(self, router=None):
+        from yvakor.config import load_settings
+        self.settings = load_settings()
+        self.router = router
+
+
+def _servidor(agente=None):
     import yvakor.server as S
+    S._get_agent_original = getattr(S, "_get_agent_original", S.get_agent)
+    S.get_agent = lambda: agente or _AgenteFalso()
     srv = ThreadingHTTPServer(("127.0.0.1", 0), S.Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return S, srv, srv.server_address[1]
+
+
+def _fechar(S, srv):
+    srv.shutdown()
+    S.get_agent = S._get_agent_original
+
+
+class _PrefsTemporarias:
+    """Isola data/preferencias.json: o teste nunca lê/escreve o arquivo real."""
+
+    def __enter__(self):
+        import tempfile
+        import yvakor.llm.router as R
+        self.R, self.antigo = R, R.ARQ_PREFS
+        R.ARQ_PREFS = Path(tempfile.mkdtemp()) / "preferencias.json"
+        return R.ARQ_PREFS
+
+    def __exit__(self, *a):
+        self.R.ARQ_PREFS = self.antigo
 
 
 def _req(port, metodo, path, host="127.0.0.1:7777", token=None, body=None,
@@ -101,7 +132,7 @@ def test_servidor_portao_de_seguranca():
         assert _req(port, "GET", "/api/ext/comandos")[0] == 403
         assert _req(port, "GET", "/api/ext/comandos", token=S.TOKEN)[0] == 200
     finally:
-        srv.shutdown()
+        _fechar(S, srv)
 
 
 # --------------------------------------------------------------------------- #
@@ -220,7 +251,7 @@ def test_gui_renova_o_token_quando_recebe_403():
         assert D._TOKEN_VIVO == S.TOKEN
     finally:
         D.BASE, D._TOKEN_VIVO = base_antiga, token_antigo
-        srv.shutdown()
+        _fechar(S, srv)
 
 
 # --------------------------------------------------------------------------- #
@@ -238,11 +269,14 @@ class _Prov:
         return f"resposta do {self.name}"
 
 
-def _router(deepseek, ollama):
+def _router(deepseek, ollama, modo="auto"):
     from yvakor.llm.router import LLMRouter
-    r = LLMRouter({"llm": {"default_provider": "deepseek", "providers": {},
-                           "routing": {"local": [], "external": ["analise_complexa"],
-                                       "fallback_order": ["deepseek", "ollama"]}}})
+    with _PrefsTemporarias():           # não lê o preferencias.json real
+        r = LLMRouter({"llm": {"default_provider": "ollama", "providers": {},
+                               "routing": {"local": [],
+                                           "external": ["analise_complexa"],
+                                           "fallback_order": ["deepseek", "ollama"]}}})
+    r.modo = modo
     r.providers = {"deepseek": deepseek, "ollama": ollama}
     return r
 
@@ -314,6 +348,150 @@ def test_prompt_compacto_do_agente_local_e_pequeno_e_tem_exemplo():
     completo = ag.system_with_tools("Você é o YVAKOR.", ["somar"])
     assert len(compacto) < 1500 < len(completo)
     assert '"ferramenta": "somar"' in compacto and '"a": 0' in compacto
+
+
+# --------------------------------------------------------------------------- #
+# Seletor de modelo: Local (padrão) / Automático / DeepSeek
+# --------------------------------------------------------------------------- #
+class _NuvemProibida(_Prov):
+    """Falha o teste se for chamada: prova que o modo local nunca usa a nuvem."""
+
+    def chat_messages(self, msgs, timeout=None, max_tokens=None):
+        self.chamadas += 1
+        raise AssertionError("o modo local chamou a nuvem")
+
+
+def test_padrao_de_instalacao_nova_e_o_modelo_local():
+    import yaml
+    from yvakor.config import load_settings
+    from yvakor.llm.router import LLMRouter
+    cfg = yaml.safe_load((ROOT / "config" / "settings.yaml").read_text(encoding="utf-8"))
+    assert cfg["llm"]["modo_padrao"] == "local"
+    assert cfg["llm"]["default_provider"] == "ollama"
+    with _PrefsTemporarias():                 # sem preferência salva
+        assert LLMRouter(load_settings()).modo == "local"
+
+
+def test_modo_local_nunca_chama_a_nuvem():
+    ds, ol = _NuvemProibida("deepseek"), _Prov("ollama")
+    r = _router(ds, ol, modo="local")
+    msg = [{"role": "user", "content": "oi"}]
+    assert r.complete_messages("analise_complexa", msg) == "resposta do ollama"
+    # nem um forcar="deepseek" explícito (absorção etc.) escapa para a nuvem
+    assert r.complete_messages("analise_complexa", msg, forcar="deepseek") \
+        == "resposta do ollama"
+    assert r.verificar_externos() is False and r.sem_externos() is True
+    assert ds.chamadas == 0 and r.info()["efetivo"] == "ollama"
+
+
+def test_modos_auto_e_deepseek_escolhem_o_provedor_certo():
+    auto = _router(_Prov("deepseek"), _Prov("ollama"), modo="auto")
+    assert auto.pick_provider("resposta_simples").name == "ollama"
+    assert auto.pick_provider("analise_complexa").name == "deepseek"
+    nuvem = _router(_Prov("deepseek"), _Prov("ollama"), modo="deepseek")
+    assert nuvem.pick_provider("resposta_simples").name == "deepseek"
+    assert nuvem.pick_provider("analise_complexa").name == "deepseek"
+    # DeepSeek primeiro, mas o local entra se ele falhar
+    cai = _router(_Prov("deepseek", "HTTP 402", fatal=True), _Prov("ollama"),
+                  modo="deepseek")
+    assert cai.complete_messages("analise_complexa",
+                                 [{"role": "user", "content": "x"}]) == "resposta do ollama"
+
+
+def test_escolha_do_modo_e_salva_e_trocar_zera_o_breaker():
+    from yvakor.config import load_settings
+    from yvakor.llm.router import LLMRouter
+    with _PrefsTemporarias() as arq:
+        r = LLMRouter(load_settings())
+        r._cooldown["deepseek"] = __import__("time").time() + 1800   # "sem saldo"
+        r.definir_modo("deepseek")
+        assert json.loads(arq.read_text(encoding="utf-8"))["modelo_modo"] == "deepseek"
+        assert r._cooldown == {}                    # voltou a tentar a nuvem
+        assert LLMRouter(load_settings()).modo == "deepseek"   # persistiu
+        r.definir_modelo_local("qwen2.5:3b")
+        assert LLMRouter(load_settings()).providers["ollama"].model == "qwen2.5:3b"
+        try:
+            r.definir_modo("xyz")
+            assert False, "modo inválido deveria ser rejeitado"
+        except ValueError:
+            pass
+
+
+def test_api_modelo_get_post_exige_token_e_valida():
+    from yvakor.config import load_settings
+    from yvakor.llm.router import LLMRouter
+    with _PrefsTemporarias() as arq:
+        agente = _AgenteFalso(LLMRouter(load_settings()))
+        S, srv, port = _servidor(agente)
+        S._modelos_locais_original = getattr(S, "_modelos_locais_original", S._modelos_locais)
+        S._modelos_locais = lambda ag: ["qwen2.5:3b", "llama3.2:3b"]
+        try:
+            st, corpo = _req(port, "GET", "/api/modelo")
+            info = json.loads(corpo)
+            assert st == 200 and info["modo"] == "local"
+            assert [m["id"] for m in info["modos"]] == ["local", "auto", "deepseek"]
+            assert info["locais"] == ["qwen2.5:3b", "llama3.2:3b"]
+            # POST sem token: barrado
+            assert _req(port, "POST", "/api/modelo", body={"modo": "auto"})[0] == 403
+            assert agente.router.modo == "local"
+            # POST com token: troca e persiste
+            st, corpo = _req(port, "POST", "/api/modelo", token=S.TOKEN,
+                             body={"modo": "deepseek"})
+            assert st == 200 and agente.router.modo == "deepseek"
+            assert json.loads(arq.read_text(encoding="utf-8"))["modelo_modo"] == "deepseek"
+            # entradas inválidas → 400 e nada muda
+            assert _req(port, "POST", "/api/modelo", token=S.TOKEN,
+                        body={"modo": "xyz"})[0] == 400
+            assert _req(port, "POST", "/api/modelo", token=S.TOKEN,
+                        body={"local": "nao-existe:1b"})[0] == 400
+            assert agente.router.modo == "deepseek"
+            # modelo local instalado: aceito
+            st, _ = _req(port, "POST", "/api/modelo", token=S.TOKEN,
+                         body={"local": "llama3.2:3b"})
+            assert st == 200 and agente.router.providers["ollama"].model == "llama3.2:3b"
+        finally:
+            S._modelos_locais = S._modelos_locais_original
+            _fechar(S, srv)
+
+
+def test_menu_de_modelo_da_janela_desktop():
+    import pytest
+    import tkinter as tk
+    from types import SimpleNamespace
+    import yvakor.desktop as D
+    try:
+        raiz = tk.Tk()
+    except tk.TclError:
+        pytest.skip("sem display gráfico")
+    raiz.withdraw()
+    escolhas = []
+    info = {"modo": "local", "modos": [
+                {"id": "local", "rotulo": "Local", "descricao": "só local"},
+                {"id": "auto", "rotulo": "Automático", "descricao": "misto"},
+                {"id": "deepseek", "rotulo": "DeepSeek", "descricao": "nuvem"}],
+            "local": {"modelo": "qwen2.5:3b"}, "locais": ["qwen2.5:3b", "llama3.2:3b"]}
+    antigo = D.api
+    try:
+        D.api = lambda *a, **k: info
+        menu = tk.Menu(raiz, tearoff=0)
+        eu = SimpleNamespace(_escolher_modelo=escolhas.append)
+        D.App._montar_menu_modelo(eu, menu)
+        rotulos = [menu.entrycget(i, "label") for i in range(menu.index("end") + 1)
+                   if menu.type(i) in ("command",)]
+        assert any(r.startswith("● Local") for r in rotulos)          # atual marcado
+        assert any("Automático" in r for r in rotulos) and any("llama3.2:3b" in r for r in rotulos)
+        menu.invoke(1)                                                # "Automático"
+        assert escolhas == [{"modo": "auto"}]
+        # núcleo fora do ar: não quebra, mostra aviso
+        def cai(*a, **k):
+            raise RuntimeError("offline")
+        D.api = cai
+        menu2 = tk.Menu(raiz, tearoff=0)
+        D.App._montar_menu_modelo(eu, menu2)
+        assert "indisponível" in menu2.entrycget(0, "label")
+    finally:
+        D.api = antigo
+        raiz.destroy()
 
 
 if __name__ == "__main__":

@@ -2007,12 +2007,73 @@ class App:
             item.pack(side="left", padx=(14, 0))
             tk.Label(item, text=rotulo, bg=STATUS_BG, fg=DIM,
                      font=(UI_SEMI, 7)).pack(side="left")
+            if chave == "modelo":
+                # Clicável: escolhe Local / Automático / DeepSeek e o modelo local.
+                lbl = tk.Menubutton(
+                    item, text="—", bg=STATUS_BG, fg=GOLD, font=FONT_XS, bd=0,
+                    relief="flat", cursor="hand2", highlightthickness=0,
+                    activebackground=STATUS_BG, activeforeground=FG, padx=0,
+                    pady=0)
+                menu = tk.Menu(lbl, tearoff=0, bg=PANEL, fg=FG, bd=0,
+                               activebackground=GOLD, activeforeground=BG,
+                               font=FONT_XS)
+                menu.configure(
+                    postcommand=lambda m=menu: self._montar_menu_modelo(m))
+                lbl.configure(menu=menu)
+                lbl.pack(side="left", padx=(5, 0))
+                self._st[chave] = lbl
+                continue
             lbl = tk.Label(item, text="—", bg=STATUS_BG, fg=MUTED,
                            font=FONT_XS)
             lbl.pack(side="left", padx=(5, 0))
             self._st[chave] = lbl
         tk.Label(rodape, text="NÚCLEO LOCAL · SQLITE", bg=STATUS_BG,
                  fg=DIM, font=(UI, 7)).pack(side="right", padx=14)
+
+    # ------------------------- seletor de modelo ------------------------ #
+    def _montar_menu_modelo(self, menu):
+        """Preenche o menu na hora de abrir (modelos locais mudam com o Ollama)."""
+        menu.delete(0, "end")
+        try:
+            info = api("/api/modelo", timeout=3)
+        except Exception:
+            menu.add_command(label="núcleo indisponível", state="disabled")
+            return
+        atual = info.get("modo")
+        for m in info.get("modos", []):
+            marca = "● " if m.get("id") == atual else "    "
+            menu.add_command(
+                label=f"{marca}{m.get('rotulo')} — {m.get('descricao')}",
+                command=lambda i=m.get("id"): self._escolher_modelo({"modo": i}))
+        locais = info.get("locais") or []
+        if locais:
+            menu.add_separator()
+            menu.add_command(label="Modelo local (Ollama):", state="disabled")
+            atual_local = (info.get("local") or {}).get("modelo")
+            for nome in locais:
+                marca = "● " if nome == atual_local else "    "
+                menu.add_command(
+                    label=f"{marca}{nome}",
+                    command=lambda n=nome: self._escolher_modelo({"local": n}))
+
+    def _escolher_modelo(self, payload: dict):
+        def trabalho():
+            try:
+                info = api("/api/modelo", payload, timeout=10)
+            except Exception as exc:
+                self._post(self.set_status, f"modelo: {exc}", ERR)
+                return
+            self._post(self._modelo_trocado, info)
+        threading.Thread(target=trabalho, daemon=True).start()
+
+    def _modelo_trocado(self, info: dict):
+        modo = info.get("modo")
+        rotulo = next((m.get("rotulo") for m in info.get("modos", [])
+                       if m.get("id") == modo), modo)
+        self.set_status(
+            f"modelo: {rotulo} · {(info.get('local') or {}).get('modelo', '')}",
+            OK)
+        self.carregar_sistema()
 
     def _montar_lateral(self, lat):
         cab = tk.Frame(lat, bg=PANEL)
@@ -3762,8 +3823,11 @@ class App:
         padrao = browser.get("padrao") or "edge"
         motor = motores.get(padrao) or {}
         try:
+            rotulo_modo = {"local": "local", "auto": "auto",
+                           "deepseek": "deepseek"}.get(
+                s.get("modo_modelo"), s.get("provider"))
             self._st["modelo"].configure(
-                text=f"{s.get('provider')} · {s.get('model')}")
+                text=f"{rotulo_modo} · {s.get('model')}  ▾")
             self._st["memorias"].configure(
                 text=str(episodios) if episodios is not None else "—")
             self._st["skills"].configure(text=str(len(skills)))
