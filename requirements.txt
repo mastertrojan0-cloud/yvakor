@@ -34,3 +34,4 @@ tradingview-ta>=3.3
 
 # Opcional — memória semântica vetorial (recomendado, mas o YVAKOR roda sem)
 # chromadb>=0.5
+psutil

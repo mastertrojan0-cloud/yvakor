@@ -164,6 +164,11 @@ class Maintenance:
                 res["cerebro"] = self.o.cerebro.sincronizar()["status"]
             except Exception as e:
                 res["cerebro"] = {"erro": str(e)}
+        try:                      # WAL, backup, logs e capturas (yvakor/banco.py)
+            from yvakor import banco
+            res["guardiao"] = banco.ciclo_periodico()
+        except Exception as e:
+            res["guardiao"] = {"erro": str(e)}
         res["tamanhos_mb"] = {
             "episodico": res.get("episodico", {}).get("mb", 0),
             "semantico": res.get("semantico", {}).get("mb", 0),

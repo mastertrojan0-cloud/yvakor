@@ -681,6 +681,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.close_connection = True
                 return self._json(403, {"error": "host não autorizado"})
             return self._json(200, {"token": TOKEN})
+        if self.path == "/api/banco":
+            from yvakor import banco
+            saude = {p.name: banco.verificar(p) for p in banco.descobrir()}
+            return self._json(200, {
+                "ok": all(v == "ok" for v in saude.values()),
+                "saude": saude, "livre_mb": round(banco.espaco_livre_mb()),
+                "backups": {p.name: len(banco.backups_de(p)) for p in banco.descobrir()},
+                "ultimo_ciclo": banco.estado()})
+
         if self.path.startswith("/api/health"):
             return self._json(200, _saude_health(get_agent(),
                                                 forcar="refresh=1" in self.path,
@@ -1376,6 +1385,13 @@ class Handler(BaseHTTPRequestHandler):
                     f.write(json.dumps(reg, ensure_ascii=False) + "\n")
                 return self._json(200, {"ok": True})
 
+            # Roda agora a rotina dos bancos: WAL, backup (forçado), logs, capturas
+            if self.path == "/api/banco":
+                from yvakor import banco
+                for p in banco.descobrir():
+                    banco.fazer_backup(p, forcar=bool(data.get("forcar_backup", True)))
+                return self._json(200, {"ok": True, **banco.ciclo_periodico()})
+
             if self.path == "/api/chat/cancelar":
                 alvos = ag.cancelar(str(data.get("session") or "") or None)
                 return self._json(200, {"ok": True, "cancelados": alvos})
@@ -1727,6 +1743,20 @@ def main():
         print("  [aviso] já existe um YVAKOR em execução; saindo.")
         return
     _gravar_token(TOKEN)   # só quem detém o lock publica o token
+    # Guardião dos bancos ANTES de o agente abri-los: repara corrompidos
+    # (quarentena + backup), confere FTS, trunca WAL, garante backup recente.
+    guardiao = None
+    try:
+        from yvakor import banco
+        rel = banco.guardiao_inicial()
+        ruins = [n for n, i in rel["bancos"].items()
+                 if i.get("reparo", {}).get("estado") not in (None, "ok")]
+        if ruins:
+            print(f"  [banco] reparados na partida: {', '.join(ruins)}")
+        guardiao = banco.Guardiao()
+        guardiao.start()
+    except Exception as exc:
+        print(f"  [aviso] guardião dos bancos não iniciou: {exc}")
     print(f"\n  YVAKOR online → http://localhost:{PORT}\n  (Ctrl+C para sair)\n")
     # Inicia a auto-manutenção em segundo plano (consolida conhecimento +
     # verifica atualização de código, conforme settings.yaml → maintenance).
@@ -1735,11 +1765,20 @@ def main():
     except Exception as e:
         print(f"  [aviso] auto-manutenção não iniciou: {e}")
     servidor = ThreadingHTTPServer((HOST, PORT), Handler)
+    # SIGTERM/SIGBREAK (fechar o console, taskkill sem /F, logoff) = desligar com
+    # calma: o serve_forever termina e o `finally` fecha tudo e esvazia o WAL.
+    try:
+        from yvakor.robustez import ao_encerrar
+        ao_encerrar(lambda: threading.Thread(target=servidor.shutdown, daemon=True).start())
+    except Exception:
+        pass
     try:
         servidor.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        if guardiao is not None:
+            guardiao.parar()
         # Fecha o navegador controlado e sinaliza tarefas cowork em curso.
         try:
             if _agent is not None:
@@ -1747,6 +1786,11 @@ def main():
         except Exception:
             pass
         servidor.server_close()
+        try:
+            from yvakor import banco
+            banco.encerrar()
+        except Exception:
+            pass
         print("\n  YVAKOR encerrado.")
 
 

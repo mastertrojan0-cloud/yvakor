@@ -62,7 +62,13 @@ def coletar(agente=None, forcar: bool = False, build: str = "") -> dict:
         except Exception:
             pass
 
+    try:
+        from yvakor import banco as _banco
+        ciclo = _banco.estado()
+    except Exception:
+        ciclo = {}
     dados = {
+        "banco_ultimo_ciclo": ciclo.get("quando") or ciclo.get("inicio"),
         "ok": all(v == "ok" for v in bancos.values()) if bancos else False,
         "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "build": build or "v0.7",

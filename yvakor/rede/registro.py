@@ -15,6 +15,8 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+from yvakor import seguro
+
 ROOT = Path(__file__).resolve().parent.parent.parent
 
 
@@ -31,7 +33,9 @@ class RegistroRede:
         self._lock = threading.Lock()
         self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         try:
-            self.conn.execute("PRAGMA journal_mode=WAL")
+            for _p in ("journal_mode=WAL", "synchronous=NORMAL", "busy_timeout=5000",
+                       "journal_size_limit=33554432"):
+                self.conn.execute(f"PRAGMA {_p}")
         except Exception:
             pass
         self._migrate()
@@ -66,17 +70,12 @@ class RegistroRede:
     # Credenciais (data/rede.json)
     # ------------------------------------------------------------------ #
     def _load_creds(self) -> dict:
-        if self.cred_path.exists():
-            try:
-                return json.loads(self.cred_path.read_text(encoding="utf-8"))
-            except Exception:
-                return {}
-        return {}
+        dados = seguro.ler_json(self.cred_path, {})
+        return dados if isinstance(dados, dict) else {}
 
     def _save_creds(self) -> None:
         self.cred_path.parent.mkdir(parents=True, exist_ok=True)
-        self.cred_path.write_text(
-            json.dumps(self._creds, ensure_ascii=False, indent=2), encoding="utf-8")
+        seguro.gravar_json(self.cred_path, self._creds)
 
     def credenciais(self, chave: str) -> dict:
         """Credenciais por IP, MAC, chave de registro ou nome."""

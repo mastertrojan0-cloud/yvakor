@@ -60,7 +60,9 @@ class CoworkStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(path), check_same_thread=False)
         try:
-            self.conn.execute("PRAGMA journal_mode=WAL")
+            for _p in ("journal_mode=WAL", "synchronous=NORMAL", "busy_timeout=5000",
+                       "journal_size_limit=33554432"):
+                self.conn.execute(f"PRAGMA {_p}")
         except Exception:
             pass
         self._lock = threading.Lock()

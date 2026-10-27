@@ -33,10 +33,12 @@ def test_imports():
     assert s["agent"]["name"] == "YVAKOR"
     assert "browser" in s and "cowork" in s
     assert "rede" in s and "voz" in s
-    mem = EpisodicMemory(ROOT / "data" / "test.db")
+    import tempfile
+    _tmp = Path(tempfile.mkdtemp(prefix="yvakor_smoke_"))   # nada de poluir data/ real
+    mem = EpisodicMemory(_tmp / "test.db")
     mem.log("conversa", "teste", "ok")
     assert mem.last_interactions(1)
-    sem = SemanticMemory(ROOT / "data" / "semantic_test")
+    sem = SemanticMemory(_tmp / "semantic_test")
     sem.store("Usuário prefere relatórios em PDF")
     assert sem.search("relatórios PDF")
     lib = SkillLibrary(ROOT / "skills_library")

@@ -19,6 +19,7 @@ import threading
 from pathlib import Path
 from urllib.parse import urlparse
 
+from yvakor import seguro
 from yvakor.config import ROOT
 
 ARQUIVO = ROOT / "data" / "permissoes_sites.json"
@@ -77,33 +78,27 @@ class PoliticaSites:
     # ------------------------------------------------------------------ #
     def _ler(self) -> dict:
         try:
-            d = json.loads(self.arquivo.read_text(encoding="utf-8"))
+            d = seguro.ler_json(self.arquivo, None)
+            if not isinstance(d, dict):
+                raise ValueError("sem dados")
             return {"permitidos": sorted({host_de(h) for h in d.get("permitidos", []) if host_de(h)}),
                     "bloqueados": sorted({host_de(h) for h in d.get("bloqueados", []) if host_de(h)})}
         except Exception:
             return {"permitidos": [], "bloqueados": []}
 
     def _gravar(self) -> None:
-        self.arquivo.parent.mkdir(parents=True, exist_ok=True)
-        self.arquivo.write_text(json.dumps(self._dados, ensure_ascii=False, indent=2),
-                                encoding="utf-8")
+        seguro.gravar_json(self.arquivo, self._dados)
 
     def _pref(self, chave, padrao=None):
-        try:
-            return json.loads(self.prefs.read_text(encoding="utf-8")).get(chave, padrao)
-        except Exception:
-            return padrao
+        d = seguro.ler_json(self.prefs, {})
+        return d.get(chave, padrao) if isinstance(d, dict) else padrao
 
     def _gravar_pref(self, chave, valor) -> None:
-        try:
-            d = json.loads(self.prefs.read_text(encoding="utf-8"))
-            if not isinstance(d, dict):
-                d = {}
-        except Exception:
+        d = seguro.ler_json(self.prefs, {})
+        if not isinstance(d, dict):
             d = {}
         d[chave] = valor
-        self.prefs.parent.mkdir(parents=True, exist_ok=True)
-        self.prefs.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+        seguro.gravar_json(self.prefs, d)
 
     # ------------------------------------------------------------------ #
     @property

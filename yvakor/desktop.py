@@ -1138,6 +1138,24 @@ def ping(timeout: float = 0.7) -> bool:
         return False
 
 
+def _encerrar_nucleo_travado() -> None:
+    """Mata o processo que escuta na porta do núcleo mas não responde (se houver)."""
+    try:
+        import psutil
+        porta = int(BASE.rsplit(":", 1)[-1])
+        for c in psutil.net_connections(kind="tcp"):
+            if c.laddr and c.laddr.port == porta and c.status == "LISTEN" and c.pid:
+                proc = psutil.Process(c.pid)
+                if "python" in proc.name().lower():
+                    proc.terminate()
+                    try:
+                        proc.wait(5)
+                    except psutil.TimeoutExpired:
+                        proc.kill()
+    except Exception:
+        pass
+
+
 def garantir_nucleo(timeout_s: float = 45.0, on_status=None) -> bool:
     """Sobe o núcleo se preciso, com backoff e log — sem travar a UI."""
     if ping():
@@ -1794,6 +1812,7 @@ class App:
     def __init__(self, nova: bool = False):
         _preparar_windows()
         self.root = tk.Tk()
+        self.root.report_callback_exception = self._erro_callback
         self.root.title("YVAKOR — Agente Pessoal")
         try:
             dpi = self.root.winfo_fpixels("1i")
@@ -1856,6 +1875,55 @@ class App:
         self._agendar(120, self._focar_entrada)
         self._agendar(160, self._boot)
         self._agendar(300, self._pulsar, 0)
+        threading.Thread(target=self._vigia_nucleo, daemon=True,
+                         name="yvakor-vigia-nucleo").start()
+
+    # ------------------------- anticrash ------------------------------- #
+    def _erro_callback(self, exc, val, tb):
+        """Exceção dentro de um callback do Tk: registra e segue (não derruba a UI)."""
+        try:
+            from yvakor.robustez import _gravar
+            _gravar("tk-callback", exc, val, tb)
+        except Exception:
+            pass
+
+    def _vigia_nucleo(self):
+        """Se o núcleo parar de responder, sobe de novo — com limite, para não
+        entrar em laço quando há um defeito real. Se ele está vivo mas travado
+        (porta ocupada e sem resposta), encerra o processo antes de subir outro."""
+        falhas = 0
+        reinicios: list[float] = []
+        while self._vivo:
+            time.sleep(12)
+            if not self._vivo:
+                return
+            if self._bootando:
+                continue
+            if ping(2.5):
+                falhas = 0
+                continue
+            falhas += 1
+            if falhas < 4:               # ~50 s sem resposta
+                continue
+            falhas = 0
+            agora = time.time()
+            reinicios = [t for t in reinicios if agora - t < 600]
+            if len(reinicios) >= 4:
+                self._post(self.set_status,
+                           "núcleo caiu várias vezes — veja data\\logs\\nucleo.log", ERR)
+                continue
+            reinicios.append(agora)
+            self._post(self.set_status, "núcleo parou — reiniciando…", GOLD)
+            _encerrar_nucleo_travado()
+            ok = False
+            try:
+                ok = garantir_nucleo(timeout_s=60)
+            except Exception:
+                ok = False
+            if ok:
+                self._post(self._boot_ok, True)
+            else:
+                self._post(self.set_status, "falha ao reiniciar o núcleo · F5", ERR)
 
     # ------------------------- ciclo de vida/threads -------------------- #
     def _agendar(self, ms: int, fn, *args):
@@ -4196,4 +4264,9 @@ class App:
 
 
 if __name__ == "__main__":
+    try:
+        from yvakor.robustez import instalar as _instalar_robustez
+        _instalar_robustez()
+    except Exception:
+        pass
     App(nova="--nova" in sys.argv).run()

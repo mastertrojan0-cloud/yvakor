@@ -49,6 +49,34 @@ def _hook_thread(args):
     _original_thread(args)
 
 
+def _hook_nao_levantavel(args):
+    """Exceção em __del__/callbacks de GC: só registra (nunca derruba)."""
+    try:
+        _gravar("nao_levantavel", args.exc_type, args.exc_value, args.exc_traceback)
+    except Exception:
+        pass
+
+
+def ao_encerrar(callback) -> None:
+    """Chama `callback` em SIGTERM/SIGBREAK/SIGINT (desligamento limpo).
+    Só no thread principal (restrição do Python); fora dele não faz nada."""
+    import signal
+
+    def _tratar(signum, frame):
+        try:
+            callback()
+        except Exception:
+            pass
+
+    for nome in ("SIGTERM", "SIGBREAK"):
+        sig = getattr(signal, nome, None)
+        if sig is not None:
+            try:
+                signal.signal(sig, _tratar)
+            except (ValueError, OSError):
+                pass
+
+
 def instalar() -> None:
     global _arquivo
     LOGS.mkdir(parents=True, exist_ok=True)
@@ -57,3 +85,4 @@ def instalar() -> None:
         faulthandler.enable(_arquivo)
     sys.excepthook = _hook_sys
     threading.excepthook = _hook_thread
+    sys.unraisablehook = _hook_nao_levantavel

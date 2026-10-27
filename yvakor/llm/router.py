@@ -8,6 +8,7 @@ import re
 import threading
 import time
 
+from yvakor import seguro
 from yvakor.config import ROOT
 from yvakor.llm.adapter import build_provider
 
@@ -82,23 +83,16 @@ class LLMRouter:
     # ------------------------------------------------------------------ #
     @staticmethod
     def _ler_pref(chave: str):
-        try:
-            return json.loads(ARQ_PREFS.read_text(encoding="utf-8")).get(chave)
-        except Exception:
-            return None
+        dados = seguro.ler_json(ARQ_PREFS, {})
+        return dados.get(chave) if isinstance(dados, dict) else None
 
     def _gravar_pref(self, chave: str, valor) -> None:
         with self._lock:
-            try:
-                dados = json.loads(ARQ_PREFS.read_text(encoding="utf-8"))
-                if not isinstance(dados, dict):
-                    dados = {}
-            except Exception:
+            dados = seguro.ler_json(ARQ_PREFS, {})
+            if not isinstance(dados, dict):
                 dados = {}
             dados[chave] = valor
-            ARQ_PREFS.parent.mkdir(parents=True, exist_ok=True)
-            ARQ_PREFS.write_text(
-                json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
+            seguro.gravar_json(ARQ_PREFS, dados)
 
     def definir_modo(self, modo: str) -> None:
         modo = str(modo or "").lower()

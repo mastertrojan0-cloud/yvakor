@@ -7,6 +7,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from yvakor import seguro
 from yvakor.config import ROOT
 
 INDICE = ROOT / "data" / "projetos_index.json"
@@ -40,19 +41,15 @@ class GerenciadorProjetos:
         self._carregar()
 
     def _carregar(self):
-        try:
-            data = json.loads(INDICE.read_text(encoding="utf-8"))
-            self.itens = data.get("projetos", [])
-            self.atualizado_em = data.get("atualizado_em", "")
-        except Exception:
-            self.itens = []
-            self.atualizado_em = ""
+        data = seguro.ler_json(INDICE, {})
+        if not isinstance(data, dict):
+            data = {}
+        self.itens = data.get("projetos", [])
+        self.atualizado_em = data.get("atualizado_em", "")
 
     def _salvar(self):
-        INDICE.parent.mkdir(parents=True, exist_ok=True)
-        INDICE.write_text(json.dumps(
-            {"atualizado_em": self.atualizado_em, "projetos": self.itens},
-            ensure_ascii=False, indent=1), encoding="utf-8")
+        seguro.gravar_json(INDICE, {"atualizado_em": self.atualizado_em,
+                                    "projetos": self.itens}, indent=1)
 
     def precisa_escanear(self) -> bool:
         if not self.itens:

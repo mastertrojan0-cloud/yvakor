@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from yvakor import seguro
 from yvakor.config import ROOT
 
 ARQUIVO = ROOT / "data" / "agenda.json"
@@ -54,18 +55,11 @@ class Agenda:
                          name="yvakor-agenda").start()
 
     def _carregar(self):
-        try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-            self.tarefas = data.get("tarefas", [])
-        except Exception:
-            self.tarefas = []
+        data = seguro.ler_json(self.path, {})
+        self.tarefas = data.get("tarefas", []) if isinstance(data, dict) else []
 
     def _salvar(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"tarefas": self.tarefas}, ensure_ascii=False,
-                                  indent=1), encoding="utf-8")
-        tmp.replace(self.path)
+        seguro.gravar_json(self.path, {"tarefas": self.tarefas}, indent=1)
 
     def criar(self, titulo: str, quando: str, texto: str = "",
               tipo: str = "chat", repetir: str = "") -> dict:

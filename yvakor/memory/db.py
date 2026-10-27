@@ -25,6 +25,7 @@ PRAGMAS = (
     "temp_store=MEMORY",
     "mmap_size=67108864",       # 64 MB mapeados
     "wal_autocheckpoint=400",
+    "journal_size_limit=33554432",   # o -wal volta a ≤32 MB após checkpoint
 )
 
 
