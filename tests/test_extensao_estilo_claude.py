@@ -860,6 +860,44 @@ def test_chamada_vazada_como_texto_dsml_e_executada_ou_corrigida_nunca_mostrada(
     assert "DSML" not in limpo and limpo.startswith("A página carregou")
 
 
+def test_eco_de_observacao_do_modelo_local_nao_chega_ao_usuario():
+    from yvakor.textos import sem_json_de_ferramenta
+    t = ('OBSERVAÇÃO (navegador_ver): {"ok": true, "titulo": "X", "elementos": [1, 2]}\n'
+         "O título da página é X.")
+    assert sem_json_de_ferramenta(t) == "O título da página é X."
+    assert sem_json_de_ferramenta("Sem eco aqui {a}.") == "Sem eco aqui {a}."
+
+
+def test_log_dos_testes_nao_vai_para_o_log_real():
+    import os
+    from pathlib import Path
+    assert os.environ.get("YVAKOR_LOG_DIR")
+    assert Path(os.environ["YVAKOR_LOG_DIR"]).resolve() != (
+        Path(__file__).resolve().parent.parent / "data" / "logs")
+
+
+def test_analise_de_mercado_com_atr_indisponivel_nao_quebra(monkeypatch, tmp_path):
+    """pyflakes: 'preco' era usado antes de existir quando o ATR vinha NaN."""
+    import numpy as np
+    from yvakor import mercado
+    n = 60
+    c = np.linspace(100, 130, n)
+    d = {"t": np.arange(n), "o": c, "h": c + 1, "l": c - 1, "c": c, "v": np.ones(n),
+         "fonte": "teste"}
+    monkeypatch.setattr(mercado, "candles", lambda *a, **k: d)
+    monkeypatch.setattr(mercado, "_extras_conectores", lambda *a, **k: {})
+    real = mercado.indicadores
+
+    def sem_atr(dd):
+        ind = real(dd)
+        ind["atr"] = np.full(n, np.nan)
+        return ind
+    monkeypatch.setattr(mercado, "indicadores", sem_atr)
+    monkeypatch.setattr(mercado, "PASTA_GRAFICOS", tmp_path, raising=False)
+    r = mercado.analisar("BTC", "1d", sentimento=False)
+    assert r.get("ok"), r
+
+
 def test_gmail_email_e_voo_recebem_ferramentas_de_navegador():
     from yvakor.tools.router import selecionar
     reg = _registro_navegador_fake([])

@@ -5,6 +5,9 @@ import json
 import re
 
 
+_OBS = re.compile(r"OBSERVA[ÇC][ÃA]O\s*\([^)\n]{0,60}\)\s*:\s*", re.I)
+
+
 def sem_json_de_ferramenta(texto: str) -> str:
     """Tira do texto final os blocos JSON de chamada de ferramenta que o modelo
     deixou escapar no meio da prosa ({"acao":"usar_ferramenta",...}): são
@@ -17,6 +20,25 @@ def sem_json_de_ferramenta(texto: str) -> str:
         if not texto:
             return ""
     dec = json.JSONDecoder()
+    if _OBS.search(texto):
+        # o modelo pequeno ecoava "OBSERVAÇÃO (navegador_ver): {json cru}"
+        partes, i = [], 0
+        for m in _OBS.finditer(texto):
+            if m.start() < i:
+                continue
+            partes.append(texto[i:m.start()])
+            i = m.end()
+            resto = texto[i:].lstrip()
+            if resto.startswith("{"):
+                try:
+                    _, fim = dec.raw_decode(resto)
+                    i += (len(texto[i:]) - len(resto)) + fim
+                except Exception:
+                    pass
+        partes.append(texto[i:])
+        sem_obs = "".join(partes).strip()
+        if sem_obs:
+            texto = sem_obs
     saida, i = [], 0
     while True:
         j = texto.find("{", i)

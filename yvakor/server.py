@@ -60,7 +60,11 @@ from logging.handlers import RotatingFileHandler
 
 
 def _configurar_log() -> None:
-    pasta = Path(__file__).resolve().parent.parent / "data" / "logs"
+    # YVAKOR_LOG_DIR: os testes apontam para uma pasta temporária — antes
+    # gravavam falhas simuladas ("otimizador falhou (bug)", "sem saldo") no log
+    # real, misturadas com os erros de verdade.
+    pasta = Path(os.environ.get("YVAKOR_LOG_DIR") or
+                 Path(__file__).resolve().parent.parent / "data" / "logs")
     try:
         pasta.mkdir(parents=True, exist_ok=True)
     except OSError:

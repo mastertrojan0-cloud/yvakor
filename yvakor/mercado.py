@@ -470,7 +470,8 @@ def analisar(ativo: str = "BTC", intervalo: str = "1d", sentimento: bool = True)
     extras = _extras_conectores(simbolo, tipo, intervalo, avisos)
     if extras.get("tv"):
         ind["tv"] = extras["tv"]["consenso"]
-    preco, a14 = ind["preco"], float(ind["atr"][-1]) if not np.isnan(ind["atr"][-1]) else preco * 0.03
+    preco = ind["preco"]
+    a14 = float(ind["atr"][-1]) if not np.isnan(ind["atr"][-1]) else preco * 0.03
     quando = datetime.now()
     st = fg = None
     if sentimento:

@@ -1,5 +1,11 @@
 """Fixtures globais: nenhum teste escreve no data/ real."""
+import os
+import tempfile
+
 import pytest
+
+# Log do servidor fora de data/logs (configurado no import de yvakor.server).
+os.environ.setdefault("YVAKOR_LOG_DIR", tempfile.mkdtemp(prefix="yvakor_logs_"))
 
 
 @pytest.fixture(autouse=True)
