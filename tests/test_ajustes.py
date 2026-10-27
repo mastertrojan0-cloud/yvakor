@@ -242,3 +242,29 @@ def test_pagina_de_ajustes_tem_todas_as_secoes_e_esta_ligada_nas_interfaces():
     assert "ajustes" in (RAIZ / "interface" / "index.html").read_text(encoding="utf-8")
     assert "/ajustes" in (RAIZ / "yvakor" / "desktop.py").read_text(encoding="utf-8")
     assert "/ajustes" in (RAIZ / "chrome-extension" / "sidepanel.js").read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------- #
+# núcleo antigo: a GUI atualizada não pode conviver com o servidor de ontem
+# --------------------------------------------------------------------------- #
+def test_nucleo_com_codigo_antigo_e_detectado_e_o_novo_nao():
+    from yvakor import desktop as D
+    assert D.nucleo_desatualizado({"version": "0.8.0"}, em_disco=1000.0) is True            # sem o campo: servidor antigo
+    assert D.nucleo_desatualizado({"codigo": 900.0}, em_disco=1000.0) is True                # disco mais novo
+    assert D.nucleo_desatualizado({"codigo": 1000.0}, em_disco=1000.0) is False              # igual
+    assert D.nucleo_desatualizado({"codigo": 999.0}, em_disco=1000.5) is False               # diferença de relógio < 2 s
+    assert D.nucleo_desatualizado(None) is False                                              # não deu para ler: não mexe
+
+
+def test_api_version_informa_a_idade_do_codigo_carregado():
+    import sys
+    if str(RAIZ / "tests") not in sys.path:
+        sys.path.insert(0, str(RAIZ / "tests"))
+    import test_seguranca_e_processos as base
+    S, srv, port = base._servidor()
+    try:
+        st, corpo = base._req(port, "GET", "/api/version")
+        j = json.loads(corpo)
+        assert st == 200 and j["codigo"] == S._CODIGO_MTIME > 0 and j["pid"] == os.getpid()
+    finally:
+        base._fechar(S, srv)

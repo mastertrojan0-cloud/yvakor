@@ -364,6 +364,18 @@ def _snapshot_ajustes(ag) -> dict:
     }
 
 
+def _mtime_do_codigo() -> float:
+    """Data do arquivo .py mais novo do pacote: identifica QUE versão do código esta
+    instância carregou (a GUI compara com o disco e reinicia um núcleo desatualizado)."""
+    try:
+        return max(p.stat().st_mtime for p in (ROOT / "yvakor").rglob("*.py"))
+    except (OSError, ValueError):
+        return 0.0
+
+
+_CODIGO_MTIME = _mtime_do_codigo()
+
+
 def _passos_da_resposta(ag, sid) -> list[str]:
     """Ferramentas/etapas usadas nesta resposta (para a interface mostrar o que foi feito)."""
     try:
@@ -708,6 +720,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if self.path == "/api/version":
             return self._json(200, {
+                "codigo": _CODIGO_MTIME, "pid": os.getpid(),
                 "version": VERSAO,
                 "build": _VERSAO.get("build", "dev"),
                 "rotulo": BUILD,

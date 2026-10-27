@@ -1344,6 +1344,12 @@ def _encerrar_nucleo_travado() -> None:
             if c.laddr and c.laddr.port == porta and c.status == "LISTEN" and c.pid:
                 proc = psutil.Process(c.pid)
                 if "python" in proc.name().lower():
+                    try:
+                        pai = proc.parent()
+                        if pai is not None and "yvakor.server" in " ".join(pai.cmdline()):
+                            pai.terminate()
+                    except Exception:
+                        pass
                     proc.terminate()
                     try:
                         proc.wait(5)
@@ -1353,10 +1359,55 @@ def _encerrar_nucleo_travado() -> None:
         pass
 
 
-def garantir_nucleo(timeout_s: float = 45.0, on_status=None) -> bool:
-    """Sobe o núcleo se preciso, com backoff e log — sem travar a UI."""
-    if ping():
+def _mtime_codigo_em_disco() -> float:
+    try:
+        return max(p.stat().st_mtime for p in (ROOT / "yvakor").rglob("*.py"))
+    except (OSError, ValueError):
+        return 0.0
+
+
+def nucleo_desatualizado(info: dict | None, em_disco: float | None = None) -> bool:
+    """O núcleo em execução carregou um código MAIS ANTIGO que o do disco? (Sem o campo
+    `codigo`, é uma versão anterior a esta checagem: também conta como antigo.)"""
+    if not info:
+        return False
+    carregado = info.get("codigo")
+    if not isinstance(carregado, (int, float)):
         return True
+    disco = _mtime_codigo_em_disco() if em_disco is None else em_disco
+    return disco - float(carregado) > 2.0
+
+
+_NUCLEO_CHECADO = False
+
+
+def garantir_nucleo(timeout_s: float = 45.0, on_status=None) -> bool:
+    """Sobe o núcleo se preciso, com backoff e log — sem travar a UI.
+
+    Se já há um núcleo respondendo mas com código ANTIGO (o app foi atualizado e o servidor
+    continuou o de ontem: telas novas davam 404), ele é encerrado e um novo sobe — uma vez
+    por abertura do app."""
+    global _NUCLEO_CHECADO
+    if ping():
+        if _NUCLEO_CHECADO:
+            return True
+        _NUCLEO_CHECADO = True
+        try:
+            info = api("/api/version", timeout=3)
+        except Exception:
+            info = None
+        if not nucleo_desatualizado(info):
+            return True
+        if on_status:
+            try:
+                on_status("núcleo desatualizado — reiniciando…")
+            except Exception:
+                pass
+        _encerrar_nucleo_travado()
+        for _ in range(24):              # espera a porta liberar (máx. ~6 s)
+            if not ping(0.3):
+                break
+            time.sleep(0.25)
     flags = 0
     if os.name == "nt":
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
