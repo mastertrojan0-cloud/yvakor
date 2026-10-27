@@ -15,6 +15,38 @@ main{padding:16px 18px 30px}h2{font-size:14px;color:var(--sol);text-transform:up
 .card .meta{padding:8px 10px;font-size:11px;color:var(--dim);word-break:break-all}
 .card a{color:var(--txt);text-decoration:none}.vazio{color:var(--dim);font-size:13px}
 </style>
+<style id="tema-claude">
+/* tema Claude (claro/escuro) — paletas e componentes das páginas secundárias */
+@font-face{font-family:'Inter';src:url('/fonts/Inter.ttf') format('truetype');font-weight:100 900;font-display:swap}
+@font-face{font-family:'Lora';src:url('/fonts/Lora.ttf') format('truetype');font-weight:400 700;font-display:swap}
+:root{--bg:#faf9f5;--card:#fff;--linha:rgba(31,30,29,.12);--txt:#1f1e1d;--dim:#6b6a64;--agua:#4d8a5f;--sol:#c96442;--lateral:#f5f4ee;--sombra:rgba(0,0,0,.08);color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#262624;--card:#30302e;--linha:rgba(250,249,245,.12);--txt:#faf9f5;--dim:#a8a69e;--agua:#7fbf8f;--sol:#d97757;--lateral:#1f1e1d;--sombra:rgba(0,0,0,.3);color-scheme:dark}}
+body{background:var(--bg)!important;color:var(--txt)!important;font-family:'Inter','Segoe UI',system-ui,sans-serif!important}
+header{background:var(--lateral)!important;border-bottom:1px solid var(--linha)!important}
+header h1,header b{font-family:'Lora',Georgia,serif!important;font-weight:500!important;letter-spacing:0!important;font-size:19px!important}
+.dot,.led{background:var(--sol)!important;box-shadow:none!important}
+.dir,.ip{color:var(--dim)!important}
+h2{color:var(--txt)!important;text-transform:none!important;letter-spacing:0!important;font-family:'Lora',Georgia,serif!important;font-weight:500!important;font-size:19px!important}
+aside h3{color:var(--txt)!important;text-transform:none!important;letter-spacing:0!important;font-family:'Lora',Georgia,serif!important;font-weight:500!important;font-size:16px!important}
+.card,aside,.item,.lateral{background:var(--card)!important;border:1px solid var(--linha)!important;color:var(--txt)!important;border-radius:14px!important}
+.lateral{border-radius:0!important;border-width:0 0 0 1px!important;box-shadow:-12px 0 40px var(--sombra)}
+.card:hover,.item:hover{border-color:var(--sol)!important}
+.card img,.card object,.tela,.tela img,.tela video{background:var(--lateral)!important}
+.card a,.item,.item small{color:var(--txt)!important}.card .meta,.item small{color:var(--dim)!important}
+a{color:var(--sol)}a[style*="color"]{color:var(--sol)!important}
+button{background:var(--card)!important;color:var(--txt)!important;border:1px solid var(--linha)!important;border-radius:10px!important}
+button:hover{border-color:var(--sol)!important}
+button.primario{background:var(--sol)!important;color:#fff!important;border-color:var(--sol)!important}
+button[style*="color"]{color:#b4443b!important}
+input,select,textarea{background:var(--card)!important;color:var(--txt)!important;border:1px solid var(--linha)!important;border-radius:10px!important}
+input:focus,select:focus,textarea:focus{border-color:var(--sol)!important;outline:none}
+.pre{background:var(--lateral)!important;color:var(--txt)!important;border-color:var(--linha)!important}
+.badge{border-color:var(--linha)!important;color:var(--dim)!important}
+.badge.on{color:var(--agua)!important;border-color:var(--agua)!important}
+.badge.off{color:#b4443b!important;border-color:#b4443b!important}
+.badge.fav{color:var(--sol)!important;border-color:var(--sol)!important}
+.vazio{color:var(--dim)!important}
+</style>
 <header><span class="dot"></span><h1>Galeria de capacidades</h1><span class="dir" id="contagem"></span>
 <a href="/api/galeria/zip?tipo=graficos" style="margin-left:10px;color:#3fbfae;font-size:12px">ZIP gráficos</a>
 <a href="/api/galeria/zip?tipo=imagens" style="margin-left:10px;color:#3fbfae;font-size:12px">ZIP imagens</a></header>
