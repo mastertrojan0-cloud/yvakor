@@ -85,24 +85,51 @@ async function aguardarCarregarBG(tabId, ms = 7000) {
   return chrome.tabs.get(tabId).catch(() => null);
 }
 
-async function scriptBG(func, args = []) {
-  const t = await ctrlOrActiveBG();
-  const r = await chrome.scripting.executeScript({
-    target: { tabId: t.id }, func, args
-  });
-  return { tab: t, resultado: r && r[0] ? r[0].result : null };
-}
-
 async function responderBG(c, ok, dados = {}, erro = "") {
   await postNucleo("/api/ext/resultado", { id: c.id, ok, erro, ...dados });
 }
 
-async function injetarOverlayBG() {
+// ---------------------------------------------------------------------------
+// Ações na página: o motor está em pagina.js (injetado aqui). Antes cada ação
+// era uma função solta embutida neste arquivo — difícil de testar e frágil
+// (digitação em editores ricos, envio de formulário, <select>…).
+// ---------------------------------------------------------------------------
+const PAGINA_PROTEGIDA = /^(chrome|edge|about|chrome-extension|devtools|view-source|chrome-search):/;
+
+async function acaoPagina(nome, args = {}) {
   const t = await ctrlOrActiveBG();
+  if (PAGINA_PROTEGIDA.test(t.url || "")) {
+    throw new Error("esta página do navegador (" + String(t.url).split(":")[0] +
+                    ":) não aceita automação; abra um site normal");
+  }
   await chrome.scripting.executeScript({
-    target: { tabId: t.id }, files: ["overlay.js"]
+    target: { tabId: t.id }, files: ["overlay.js", "pagina.js"] });
+  const r = await chrome.scripting.executeScript({
+    target: { tabId: t.id },
+    func: async (n, a) => {
+      try { return await window.__yvakorAcoes[n](a); }
+      catch (e) { return { ok: false, erro: String((e && e.message) || e) }; }
+    },
+    args: [nome, args]
   });
+  const resultado = r && r[0] && r[0].result;
+  return { tab: t, resultado: resultado || { ok: false, erro: "a página não respondeu" } };
 }
+
+// Se a ação iniciou uma navegação (clicar num link, enviar um formulário),
+// espera a página nova carregar antes de devolver o controle ao agente.
+async function aposAcaoBG(tab) {
+  await dormirBG(300);
+  const t = await chrome.tabs.get(tab.id).catch(() => null);
+  if (t && t.status === "loading") await aguardarCarregarBG(tab.id, 8000);
+}
+
+const BUSCADORES = {
+  google: "https://www.google.com/search?q=",
+  duckduckgo: "https://duckduckgo.com/?q=",
+  bing: "https://www.bing.com/search?q=",
+  youtube: "https://www.youtube.com/results?search_query="
+};
 
 async function executarBG(c) {
   const a = c.args || {};
@@ -145,10 +172,11 @@ async function executarBG(c) {
   }
   if (c.tipo === "search") {
     const t = await ctrlOrActiveBG();
-    const url = "https://www.google.com/search?q=" + encodeURIComponent(a.termo || "");
+    const base = BUSCADORES[String(a.buscador || "google").toLowerCase()] || BUSCADORES.google;
+    const url = base + encodeURIComponent(a.termo || "");
     await chrome.tabs.update(t.id, { url });
-    await aguardarCarregarBG(t.id);
-    return { tab_id: t.id, url };
+    const n = await aguardarCarregarBG(t.id);
+    return { ok: true, tab_id: t.id, url, titulo: (n && n.title) || "" };
   }
   if (c.tipo === "tabs") {
     const tabs = await chrome.tabs.query({ currentWindow: true });
@@ -171,204 +199,80 @@ async function executarBG(c) {
     return { tab_id: tabs[i].id };
   }
   if (c.tipo === "snapshot") {
-    const coletaSnap = () => {
-      const SEL = "a,button,input,textarea,select,[role='button'],[role='link']," +
-                  "[onclick],ytd-video-renderer,ytd-rich-item-renderer," +
-                  "[data-testid],[aria-label]";
-      function deepText(node) {
-        if (!node) return "";
-        if (node.nodeType === 3) return node.textContent + " ";
-        if (node.nodeType === 1) {
-          const tag = (node.tagName || "").toLowerCase();
-          if (["script", "style", "noscript", "template", "svg", "head",
-               "iframe"].includes(tag)) return "";
-          let s = "";
-          if (node.shadowRoot) s += deepText(node.shadowRoot);
-          for (const c of node.childNodes) s += deepText(c);
-          return s;
-        }
-        if (node.nodeType === 11) {
-          let s = "";
-          for (const c of node.childNodes) s += deepText(c);
-          return s;
-        }
-        return "";
-      }
-      const vistos = new Set();
-      const items = [];
-      function collect(cont) {
-        if (!cont || !cont.querySelectorAll) return;
-        for (const el of Array.from(cont.querySelectorAll(SEL))) {
-          if (vistos.has(el)) continue;
-          vistos.add(el);
-          if (items.length >= 60) return;
-          const ref = "e" + (items.length + 1);
-          el.setAttribute("data-yvakor-ref", ref);
-          const txt = (el.innerText || el.textContent ||
-                       el.getAttribute("aria-label") || el.title ||
-                       el.value || el.placeholder || "")
-            .replace(/\s+/g, " ").trim().slice(0, 120);
-          items.push({ ref, tag: el.tagName.toLowerCase(),
-                       tipo: (el.getAttribute("type") || "").toLowerCase(),
-                       texto: txt, id: el.id || "",
-                       aria: (el.getAttribute("aria-label") || "").slice(0, 80) });
-        }
-        if (vistos.size >= 2500) return;
-        for (const el of Array.from(cont.querySelectorAll("*"))) {
-          if (el.shadowRoot) collect(el.shadowRoot);
-          if (vistos.size >= 2500) break;
-        }
-      }
-      collect(document.documentElement || document);
-      const texto = deepText(document.documentElement || document)
-        .replace(/\s+/g, " ").trim().slice(0, 3000);
-      return { url: location.href, title: document.title, text: texto, items };
-    };
-    let tab = null, resultado = null;
+    let r = null;
     for (let i = 0; i < 5; i++) {
-      const r = await scriptBG(coletaSnap);
-      tab = r.tab; resultado = r.resultado;
-      if (resultado && (resultado.title || resultado.text)) break;
+      r = await acaoPagina("snapshot", { max: 80 });
+      const s = r.resultado || {};
+      if (s.title || s.text || (s.items || []).length) break;
       await dormirBG(700);
     }
-    const elementos = (resultado && resultado.items) || [];
-    const resumo = `URL: ${resultado ? resultado.url : ""}\nTÍTULO: ${resultado ? resultado.title : ""}\n\n` +
-      `TEXTO:\n${((resultado && resultado.text) || "").slice(0, 1800)}\n\nELEMENTOS:\n` +
-      elementos.slice(0, 60).map(e => `[${e.ref}] <${e.tag}> ${e.texto}`).join("\n");
-    return { url: resultado ? resultado.url : "", titulo: resultado ? resultado.title : "",
-             elementos_total: elementos.length, resumo, elementos, tab_id: tab ? tab.id : null };
+    const s = r.resultado || {};
+    return { url: s.url || "", titulo: s.title || "",
+             elementos_total: (s.items || []).length, resumo: s.resumo || "",
+             elementos: s.items || [], tab_id: r.tab.id };
   }
   if (c.tipo === "extract") {
-    const { resultado } = await scriptBG((maxChars) => {
-      function deepText(node) {
-        if (!node) return "";
-        if (node.nodeType === 3) return node.textContent + " ";
-        if (node.nodeType === 1) {
-          const tag = (node.tagName || "").toLowerCase();
-          if (["script", "style", "noscript", "template", "svg", "head",
-               "iframe"].includes(tag)) return "";
-          let s = "";
-          if (node.shadowRoot) s += deepText(node.shadowRoot);
-          for (const c of node.childNodes) s += deepText(c);
-          return s;
-        }
-        if (node.nodeType === 11) {
-          let s = "";
-          for (const c of node.childNodes) s += deepText(c);
-          return s;
-        }
-        return "";
-      }
-      const texto = deepText(document.documentElement || document)
-        .replace(/\s+/g, " ").trim().slice(0, maxChars || 6000);
-      const links = [];
-      const vistos = new Set();
-      function collectLinks(cont) {
-        if (!cont || !cont.querySelectorAll) return;
-        for (const a of Array.from(cont.querySelectorAll("a[href]"))) {
-          if (vistos.has(a)) continue;
-          vistos.add(a);
-          if (links.length >= 60) return;
-          links.push({
-            texto: (a.innerText || a.textContent ||
-                    a.getAttribute("aria-label") || "")
-              .replace(/\s+/g, " ").trim().slice(0, 80),
-            url: String(a.href).slice(0, 200)
-          });
-        }
-        if (vistos.size >= 5000) return;
-        for (const el of Array.from(cont.querySelectorAll("*"))) {
-          if (el.shadowRoot) collectLinks(el.shadowRoot);
-          if (vistos.size >= 5000) break;
-        }
-      }
-      collectLinks(document.documentElement || document);
-      return { texto, links: links.filter(l => l.texto),
-               url: location.href, titulo: document.title };
-    }, [Number(a.max_chars) || 6000]);
-    return { texto: resultado.texto, links: resultado.links,
-             url: resultado.url, titulo: resultado.titulo };
+    const { tab, resultado } = await acaoPagina("extrair", {
+      max_chars: Number(a.max_chars) || 6000, seletor: a.seletor || a.selector || "" });
+    return Object.assign({ tab_id: tab.id }, resultado);
   }
   if (c.tipo === "click") {
-    await injetarOverlayBG();
-    const { resultado } = await scriptBG(async (alvo) => {
-      function findByRef(ref) {
-        function find(cont) {
-          if (!cont || !cont.querySelectorAll) return null;
-          const el = cont.querySelector(`[data-yvakor-ref="${ref}"]`);
-          if (el) return el;
-          for (const node of Array.from(cont.querySelectorAll("*"))) {
-            if (node.shadowRoot) {
-              const r = find(node.shadowRoot);
-              if (r) return r;
-            }
-          }
-          return null;
-        }
-        return find(document.documentElement || document);
-      }
-      let el = /^e\d+$/.test(alvo) ? findByRef(alvo) : null;
-      if (!el) { try { el = document.querySelector(alvo); } catch (e) {} }
-      if (!el) {
-        const txt = (alvo || "").toLowerCase();
-        el = Array.from(document.querySelectorAll("a,button,[role='button']"))
-          .find(x => (x.innerText || "").toLowerCase().includes(txt));
-      }
-      if (!el) return { ok: false, erro: "elemento não encontrado" };
-      await window.__yvakorVisual.click(el, "clicando");
-      const corpo = document.body || document.documentElement;
-      return { ok: true, url: location.href, titulo: document.title,
-               texto: (corpo ? corpo.innerText : "").slice(0, 1200) };
-    }, [a.alvo || ""]);
+    const { tab, resultado } = await acaoPagina("clicar", { alvo: a.alvo || "" });
+    await aposAcaoBG(tab);
     return resultado;
   }
-  if (c.tipo === "fill") {
-    await injetarOverlayBG();
-    const { resultado } = await scriptBG(async (alvo, valor, enviar) => {
-      function findByRef(ref) {
-        function find(cont) {
-          if (!cont || !cont.querySelectorAll) return null;
-          const el = cont.querySelector(`[data-yvakor-ref="${ref}"]`);
-          if (el) return el;
-          for (const node of Array.from(cont.querySelectorAll("*"))) {
-            if (node.shadowRoot) {
-              const r = find(node.shadowRoot);
-              if (r) return r;
-            }
-          }
-          return null;
-        }
-        return find(document.documentElement || document);
-      }
-      let el = /^e\d+$/.test(alvo) ? findByRef(alvo) : null;
-      if (!el) { try { el = document.querySelector(alvo); } catch (e) {} }
-      if (!el) return { ok: false, erro: "campo não encontrado" };
-      await window.__yvakorVisual.type(el, valor, "digitando");
-      if (enviar) {
-        el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-        el.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true }));
-      }
-      const corpo = document.body || document.documentElement;
-      return { ok: true, url: location.href, titulo: document.title,
-               texto: (corpo ? corpo.innerText : "").slice(0, 1200) };
-    }, [a.alvo || "", String(a.valor || ""), !!a.enviar]);
+  // fill = preenche (substitui, a menos que limpar=false); type = digita
+  // acrescentando ao que já existe (a menos que limpar=true).
+  if (c.tipo === "fill" || c.tipo === "type") {
+    const limpar = c.tipo === "type" ? a.limpar === true : a.limpar !== false;
+    const { tab, resultado } = await acaoPagina("escrever", {
+      alvo: a.alvo || "", texto: String(a.valor != null ? a.valor : (a.texto || "")),
+      enviar: !!a.enviar, limpar, humano: !!a.humano });
+    if (a.enviar) await aposAcaoBG(tab);
     return resultado;
   }
   if (c.tipo === "press") {
-    const { resultado } = await scriptBG((tecla) => {
-      const alvo = document.activeElement || document.body;
-      alvo.dispatchEvent(new KeyboardEvent("keydown", { key: tecla, bubbles: true }));
-      alvo.dispatchEvent(new KeyboardEvent("keyup", { key: tecla, bubbles: true }));
-      return { ok: true };
-    }, [a.tecla || "Enter"]);
+    const { tab, resultado } = await acaoPagina("pressionar", {
+      tecla: a.tecla || "Enter", alvo: a.alvo || "" });
+    await aposAcaoBG(tab);
+    return resultado;
+  }
+  if (c.tipo === "select") {
+    const { resultado } = await acaoPagina("selecionar", { alvo: a.alvo || "", valor: String(a.valor || "") });
+    return resultado;
+  }
+  if (c.tipo === "hover") {
+    const { resultado } = await acaoPagina("passar_mouse", { alvo: a.alvo || "" });
+    return resultado;
+  }
+  if (c.tipo === "wait") {
+    const { resultado } = await acaoPagina("esperar", {
+      texto: a.texto || "", seletor: a.seletor || "", segundos: Number(a.segundos) || 10 });
     return resultado;
   }
   if (c.tipo === "scroll") {
-    const { resultado } = await scriptBG((dir, vezes) => {
-      window.scrollBy(0, (dir === "cima" ? -1 : 1) * 600 * (vezes || 1));
-      return { ok: true, y: window.scrollY };
-    }, [a.direcao || "baixo", Number(a.vezes) || 1]);
+    const { resultado } = await acaoPagina("rolar", {
+      direcao: a.direcao || "baixo", vezes: Number(a.vezes) || 1, alvo: a.alvo || "" });
     return resultado;
+  }
+  if (c.tipo === "history") {
+    const t = await ctrlOrActiveBG();
+    const acao = String(a.acao || "voltar").toLowerCase();
+    if (acao === "voltar") await chrome.tabs.goBack(t.id);
+    else if (acao === "avancar" || acao === "avançar") await chrome.tabs.goForward(t.id);
+    else await chrome.tabs.reload(t.id);
+    await aguardarCarregarBG(t.id, 8000);
+    const n = await chrome.tabs.get(t.id);
+    return { tab_id: t.id, url: n.url || "", titulo: n.title || "" };
+  }
+  if (c.tipo === "screenshot") {
+    // captureVisibleTab só captura a aba VISÍVEL da janela: ativa a de controle.
+    const t = await ctrlOrActiveBG();
+    await chrome.tabs.update(t.id, { active: true });
+    await dormirBG(250);
+    const dataUrl = await chrome.tabs.captureVisibleTab(t.windowId, { format: "jpeg", quality: 72 });
+    return { imagem_b64: dataUrl.split(",")[1], mime: "image/jpeg",
+             url: t.url || "", titulo: t.title || "", tab_id: t.id };
   }
   throw new Error("comando desconhecido: " + c.tipo);
 }

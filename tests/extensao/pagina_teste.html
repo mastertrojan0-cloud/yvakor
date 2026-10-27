@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Página de teste — motor de ações da extensão YVAKOR</title>
+<style>
+  body { font: 14px sans-serif; padding: 12px; }
+  input, textarea, select, button { margin: 3px; padding: 4px; }
+  #rico, #chat { border: 1px solid #888; min-height: 30px; padding: 4px; margin: 3px; }
+  #rolagem { height: 120px; overflow: auto; border: 1px solid #888; }
+  .alto { height: 3000px; }
+</style>
+</head>
+<body>
+<!-- Esta página reproduz os casos difíceis de automação. Veja teste_acoes.js -->
+
+<form id="f-busca" action="javascript:void(0)">
+  <input type="search" id="q" name="q" placeholder="Pesquisar" aria-label="Pesquisar">
+  <button id="b-buscar" type="submit">Buscar</button>
+</form>
+<div id="r-busca">nada</div>
+
+<input id="nome" placeholder="Seu nome">
+<label for="email">E-mail</label><input id="email" type="email">
+<input id="senha" type="password" value="segredo123">
+<textarea id="msg"></textarea>
+
+<!-- editor "rico": só reage a input/beforeinput reais (como Gmail/Notion) -->
+<div id="rico" contenteditable="true"></div>
+
+<!-- chat sem <form>: o Enter é tratado por um handler JS (como WhatsApp Web) -->
+<div id="chat" contenteditable="true" role="textbox" aria-label="Mensagem"></div>
+<div id="enviadas"></div>
+
+<select id="pais">
+  <option value="br">Brasil</option>
+  <option value="pt">Portugal</option>
+  <option value="ar">Argentina</option>
+</select>
+<label><input type="checkbox" id="ck"> Aceito os termos</label>
+<label><input type="radio" name="r" id="rd1" value="a"> Opção A</label>
+
+<button id="btn" onclick="document.getElementById('cliques').textContent=(+document.getElementById('cliques').textContent+1)">Clique aqui</button>
+<span id="cliques">0</span>
+<a href="#ancora" id="lnk">Ir para a âncora</a>
+
+<div id="hov" style="padding:10px;border:1px solid #888">passe o mouse aqui</div><span id="hovr"></span>
+<button id="oculto" style="display:none">Botão oculto</button>
+
+<div id="rolagem"><div class="alto">conteúdo longo dentro de um painel</div></div>
+<div id="host"></div>
+<div style="height:2500px">espaço para rolar a página</div>
+<h2 id="ancora">Âncora</h2>
+
+<script>
+document.getElementById('f-busca').addEventListener('submit', function (e) {
+  e.preventDefault();
+  document.getElementById('r-busca').textContent = 'BUSCOU:' + document.getElementById('q').value;
+});
+var rico = document.getElementById('rico');
+rico.dataset.eventos = '0';
+rico.addEventListener('input', function () {
+  rico.dataset.eventos = String(+rico.dataset.eventos + 1);
+});
+document.getElementById('chat').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    var c = e.target;
+    document.getElementById('enviadas').insertAdjacentHTML('beforeend', '<p>' + c.innerText + '</p>');
+    c.innerText = '';
+  }
+});
+var nome = document.getElementById('nome');
+nome.addEventListener('input', function (e) { nome.dataset.modelo = e.target.value; });
+document.getElementById('hov').addEventListener('mouseenter', function () {
+  document.getElementById('hovr').textContent = 'HOVER';
+});
+var sh = document.getElementById('host').attachShadow({ mode: 'open' });
+sh.innerHTML = '<input id="sh-in" placeholder="dentro do shadow">';
+</script>
+<script src="pagina.js"></script>
+<script src="teste_acoes.js"></script>
+</body>
+</html>

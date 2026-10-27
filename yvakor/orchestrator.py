@@ -322,6 +322,12 @@ class Orchestrator:
         from yvakor.extensao_bridge import PONTE
 
         def alvo_ext(navegador: str) -> bool:
+            # O argumento `navegador` era IGNORADO: as ferramentas dizem "use
+            # navegador='edge' para outro navegador", mas só o texto da
+            # mensagem decidia. Agora o argumento explícito vale.
+            if str(navegador or "").strip().lower() in (
+                    "edge", "msedge", "firefox", "playwright", "outro"):
+                return False
             msg = getattr(self._tl, "msg_atual", "") or ""
             if _re.search(r"\b(edge|firefox|outro navegador|outra janela|"
                           r"playwright)\b", msg, _re.I):
@@ -332,21 +338,72 @@ class Orchestrator:
             r = PONTE.comando(tipo, kw)
             if r.get("ok"):
                 r["engine"] = "chrome (extensão)"
+            # Captura de tela: a extensão devolve a imagem em base64; vira um
+            # arquivo (e some do resultado, para não estourar o contexto).
+            if r.get("imagem_b64"):
+                import base64
+                pasta = ROOT / "data" / "browser_shots"
+                pasta.mkdir(parents=True, exist_ok=True)
+                arq = pasta / f"extensao_{time.strftime('%Y%m%d_%H%M%S')}.jpg"
+                arq.write_bytes(base64.b64decode(r.pop("imagem_b64")))
+                r["arquivo"] = str(arq)
             return r
 
+        def so_aceitos(fn, kwargs: dict) -> dict:
+            """No caminho Playwright, descarta argumentos que a ferramenta
+            original não conhece (ex.: 'texto', 'buscador') em vez de dar TypeError."""
+            import inspect
+            try:
+                params = inspect.signature(fn).parameters
+            except (TypeError, ValueError):
+                return kwargs
+            if any(p.kind == p.VAR_KEYWORD for p in params.values()):
+                return kwargs
+            return {k: v for k, v in kwargs.items() if k in params}
+
         # Operações de navegador no mesmo Chrome da extensão.
+        # (comando da extensão, campos repassados)
         mapa = {
             "navegador_ir": ("goto", ("url",)),
             "navegador_ver": ("snapshot", ()),
-            "navegador_extrair": ("extract", ("selector", "max_chars")),
+            # era ("selector", …): o argumento da ferramenta é "seletor", então
+            # o seletor nunca chegava à extensão.
+            "navegador_extrair": ("extract", ("seletor", "max_chars")),
             "navegador_clicar": ("click", ("alvo",)),
-            "navegador_preencher": ("fill", ("alvo", "valor", "enviar")),
+            "navegador_preencher": ("fill", ("alvo", "valor", "enviar",
+                                             "limpar", "humano")),
             "navegador_pressionar": ("press", ("tecla", "alvo")),
-            "navegador_rolar": ("scroll", ("direcao", "vezes")),
+            "navegador_rolar": ("scroll", ("direcao", "vezes", "alvo")),
             "navegador_abas": ("tabs", ()),
-            "navegador_pesquisar": ("search", ("termo",)),
+            "navegador_pesquisar": ("search", ("termo", "buscador")),
             "navegador_trocar_aba": ("switch_tab", ("indice",)),
             "navegador_fechar_aba": ("close_tab", ("indice",)),
+            # estavam no motor Playwright e abriam OUTRO Chrome (o do agente)
+            # mesmo com a extensão como alvo:
+            "navegador_esperar": ("wait", ("segundos", "seletor", "texto")),
+            "navegador_captura": ("screenshot", ()),
+        }
+        # Argumentos novos de ferramentas que já existiam.
+        args_extra = {
+            "navegador_preencher": {
+                "alvo": "str", "valor": "str", "enviar": "bool?",
+                "limpar": "bool?", "humano": "bool?", "navegador": "str?"},
+            "navegador_rolar": {"direcao": "str?", "vezes": "int?",
+                                "alvo": "str?", "navegador": "str?"},
+            "navegador_pesquisar": {
+                "termo": "str", "buscador": "str?", "navegador": "str?"},
+            "navegador_esperar": {
+                "segundos": "float?", "seletor": "str?", "texto": "str?",
+                "navegador": "str?"},
+        }
+        descr_extra = {
+            "navegador_pesquisar": " buscador=google|duckduckgo|bing|youtube "
+                                   "(padrão google).",
+            "navegador_preencher": " limpar=False acrescenta em vez de substituir;"
+                                   " enviar=True envia o formulário; funciona em"
+                                   " campos comuns, editores de texto rico,"
+                                   " caixas de seleção e listas.",
+            "navegador_esperar": " Também espera um texto aparecer (texto=...).",
         }
         for nome, (tipo, campos) in mapa.items():
             original = self.tools.tools.get(nome)
@@ -361,12 +418,65 @@ class Orchestrator:
                     dados = {k: kwargs.get(k) for k in _campos
                              if kwargs.get(k) is not None}
                     return chamar(_tipo, _orig, **dados)
-                return _orig(*_args, **kwargs)
+                return _orig(*_args, **so_aceitos(_orig, kwargs))
 
-            self.tools.register(nome, wrapper,
-                                (spec.get("desc") or "Navegador.") +
-                                " Usa a janela do Chrome da extensão.",
-                                spec.get("args") or {})
+            self.tools.register(
+                nome, wrapper,
+                (spec.get("desc") or "Navegador.") + descr_extra.get(nome, "")
+                + " Usa a janela do Chrome da extensão.",
+                args_extra.get(nome) or spec.get("args") or {})
+
+        # Ferramentas NOVAS (o motor Playwright não as tem): quem as executa é a
+        # extensão. (comando, campos, descrição, argumentos, tradução p/ o
+        # Playwright quando o usuário pede outro navegador)
+        preencher_pw = self.tools.tools.get("navegador_preencher")
+        novas = {
+            "navegador_digitar": (
+                "type", ("alvo", "texto", "enviar", "limpar", "humano"),
+                "Digita texto num campo (ACRESCENTA ao que já há; limpar=True "
+                "substitui). Sem alvo usa o campo focado/de busca. enviar=True "
+                "envia o formulário (Enter). Funciona em editores de texto rico "
+                "(Gmail, Notion, chats). humano=True digita letra a letra.",
+                {"texto": "str", "alvo": "str?", "enviar": "bool?",
+                 "limpar": "bool?", "humano": "bool?", "navegador": "str?"},
+                (lambda **k: preencher_pw(
+                    alvo=k.get("alvo", ""), valor=k.get("texto", ""),
+                    enviar=bool(k.get("enviar")), navegador=k.get("navegador", ""))
+                 ) if preencher_pw else None),
+            "navegador_selecionar": (
+                "select", ("alvo", "valor"),
+                "Escolhe uma opção de uma lista <select> (pelo texto ou valor).",
+                {"alvo": "str", "valor": "str", "navegador": "str?"},
+                (lambda **k: preencher_pw(
+                    alvo=k.get("alvo", ""), valor=k.get("valor", ""),
+                    navegador=k.get("navegador", ""))
+                 ) if preencher_pw else None),
+            "navegador_passar_mouse": (
+                "hover", ("alvo",),
+                "Passa o mouse sobre um elemento (abre menus e dicas).",
+                {"alvo": "str", "navegador": "str?"}, None),
+            "navegador_historico": (
+                "history", ("acao",),
+                "Voltar, avançar ou recarregar a aba: acao=voltar|avancar|recarregar.",
+                {"acao": "str", "navegador": "str?"}, None),
+        }
+        for nome, (tipo, campos, desc, args, fallback) in novas.items():
+            def wrapper_nova(*_args, _tipo=tipo, _campos=campos,
+                             _fb=fallback, **kwargs):
+                navegador = kwargs.get("navegador", "")
+                if alvo_ext(navegador):
+                    dados = {k: kwargs.get(k) for k in _campos
+                             if kwargs.get(k) is not None}
+                    return chamar(_tipo, None, **dados)
+                if _fb is not None:
+                    return _fb(**kwargs)
+                return {"ok": False, "error":
+                        "esta ação só existe na extensão do Chrome; o outro "
+                        "navegador não a suporta."}
+
+            self.tools.register(nome, wrapper_nova,
+                                desc + " Usa a janela do Chrome da extensão.",
+                                args)
 
         for nome, comando_tipo in (("navegador_abrir", "open"),
                                    ("navegador_nova_aba", "newtab")):

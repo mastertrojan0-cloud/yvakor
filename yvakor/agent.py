@@ -95,8 +95,20 @@ Você tem navegadores REAIS — **Edge e Chrome**, cada um com perfil próprio
 
 Regras do navegador:
 - NUNCA invente refs. Se o alvo não existir, peça um novo `navegador_ver`.
-- Para pesquisar use `navegador_pesquisar` (DuckDuckGo) — mais rápido e
-  estável do que abrir o Google na mão.
+- Para pesquisar use `navegador_pesquisar` (buscador=google|duckduckgo|bing|
+  youtube) — mais rápido e estável do que abrir o site na mão.
+- Escrever: `navegador_digitar` {{"alvo":"e2","texto":"..."}} acrescenta ao campo
+  (limpar=true substitui; enviar=true envia o formulário). `navegador_preencher`
+  substitui o conteúdo. Sem `alvo` usa o campo focado/de busca. Funciona em
+  editores de texto rico (Gmail, Notion, chats). Caixa de marcar: preencher com
+  "sim"/"não".
+- Listas: `navegador_selecionar` {{"alvo":"e5","valor":"Portugal"}}.
+- Teclas: `navegador_pressionar` {{"tecla":"Enter"}} (aceita Control+A, Tab,
+  Escape, ArrowDown…). Menus que abrem ao passar o mouse: `navegador_passar_mouse`.
+- Página lenta: `navegador_esperar` {{"texto":"Resultados"}} ou {{"seletor":"#lista"}}.
+  Voltar/avançar/recarregar: `navegador_historico`. Print: `navegador_captura`.
+- Se uma ação devolver "aviso" ou "erro", rode `navegador_ver` e tente de novo
+  com a ref correta.
 - Leia páginas longas com `navegador_extrair` em vez de despejar tudo no
   contexto; role a página com `navegador_rolar` quando o conteúdo continua.
 - Prefira o navegador ao `http_get` quando a página depende de JavaScript,
@@ -335,12 +347,24 @@ class AgentLoop:
                 mensagem = item.get("content") or ""
                 break
         from yvakor.tools.router import selecionar
+        if limite is not None and self._INTENCAO_NAVEGADOR.search(mensagem or ""):
+            # Tarefa de navegador precisa de mais ferramentas juntas (ver +
+            # pesquisar + ir + clicar + preencher + digitar + pressionar…).
+            limite = max(limite, self.COMPACTO_MAX_FERRAMENTAS_NAVEGADOR)
         self.ultima_selecao = selecionar(self.registry, mensagem,
                                          limite or self.max_ferramentas)
         if limite is not None:           # modo compacto (modelo local)
             self.ultima_selecao = self._limitar_compacto(
                 self.ultima_selecao, mensagem, limite)
         return self.ultima_selecao
+
+    COMPACTO_MAX_FERRAMENTAS_NAVEGADOR = 8
+    # Pedido que envolve o navegador (pesquisar, digitar, clicar, abrir site…).
+    _INTENCAO_NAVEGADOR = re.compile(
+        r"\b(pesquis|busc|procur|naveg|clic|digit|escrev|preench|formul|googl|"
+        r"youtube|abr[aeio]|aperte|pression|rol[ae]|chrome|edge|campo|seleci|"
+        r"marc[ae]|espere|aguard|volt[ae]|recarreg|avanc|p[aá]gina|site|link|"
+        r"aba\b|tecla|enter|login|entrar|acess|captur|print)", re.I)
 
     # Pedido que cita ação de risco de forma explícita (rodar/apagar/mover/
     # escrever/instalar/enviar…): só então o modelo local recebe essas ferramentas.
@@ -367,6 +391,10 @@ class AgentLoop:
             nomes = []                           # nada casou: não é "tudo"
         if not self._ACAO_EXPLICITA.search(mensagem or ""):
             nomes = [n for n in nomes if n not in perigosas]
+        if self._INTENCAO_NAVEGADOR.search(mensagem or ""):
+            # ferramentas de navegador na frente: o corte por limite não pode
+            # trocá-las por arquivos_listar/cerebro_buscar (núcleo).
+            nomes = sorted(nomes, key=lambda n: 0 if n.startswith("navegador_") else 1)
         for n in self._BASE_SEGURA:              # completa com o seguro
             if len(nomes) >= limite:
                 break
@@ -396,8 +424,14 @@ class AgentLoop:
                 {"acao": "usar_ferramenta",
                  "ferramenta": primeira[0] if primeira else "nome_exato",
                  "args": args_ex}, ensure_ascii=False)
-            return base_system + "\n\n" + PROTOCOLO_COMPACTO.format(
-                manifesto=manifesto, exemplo=exemplo)
+            texto = PROTOCOLO_COMPACTO.format(manifesto=manifesto, exemplo=exemplo)
+            if any(n.startswith("navegador_") for n in (nomes or [])):
+                texto += ("- Navegador: primeiro navegador_ver (mostra refs e1, e2…), "
+                          "depois aja pela ref com navegador_clicar / "
+                          "navegador_digitar / navegador_preencher; para buscar use "
+                          "navegador_pesquisar. Depois de clicar ou navegar, chame "
+                          "navegador_ver de novo.\n")
+            return base_system + "\n\n" + texto
         return base_system + "\n\n" + PROTOCOLO.format(
             manifesto=self.registry.manifest(nomes))
 

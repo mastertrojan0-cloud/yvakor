@@ -23,6 +23,26 @@ GRUPOS = {
         "palavras": ("site", "pagina", "página", "url", "navegar", "navegue",
                      "clique", "login", "web", "http", "pesquis", "baixar",
                      "download", "formulario", "formulário", "link", "aba"),
+        # Radicais: casam por INÍCIO da palavra. A lista acima só casava a
+        # palavra inteira ("pesquis" nunca casava "pesquise"), então "pesquise
+        # gatos no google" e "escreva olá no campo" não recebiam NENHUMA
+        # ferramenta de navegador.
+        "radicais": ("pesquis", "busc", "procur", "naveg", "clic", "digit",
+                     "escrev", "preench", "formul", "googl", "youtube", "bing",
+                     "duckduck", "abr", "aperte", "pression", "rol", "extens",
+                     "chrome", "edge", "campo", "seleci", "marc", "espere",
+                     "aguard", "volt", "recarreg", "avanc", "pagin", "site",
+                     "link", "aba", "tecla", "enter", "login", "entrar",
+                     "acess", "screenshot", "print", "captur"),
+        # Ordem de importância: o limite de ferramentas corta pelo FIM, e a
+        # ordem de registro punha navegador_pesquisar na 11ª posição.
+        "prioridade": ("navegador_ver", "navegador_pesquisar", "navegador_ir",
+                       "navegador_clicar", "navegador_preencher",
+                       "navegador_digitar", "navegador_pressionar",
+                       "navegador_selecionar", "navegador_esperar",
+                       "navegador_extrair", "navegador_rolar",
+                       "navegador_abrir", "navegador_historico",
+                       "navegador_passar_mouse", "navegador_captura"),
     },
     "arquivos": {
         "prefixos": ("arquivos_",),
@@ -103,10 +123,17 @@ def selecionar(registry, mensagem: str, max_tools: int = 14) -> list[str]:
     grupos = sorted(GRUPOS.items(),
                     key=lambda kv: 0 if kv[0] == "entregaveis" else 1)
     for grupo, regra in grupos:
-        if alvo & set(regra["palavras"]):
+        radicais = regra.get("radicais", ())
+        if (alvo & set(regra["palavras"])
+                or any(t.startswith(r) for t in alvo for r in radicais)):
             casou_grupo = True
-            adicionar([n for n in disponiveis
-                       if n.startswith(regra["prefixos"])])
+            do_grupo = [n for n in disponiveis if n.startswith(regra["prefixos"])]
+            # as mais importantes do grupo primeiro (e antes do que já foi
+            # escolhido do núcleo, para o corte por limite não as descartar)
+            prioridade = [n for n in regra.get("prioridade", ()) if n in do_grupo]
+            if prioridade:
+                escolhidos[:0] = [n for n in prioridade if n not in escolhidos]
+            adicionar(do_grupo)
 
     if not casou_grupo:
         # ranking por nome/descrição quando não há grupo claro

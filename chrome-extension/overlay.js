@@ -71,35 +71,7 @@
     } finally { hide(); }
   }
 
-  async function type(el, value, label) {
-    try {
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
-      await sleep(250);
-      show(label || "digitando");
-      await moveTo(el);
-      el.focus();
-      const proto = el.tagName === "TEXTAREA"
-        ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
-      const limpar = el.isContentEditable ? null : setter;
-      if (el.isContentEditable) el.innerText = "";
-      else if (limpar) limpar.call(el, ""); else el.value = "";
-      const texto = String(value || "");
-      for (let i = 0; i < texto.length; i++) {
-        if (el.isContentEditable) {
-          el.innerText += texto[i];
-        } else if (limpar) {
-          limpar.call(el, el.value + texto[i]);
-        } else {
-          el.value += texto[i];
-        }
-        el.dispatchEvent(new Event("input", { bubbles: true }));
-        await sleep(32 + Math.random() * 28);
-      }
-      el.dispatchEvent(new Event("change", { bubbles: true }));
-      await sleep(200);
-    } finally { hide(); }
-  }
-
-  window.__yvakorVisual = { click, type, show, hide, sleep };
+  // A digitação saiu daqui: o motor único está em pagina.js (editores
+  // ricos, <select>, envio de formulário…). O overlay só dá o feedback visual.
+  window.__yvakorVisual = { click, mover: moveTo, show, hide, sleep };
 })();
