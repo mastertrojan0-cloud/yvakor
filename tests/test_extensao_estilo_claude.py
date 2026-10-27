@@ -884,6 +884,43 @@ def test_formato_tool_e_nomes_inventados_viram_a_ferramenta_real():
     assert b[0]["args"] == {"termo": "voos MAO BVB"}
 
 
+def test_argumentos_soltos_no_json_nao_sao_perdidos():
+    """Conversa das eleições: http_get {} / navegador_ir {} — a URL vinha fora de
+    "args" e era descartada; a ferramenta rodava vazia (about:blank)."""
+    from yvakor.agent import _parse_acoes
+    reg = _registro_com_specs([])
+    reg.register("http_get", lambda **k: {"ok": True}, "GET.", {"url": "str"})
+    a = _parse_acoes('{"acao":"usar_ferramenta","ferramenta":"http_get",'
+                     '"url":"https://resultados.tse.jus.br/x.json","motivo":"dados"}', reg)
+    assert a[0]["args"] == {"url": "https://resultados.tse.jus.br/x.json"}
+    b = _parse_acoes('{"acao":"navegador_pesquisar","query":"voos"}', reg)
+    assert b[0]["ferramenta"] == "navegador_pesquisar" and b[0]["args"] == {"termo": "voos"}
+    assert _parse_acoes('{"acao":"responder","texto":"oi"}', reg) == []
+
+
+def test_compressor_preserva_o_pedido_atual_e_nao_o_mais_antigo():
+    """O modelo disse 'Você pediu verifica email bloqueados' durante o pedido das
+    eleições, e pediu de novo a data de nascimento já informada."""
+    from yvakor.llm.economia import comprimir
+    pedido = ("preciso tirar a segunda via do meu cpf, 70847608220 e a data de "
+              "nacimento 17/12/1984")
+    msgs = [{"role": "system", "content": "sistema " * 50}]
+    for i in range(8):
+        msgs += [{"role": "user", "content": f"verifica email bloqueados {i} " + "x " * 300},
+                 {"role": "assistant", "content": "resposta antiga " + "y " * 300}]
+    msgs.append({"role": "user", "content": pedido})
+    for i in range(10):
+        msgs += [{"role": "assistant", "content": '{"acao":"usar_ferramenta"}'},
+                 {"role": "user", "content": f"OBSERVAÇÃO (navegador_extrair): " + "z " * 400}]
+    saida, info = comprimir(msgs, teto_tokens=2500)
+    textos = [m["content"] for m in saida]
+    assert pedido in textos                                # intacto, inteiro
+    i_pedido = textos.index(pedido)
+    antes = "\n".join(textos[:i_pedido])
+    assert "ANTIGAS" in antes and "só contexto" in antes   # o velho é rotulado como contexto
+    assert not any(t.startswith("verifica email bloqueados") for t in textos)
+
+
 def test_loop_json_nao_aborta_a_tarefa_por_chamada_invalida():
     """'Não consegui executar: vieram chamadas de ferramenta em formato inválido'
     depois de 11 ferramentas certas: agora pede a chamada de novo."""

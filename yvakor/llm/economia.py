@@ -152,6 +152,22 @@ def _resumo_extrativo(msgs: list[dict], limite_chars: int = 700) -> str:
     return "\n".join(out)
 
 
+_NOTAS_AGENTE = ("OBSERVA", "(", "Você respondeu sem", "Chamada de ferramenta",
+                 "Sua chamada", "Pare de usar", "Resuma em texto")
+
+
+def _pedido_atual(msgs: list[dict]) -> dict | None:
+    """Última mensagem do usuário que é um pedido real (não observação de
+    ferramenta nem nota interna do agente)."""
+    for m in reversed(msgs):
+        if m.get("role") != "user":
+            continue
+        t = _texto(m).lstrip()
+        if t and not t.startswith(_NOTAS_AGENTE):
+            return m
+    return None
+
+
 def comprimir(mensagens: list[dict], teto_tokens: int, razao: float = 3.6,
               manter_ultimos: int = 6, histerese: float = 0.65) -> tuple[list[dict], dict]:
     """Devolve (mensagens enxutas, info). Nunca remove a última mensagem do usuário
@@ -184,30 +200,46 @@ def comprimir(mensagens: list[dict], teto_tokens: int, razao: float = 3.6,
     atual = tokens_mensagens(msgs, razao)
     info["etapas"].append(("cortar_meio_antigas", atual))
 
-    # 3) histórico antigo -> um resumo extrativo (mantém a 1ª mensagem do usuário = a tarefa)
+    # 3) histórico antigo -> um resumo extrativo. A TAREFA preservada é o pedido
+    #    ATUAL do usuário (o último que não é observação/nota do agente). Antes era
+    #    a 1ª mensagem do usuário — numa conversa, a mais ANTIGA: o modelo passava
+    #    a atender um pedido de horas atrás e "esquecia" dados do pedido atual.
+    tarefa = _pedido_atual(msgs)
     if atual > alvo:
         sistema = [m for m in msgs if m.get("role") == "system"]
         resto = [m for m in msgs if m.get("role") != "system"]
-        primeira_user = next((m for m in resto if m.get("role") == "user"), None)
-        cauda = resto[-manter_ultimos:] if len(resto) > manter_ultimos else resto
-        meio = [m for m in resto if m is not primeira_user and m not in cauda]
+        ini_cauda = max(0, len(resto) - manter_ultimos)
+        cauda = resto[ini_cauda:]
+        idx_tarefa = next((i for i, m in enumerate(resto) if m is tarefa), -1)
+        velhas = [m for i, m in enumerate(resto[:ini_cauda]) if i < idx_tarefa]
+        passos = [m for i, m in enumerate(resto[:ini_cauda]) if i > idx_tarefa]
+        if idx_tarefa < 0:
+            velhas, passos = resto[:ini_cauda], []
         novo = list(sistema)
-        if primeira_user is not None and primeira_user not in cauda:
-            novo.append(primeira_user)
-        if meio:
+        if velhas:
             novo.append({"role": "user", "content":
-                         f"(resumo de {len(meio)} mensagens anteriores)\n" + _resumo_extrativo(meio)})
+                         f"(resumo de {len(velhas)} mensagens ANTIGAS desta conversa — só "
+                         "contexto; o pedido atual vem a seguir)\n" + _resumo_extrativo(velhas)})
+        if 0 <= idx_tarefa < ini_cauda:
+            novo.append(tarefa)
+        if passos:
+            novo.append({"role": "user", "content":
+                         f"(resumo de {len(passos)} passos já feitos neste pedido)\n"
+                         + _resumo_extrativo(passos)})
         novo += cauda
         msgs = novo
         atual = tokens_mensagens(msgs, razao)
         info["etapas"].append(("resumir_historico", atual))
 
-    # 4) ainda acima: encolhe as mensagens da cauda (menos a última) e, por fim, o sistema
+    # 4) ainda acima: encolhe as mensagens da cauda (menos a última e o pedido
+    #    atual) e, por fim, o sistema
     for passo in (0.6, 0.4, 0.25):
         if atual <= alvo:
             break
         for i, m in enumerate(msgs[:-1]):
             if m.get("role") == "system" or not isinstance(m.get("content"), str):
+                continue
+            if m is tarefa and len(m["content"]) < 4000:
                 continue
             msgs[i] = dict(m, content=_meio(m["content"], int(len(m["content"]) * passo) + 200))
         atual = tokens_mensagens(msgs, razao)

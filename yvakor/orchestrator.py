@@ -411,6 +411,10 @@ class Orchestrator:
                 arq = pasta / f"extensao_{time.strftime('%Y%m%d_%H%M%S')}.jpg"
                 arq.write_bytes(base64.b64decode(r.pop("imagem_b64")))
                 r["arquivo"] = str(arq)
+                # o modelo recebia só o caminho e dizia "não consigo ver a imagem"
+                r["dica"] = ("você não vê a imagem: para ler campos/texto da página "
+                             "use navegador_ver; para analisar o visual, "
+                             f"visao_analisar(caminho='{arq}').")
             return r
 
         def so_aceitos(fn, kwargs: dict) -> dict:

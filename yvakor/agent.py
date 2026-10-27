@@ -266,6 +266,10 @@ _ALIAS_ARGS = {"query": "termo", "q": "termo", "busca": "termo", "texto_busca": 
                "tab_id": "aba", "tab": "aba", "tabId": "aba", "link": "url"}
 
 
+_CHAVES_PROTOCOLO = {"acao", "ferramenta", "tool", "name", "motivo", "args",
+                     "arguments", "parametros", "texto", "pensamento"}
+
+
 def _alias_args(registry, ferramenta: str, args: dict) -> dict:
     esperados = ((getattr(registry, "specs", {}) or {}).get(ferramenta) or {}).get("args") or {}
     if not esperados:
@@ -304,10 +308,19 @@ def _parse_acao(raw: str, registry=None) -> dict | None:
                 args = json.loads(args)
             except Exception:
                 args = None
+        if args is None and (ferramenta or acao not in ("", "responder")):
+            # argumentos "soltos" no objeto: {"ferramenta":"http_get","url":"…"}.
+            # Antes viravam args=None e a ferramenta rodava VAZIA (http_get {}).
+            soltos = {k: v for k, v in obj.items() if k not in _CHAVES_PROTOCOLO}
+            if soltos:
+                args = soltos
+            elif ferramenta:
+                args = {}
         if ferramenta and registry is not None and ferramenta not in registry.tools:
             ferramenta = _ALIAS_FERRAMENTA.get(ferramenta, ferramenta)
-        if isinstance(args, dict) and ferramenta and registry is not None:
-            args = _alias_args(registry, ferramenta, args)
+        alvo_args = ferramenta or (acao if acao not in ("", "usar_ferramenta", "responder") else "")
+        if isinstance(args, dict) and alvo_args and registry is not None:
+            args = _alias_args(registry, alvo_args, args)
         obj = {**obj, "ferramenta": ferramenta, "args": args}
         if acao == "usar_ferramenta" and ferramenta:
             if registry and ferramenta not in registry.tools:
