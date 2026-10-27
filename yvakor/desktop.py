@@ -28,28 +28,89 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import ttk
 
+from yvakor.textos import sem_json_de_ferramenta
+
 BASE = os.environ.get("YVAKOR_URL", "http://127.0.0.1:7777")
 ROOT = Path(__file__).resolve().parents[1]
 
-# Paleta do HTML pré-misturada em cores opacas (Tk não tem alpha por widget).
-BG = "#060D12"
-PANEL = "#0C1A23"
-PANEL2 = "#10212B"
-CARD = "#0D1C25"
-FG = "#EAE4D3"
-MUTED = "#888B86"
-DIM = "#606766"
-PLACEHOLDER = "#4F5758"
-GOLD = "#D9A441"
-GOLD_SOFT = "#3C3E30"
-TEAL = "#3FBFAE"
-TEAL_BG = "#16363D"
-TEAL_LINE = "#1C494D"
-LINE = "#273238"
-USER_BG = "#1B282C"
-AGENT_BG = "#182831"
-ERR = "#FF8B86"
-STATUS_BG = "#0A141A"
+# Paleta no estilo do Claude.ai (Tk não tem alpha por widget: cores opacas).
+# Tema: variável YVAKOR_TEMA ou "tema" em data/preferencias.json
+# ("claro" | "escuro" | "auto" = o do Windows). Trocar exige reiniciar o app.
+def _tema_escuro() -> bool:
+    pref = os.environ.get("YVAKOR_TEMA", "").strip().lower()
+    if not pref:
+        try:
+            import json as _json
+            pref = str(_json.loads((ROOT / "data" / "preferencias.json")
+                                   .read_text(encoding="utf-8")).get("tema", "")
+                       ).strip().lower()
+        except Exception:
+            pref = ""
+    if pref in ("claro", "light"):
+        return False
+    if pref in ("escuro", "dark"):
+        return True
+    if os.name == "nt":
+        try:
+            import winreg
+            with winreg.OpenKey(
+                    winreg.HKEY_CURRENT_USER,
+                    r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+            ) as k:
+                return winreg.QueryValueEx(k, "AppsUseLightTheme")[0] == 0
+        except Exception:
+            pass
+    return True
+
+
+ESCURO = _tema_escuro()
+if ESCURO:
+    BG = "#262624"
+    PANEL = "#1F1E1D"          # barra lateral
+    PANEL2 = "#30302E"         # cartões e campo de mensagem
+    CARD = "#30302E"
+    FG = "#FAF9F5"
+    MUTED = "#A8A69E"
+    DIM = "#7C7A73"
+    PLACEHOLDER = "#7C7A73"
+    GOLD = "#D97757"           # terracota do Claude
+    GOLD_SOFT = "#3A2D28"
+    GOLD_HOVER = "#E58A6B"
+    TEAL = "#7FBF8F"
+    TEAL_BG = "#2A3A2F"
+    TEAL_LINE = "#3C5443"
+    LINE = "#3A3937"
+    USER_BG = "#393937"
+    AGENT_BG = "#262624"       # resposta sem balão
+    ERR = "#E07A70"
+    ERR_HOVER = "#EE9189"
+    STATUS_BG = "#1F1E1D"
+    SCROLL = "#4A4946"
+    TEXTO2 = "#D8D6CD"
+else:
+    BG = "#FAF9F5"
+    PANEL = "#F5F4EE"
+    PANEL2 = "#FFFFFF"
+    CARD = "#FFFFFF"
+    FG = "#1F1E1D"
+    MUTED = "#6B6A64"
+    DIM = "#8E8C85"
+    PLACEHOLDER = "#9A988F"
+    GOLD = "#C96442"
+    GOLD_SOFT = "#F6E7DF"
+    GOLD_HOVER = "#B9573A"
+    TEAL = "#4D8A5F"
+    TEAL_BG = "#E4EFE7"
+    TEAL_LINE = "#BFD6C6"
+    LINE = "#E3E0D5"
+    USER_BG = "#F0EEE6"
+    AGENT_BG = "#FAF9F5"
+    ERR = "#B4443B"
+    ERR_HOVER = "#C25A51"
+    STATUS_BG = "#F5F4EE"
+    SCROLL = "#CFCBBE"
+    TEXTO2 = "#3A3935"
+ON_GOLD = "#FFFFFF"            # texto sobre botões terracota/erro
 FONTES_DIR = ROOT / "interface" / "fonts"
 UI = "Inter" if (FONTES_DIR / "Inter.ttf").is_file() else "Segoe UI"
 UI_SEMI = UI
@@ -94,7 +155,7 @@ def _barra_titulo_escura(root: tk.Tk):
         import ctypes
         root.update_idletasks()
         hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
-        valor = ctypes.c_int(1)
+        valor = ctypes.c_int(1 if ESCURO else 0)
         for atributo in (20, 19):  # 20 = Win11; 19 = Win10 antigo
             try:
                 if ctypes.windll.dwmapi.DwmSetWindowAttribute(
@@ -398,7 +459,7 @@ class ChatView(tk.Frame):
         lado = "right" if usuario else "left"
         bolha = tk.Frame(linha, bg=fundo)
         bolha.pack(anchor="e" if usuario else "w")
-        faixa = tk.Frame(bolha, width=2, bg=GOLD if usuario else TEAL)
+        faixa = tk.Frame(bolha, width=0, bg=fundo)   # (sem faixa colorida)
         faixa.pack(side=lado, fill="y")
         ancora = "e" if usuario else "w"
 
@@ -413,15 +474,15 @@ class ChatView(tk.Frame):
             self._textos.append(("meta", texto or ""))
             self._bind_roda(lbl)
         else:
-            tk.Label(bolha, text="V O C Ê" if usuario else "Y V A K O R",
-                     bg=fundo, fg=MUTED, font=(UI, 7),
-                     anchor=ancora).pack(anchor=ancora, padx=(12, 12),
-                                         pady=(7, 0))
-            exibicao = texto if usuario else _limpar_markdown(texto)
+            exibicao = texto if usuario else _limpar_markdown(
+                sem_json_de_ferramenta(texto))
             corpo = tk.Label(bolha, text=exibicao, bg=fundo, fg=FG,
-                             justify="right" if usuario else "left",
-                             anchor=ancora, font=FONT, wraplength=self._wrap)
-            corpo.pack(anchor=ancora, padx=(12, 12), pady=(2, 8))
+                             justify="left",
+                             anchor=ancora,
+                             font=(UI, 10) if usuario else (DISPLAY, 11),
+                             wraplength=self._wrap)
+            corpo.pack(anchor=ancora, padx=(14, 14) if usuario else (2, 2),
+                       pady=(8, 8) if usuario else (4, 10))
             self._labels.append(corpo)
             self._textos.append(("user" if usuario else "agent", texto))
             self._menu_copiar(corpo, texto)
@@ -894,7 +955,7 @@ class SessaoLista(tk.Frame):
         topo.pack(fill="x")
         titulo = tk.Label(
             topo, text=_limpar_texto(s.get("title") or sid, 30), bg=base,
-            fg=FG if ativa else "#D6D0C1",
+            fg=FG if ativa else TEXTO2,
             font=(UI_SEMI if ativa else UI, 9),
             anchor="w")
         titulo.pack(side="left", fill="x", expand=True)
@@ -1908,8 +1969,8 @@ class App:
         except Exception:
             pass
         style.configure("YVAKOR.Vertical.TScrollbar", troughcolor=BG,
-                        background="#24343D", lightcolor="#24343D",
-                        darkcolor="#24343D", bordercolor=BG,
+                        background=SCROLL, lightcolor=SCROLL,
+                        darkcolor=SCROLL, bordercolor=BG,
                         arrowcolor=BG, width=8, arrowsize=0,
                         relief="flat")
         style.configure("Treeview", background=PANEL, fieldbackground=PANEL,
@@ -2015,7 +2076,7 @@ class App:
                     activebackground=STATUS_BG, activeforeground=FG, padx=0,
                     pady=0)
                 menu = tk.Menu(lbl, tearoff=0, bg=PANEL, fg=FG, bd=0,
-                               activebackground=GOLD, activeforeground=BG,
+                               activebackground=GOLD, activeforeground=ON_GOLD,
                                font=FONT_XS)
                 menu.configure(
                     postcommand=lambda m=menu: self._montar_menu_modelo(m))
@@ -2081,10 +2142,10 @@ class App:
         tk.Label(cab, text="C O N V E R S A S", bg=PANEL, fg=MUTED,
                  font=(UI_SEMI, 7)).pack(side="left")
         self.btn_nova = tk.Button(
-            cab, text="+ nova", command=self.nova_conversa, bg=GOLD, fg=BG,
+            cab, text="+ nova", command=self.nova_conversa, bg=GOLD, fg=ON_GOLD,
             font=(UI_SEMI, 8), padx=8, pady=2, bd=0, relief="flat",
-            highlightthickness=0, activebackground="#E7B75A",
-            activeforeground=BG, cursor="hand2")
+            highlightthickness=0, activebackground=GOLD_HOVER,
+            activeforeground=ON_GOLD, cursor="hand2")
         self.btn_nova.pack(side="right")
         self.btn_priv = tk.Button(
             cab, text="privada", command=self.nova_conversa_privada, bg=PANEL,
@@ -2136,6 +2197,7 @@ class App:
                lambda e: (self.nova_conversa_privada(), "break")[1])
         r.bind("<Control-l>", lambda e: (self._focar_entrada(), "break")[1])
         r.bind("<Control-k>", lambda e: (self._focar_busca(), "break")[1])
+        r.bind("<Control-Shift-T>", lambda e: (self._alternar_tema(), "break")[1])
         r.bind("<F5>", lambda e: (self._atualizar_tudo(), "break")[1])
         r.bind("<Control-Tab>", lambda e: (self.abas.selecionar(
             self.abas.atual + 1), "break")[1])
@@ -2353,7 +2415,7 @@ class App:
                                   font=(UI_SEMI, 7), padx=7,
                                   cursor="hand2")
         self.btn_anexo.pack(side="left")
-        self.btn_enviar = tk.Label(caixa, text="Enviar", bg=GOLD, fg=BG,
+        self.btn_enviar = tk.Label(caixa, text="Enviar", bg=GOLD, fg=ON_GOLD,
                                    font=(UI_SEMI, 9), padx=14,
                                    pady=7, cursor="hand2")
         self.btn_enviar.pack(side="right", padx=(2, 6), pady=6)
@@ -2504,12 +2566,12 @@ class App:
         topo.pack(fill="x", padx=16, pady=(10, 8))
         tk.Label(topo, text="Tarefas em segundo plano", bg=BG, fg=FG,
                  font=FONT_B).pack(side="left")
-        nova = tk.Label(topo, text="+ nova tarefa", bg=GOLD, fg=BG,
+        nova = tk.Label(topo, text="+ nova tarefa", bg=GOLD, fg=ON_GOLD,
                         font=(UI_SEMI, 8), padx=12, pady=5,
                         cursor="hand2")
         nova.pack(side="right")
         nova.bind("<Button-1>", lambda e: self.nova_tarefa())
-        self._hover(nova, GOLD, "#E7B75A")
+        self._hover(nova, GOLD, GOLD_HOVER)
         atualizar = tk.Label(topo, text="Atualizar", bg=PANEL2, fg=FG,
                              font=FONT_XS, padx=12, pady=5,
                              cursor="hand2")
@@ -2537,8 +2599,8 @@ class App:
         self.tree.tag_configure("na_fila", foreground=MUTED)
         self.tree.tag_configure("concluida", foreground=TEAL)
         self.tree.tag_configure("falha", foreground=ERR)
-        self.tree.tag_configure("cancelada", foreground="#D9534F")
-        self.tree.tag_configure("interrompida", foreground="#D9534F")
+        self.tree.tag_configure("cancelada", foreground=ERR)
+        self.tree.tag_configure("interrompida", foreground=ERR)
         self.tree.bind("<<TreeviewSelect>>", self._ver_tarefa)
         self.lbl_tarefas_vazio = tk.Label(
             wrap, text="Nenhuma tarefa ainda.\nUse “+ nova tarefa” para "
@@ -2584,11 +2646,11 @@ class App:
         barra.pack(fill="x", padx=14, pady=(10, 6))
         tk.Label(barra, text="AGENDA", bg=BG, fg=FG,
                  font=(UI_SEMI, 9)).pack(side="left")
-        novo = tk.Label(barra, text="+ agendar", bg=GOLD, fg=BG,
+        novo = tk.Label(barra, text="+ agendar", bg=GOLD, fg=ON_GOLD,
                         font=(UI_SEMI, 8), padx=9, pady=3, cursor="hand2")
         novo.pack(side="right")
         novo.bind("<Button-1>", lambda e: self._nova_agenda())
-        self._hover(novo, GOLD, "#E7B75A")
+        self._hover(novo, GOLD, GOLD_HOVER)
         atualizar = tk.Label(barra, text="Atualizar", bg=PANEL2, fg=FG,
                              font=(UI_SEMI, 7), padx=9, pady=3,
                              cursor="hand2")
@@ -2677,7 +2739,7 @@ class App:
                     self._post(self.set_status, f"agenda: {exc}", ERR)
             threading.Thread(target=trabalho, daemon=True).start()
             janela.destroy()
-        tk.Button(janela, text="Agendar", command=criar, bg=GOLD, fg=BG,
+        tk.Button(janela, text="Agendar", command=criar, bg=GOLD, fg=ON_GOLD,
                   bd=0, padx=14, pady=6).pack(anchor="e", padx=14, pady=8)
 
     def _cancelar_agenda(self):
@@ -3079,7 +3141,7 @@ class App:
         tk.Button(barra, text="Documentação", bg=PANEL2, fg=FG, bd=0,
                   padx=10, command=lambda: os.startfile(
                       str(ROOT / "docs" / "PRODUCT.md"))).pack(side="left")
-        tk.Button(barra, text="Fechar", bg=GOLD, fg=BG, bd=0, padx=12,
+        tk.Button(barra, text="Fechar", bg=GOLD, fg=ON_GOLD, bd=0, padx=12,
                   command=janela.destroy).pack(side="right")
 
     def nova_janela(self):
@@ -3203,17 +3265,36 @@ class App:
                 self.btn_enviar.configure(text="Destravar", bg=PANEL2,
                                           fg=ERR)
             else:
-                self.btn_enviar.configure(text="Enviar", bg=GOLD, fg=BG)
+                self.btn_enviar.configure(text="Enviar", bg=GOLD, fg=ON_GOLD)
         except Exception:
             pass
         self._atualizar_canal()
+
+    def _alternar_tema(self):
+        """Ctrl+Shift+T: alterna claro/escuro (vale ao reabrir o app)."""
+        import json as _json
+        arq = ROOT / "data" / "preferencias.json"
+        try:
+            dados = _json.loads(arq.read_text(encoding="utf-8"))
+        except Exception:
+            dados = {}
+        novo = "claro" if ESCURO else "escuro"
+        dados["tema"] = novo
+        try:
+            arq.parent.mkdir(parents=True, exist_ok=True)
+            arq.write_text(_json.dumps(dados, ensure_ascii=False, indent=2),
+                           encoding="utf-8")
+            self.add("system", f"Tema {novo} salvo. Feche e abra o YVAKOR "
+                               "para aplicar.")
+        except Exception as exc:
+            self.add("system", f"Não consegui salvar o tema: {exc}")
 
     def _hover_envio(self, entrando: bool):
         try:
             if self.sessao in self._envios:
                 self.btn_enviar.configure(bg=LINE if entrando else PANEL2)
             else:
-                self.btn_enviar.configure(bg="#E7B75A" if entrando
+                self.btn_enviar.configure(bg=GOLD_HOVER if entrando
                                           else GOLD)
         except Exception:
             pass
@@ -3484,12 +3565,12 @@ class App:
 
         botoes = tk.Frame(win, bg=BG)
         botoes.pack(fill="x", padx=18, pady=(0, 14))
-        salvar = tk.Label(botoes, text="Salvar", bg=GOLD, fg=BG,
+        salvar = tk.Label(botoes, text="Salvar", bg=GOLD, fg=ON_GOLD,
                           font=(UI_SEMI, 9), padx=14, pady=6,
                           cursor="hand2")
         salvar.pack(side="right")
         salvar.bind("<Button-1>", lambda e: enviar())
-        self._hover(salvar, GOLD, "#E7B75A")
+        self._hover(salvar, GOLD, GOLD_HOVER)
         cancelar_btn = tk.Label(botoes, text="Cancelar", bg=PANEL2,
                                 fg=MUTED, font=FONT_XS, padx=12, pady=6,
                                 cursor="hand2")
@@ -3527,12 +3608,12 @@ class App:
                  justify="left", wraplength=390).pack(anchor="w", padx=18)
         botoes = tk.Frame(win, bg=BG)
         botoes.pack(fill="x", padx=18, pady=16)
-        ok = tk.Label(botoes, text="Confirmar", bg=ERR, fg=BG,
+        ok = tk.Label(botoes, text="Confirmar", bg=ERR, fg=ON_GOLD,
                       font=(UI_SEMI, 9), padx=14, pady=6,
                       cursor="hand2")
         ok.pack(side="right")
         ok.bind("<Button-1>", lambda e: (win.destroy(), ao_ok()))
-        self._hover(ok, ERR, "#FFB0AC")
+        self._hover(ok, ERR, ERR_HOVER)
         cancelar = tk.Label(botoes, text="Cancelar", bg=PANEL2, fg=MUTED,
                             font=FONT_XS, padx=12, pady=6, cursor="hand2")
         cancelar.pack(side="right", padx=(0, 6))
@@ -4012,12 +4093,12 @@ class App:
         def responder(allow):
             self._responder_confirmacao(win, pend, allow)
 
-        permitir = tk.Label(botoes, text="Permitir", bg=GOLD, fg=BG,
+        permitir = tk.Label(botoes, text="Permitir", bg=GOLD, fg=ON_GOLD,
                             font=(UI_SEMI, 9), padx=16, pady=6,
                             cursor="hand2")
         permitir.pack(side="right")
         permitir.bind("<Button-1>", lambda e: responder(True))
-        self._hover(permitir, GOLD, "#E7B75A")
+        self._hover(permitir, GOLD, GOLD_HOVER)
         negar = tk.Label(botoes, text="Negar", bg=PANEL2, fg=ERR,
                          font=FONT_XS, padx=14, pady=6, cursor="hand2")
         negar.pack(side="right", padx=(0, 6))
