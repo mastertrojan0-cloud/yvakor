@@ -184,6 +184,138 @@ def test_poda_nao_mutila_explicacao_nem_lista():
                              "resposta_simples", []).count(".") <= 3
 
 
+# --------------------------------------------------------------------------- #
+# Token: não é regravado por um simples import; a GUI se autocura num 403
+# --------------------------------------------------------------------------- #
+def test_import_do_servidor_nao_sobrescreve_o_token():
+    """Regressão: `import yvakor.server` regravava data/.server_token, e um
+    teste/segundo processo deixava o servidor em execução com token diferente
+    do arquivo lido pela interface (403 em tudo)."""
+    import subprocess
+    arq = ROOT / "data" / ".server_token"
+    arq.parent.mkdir(parents=True, exist_ok=True)
+    original = arq.read_text(encoding="utf-8") if arq.exists() else None
+    arq.write_text("TOKEN-DO-SERVIDOR-EM-EXECUCAO", encoding="utf-8")
+    try:
+        subprocess.run([sys.executable, "-c", "import yvakor.server"],
+                       cwd=str(ROOT), capture_output=True, timeout=60)
+        assert arq.read_text(encoding="utf-8") == "TOKEN-DO-SERVIDOR-EM-EXECUCAO"
+    finally:
+        if original is None:
+            arq.unlink(missing_ok=True)
+        else:
+            arq.write_text(original, encoding="utf-8")
+
+
+def test_gui_renova_o_token_quando_recebe_403():
+    import yvakor.desktop as D
+    S, srv, port = _servidor()
+    S.HOSTS_OK.add(f"127.0.0.1:{port}")
+    base_antiga, token_antigo = D.BASE, D._TOKEN_VIVO
+    try:
+        D.BASE = f"http://127.0.0.1:{port}"
+        D._TOKEN_VIVO = "token-velho-de-um-servidor-anterior"
+        r = D.api("/api/ext/ping", {})        # 403 → renova via /api/token → ok
+        assert r.get("ok") is True
+        assert D._TOKEN_VIVO == S.TOKEN
+    finally:
+        D.BASE, D._TOKEN_VIVO = base_antiga, token_antigo
+        srv.shutdown()
+
+
+# --------------------------------------------------------------------------- #
+# Roteador: circuit breaker (DeepSeek sem saldo → modelo local)
+# --------------------------------------------------------------------------- #
+class _Prov:
+    def __init__(self, nome, erro=None, fatal=False):
+        self.name, self.erro, self.fatal, self.chamadas = nome, erro, fatal, 0
+
+    def chat_messages(self, msgs, timeout=None, max_tokens=None):
+        self.chamadas += 1
+        if self.erro:
+            from yvakor.llm.adapter import ProviderErro
+            raise ProviderErro(self.erro, fatal=self.fatal)
+        return f"resposta do {self.name}"
+
+
+def _router(deepseek, ollama):
+    from yvakor.llm.router import LLMRouter
+    r = LLMRouter({"llm": {"default_provider": "deepseek", "providers": {},
+                           "routing": {"local": [], "external": ["analise_complexa"],
+                                       "fallback_order": ["deepseek", "ollama"]}}})
+    r.providers = {"deepseek": deepseek, "ollama": ollama}
+    return r
+
+
+def test_breaker_pula_o_deepseek_sem_saldo():
+    ds = _Prov("deepseek", "deepseek HTTP 402: Payment Required", fatal=True)
+    ol = _Prov("ollama")
+    r = _router(ds, ol)
+    msg = [{"role": "user", "content": "oi"}]
+    assert r.complete_messages("analise_complexa", msg) == "resposta do ollama"
+    assert ds.chamadas == 1 and r.sem_externos() is True
+    # as próximas NÃO gastam uma ida ao DeepSeek (antes: 1 tentativa por passo)
+    for _ in range(3):
+        r.complete_messages("analise_complexa", msg)
+    assert ds.chamadas == 1 and ol.chamadas == 4
+
+
+def test_breaker_erro_transitorio_tem_cooldown_curto():
+    ds = _Prov("deepseek", "deepseek indisponível: timeout", fatal=False)
+    r = _router(ds, _Prov("ollama"))
+    r.complete_messages("analise_complexa", [{"role": "user", "content": "x"}])
+    restante = r._cooldown["deepseek"] - __import__("time").time()
+    assert 0 < restante <= r.COOLDOWN_TRANSITORIO
+
+
+def test_probe_detecta_nuvem_fora_sem_gastar_o_passo_do_agente():
+    r = _router(_Prov("deepseek", "HTTP 402", fatal=True), _Prov("ollama"))
+    assert r.verificar_externos() is False and r.sem_externos() is True
+    r2 = _router(_Prov("deepseek"), _Prov("ollama"))
+    assert r2.verificar_externos() is True and r2.sem_externos() is False
+
+
+def test_todos_falham_mensagem_orienta_o_usuario():
+    r = _router(_Prov("deepseek", "HTTP 402", fatal=True),
+                _Prov("ollama", "ollama indisponível: recusada"))
+    try:
+        r.complete_messages("analise_complexa", [{"role": "user", "content": "x"}])
+        assert False, "deveria falhar"
+    except RuntimeError as exc:
+        txt = str(exc)
+        assert "deepseek" in txt and "ollama" in txt and "saldo" in txt
+
+
+# --------------------------------------------------------------------------- #
+# Agente local compacto e argumentos errados do modelo pequeno
+# --------------------------------------------------------------------------- #
+def test_registry_reconcilia_argumentos_inventados_pelo_modelo():
+    from yvakor.tools.registry import ToolRegistry
+    reg = ToolRegistry({"tools": {"guarded_actions": [], "always_confirm": []}})
+    reg.register("somar", lambda a, b: {"ok": True, "r": int(a) + int(b)},
+                 "soma", {"a": "int", "b": "int"})
+    # nomes inventados (numero1/numero2): mapeados por posição
+    assert reg.run("somar", numero1=17, numero2=25)["r"] == 42
+    # chamada correta passa intacta
+    assert reg.run("somar", a=1, b=2)["r"] == 3
+    # faltando argumento: o erro diz quais eram esperados
+    erro = reg.run("somar", a=1)
+    assert erro["ok"] is False and "a, b" in erro["error"]
+
+
+def test_prompt_compacto_do_agente_local_e_pequeno_e_tem_exemplo():
+    from yvakor.agent import AgentLoop
+    from yvakor.tools.registry import ToolRegistry
+    reg = ToolRegistry({"tools": {"guarded_actions": [], "always_confirm": []}})
+    reg.register("somar", lambda a, b: 0, "Soma dois inteiros. " * 30,
+                 {"a": "int", "b": "int"})
+    ag = AgentLoop(router=None, registry=reg)
+    compacto = ag.system_with_tools("Você é o YVAKOR.", ["somar"], compacto=True)
+    completo = ag.system_with_tools("Você é o YVAKOR.", ["somar"])
+    assert len(compacto) < 1500 < len(completo)
+    assert '"ferramenta": "somar"' in compacto and '"a": 0' in compacto
+
+
 if __name__ == "__main__":
     for nome, fn in list(globals().items()):
         if nome.startswith("test_") and callable(fn):

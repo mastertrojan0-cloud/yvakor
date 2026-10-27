@@ -899,10 +899,28 @@ class Orchestrator:
                 self._prog_done(sid)
                 forcar = None
 
-        system = self.build_system_prompt(
-            user_message, self._juntar_contexto(extra_context, contexto_cerebro))
+        # Nuvem fora (ex.: DeepSeek HTTP 402 sem saldo)? Um probe barato decide
+        # ANTES do 1º passo do agente — senão ele gastaria um prompt pesado
+        # (~110s no 3B) numa tentativa que já se sabe que vai falhar.
+        modo_local = False
+        if forcar != "ollama":
+            try:
+                modo_local = not self.router.verificar_externos()
+            except Exception:
+                modo_local = False
+        if modo_local:
+            system = self._system_compacto(user_message, extra_context,
+                                           contexto_cerebro)
+            forcar = "ollama"
+        else:
+            system = self.build_system_prompt(
+                user_message,
+                self._juntar_contexto(extra_context, contexto_cerebro))
         task_type = self.router.classify(user_message)
         self._prog_start(sid)
+        if modo_local:
+            self._prog_step(sid, "🧠 DeepSeek indisponível — usando o modelo local "
+                                 "(mais lento)")
 
         # Loop de agente: a IA decide e executa ferramentas (Claude Code-like).
         # A continuidade vem do histórico REAL da conversa (turnos user/assistant),
@@ -939,6 +957,8 @@ class Orchestrator:
                        self.settings["memory"]["episodic_context_last_n"],
                        session_id=sid))
         history.append({"role": "user", "content": user_message})
+        if modo_local:
+            history = history[-5:]   # prompt menor = passo bem mais rápido no 3B
 
         # Ações protegidas pedem confirmação via interface (popup no navegador),
         # roteadas pelo broker para ESTA sessão (conversa ou tarefa cowork).
@@ -948,7 +968,8 @@ class Orchestrator:
         try:
             answer = self.agent.run(system, history=history, on_event=_trace,
                                     should_stop=should_stop,
-                                    forcar_provider=forcar)
+                                    forcar_provider=forcar,
+                                    compacto=modo_local)
             # Lista local desta resposta (agent.artefatos é thread-local, lido
             # na MESMA thread) — garante que os entregáveis anexados são os
             # desta execução, não os de outra tarefa concorrente.
@@ -1026,6 +1047,21 @@ class Orchestrator:
                              "content": str(m["content"])[:600]})
         msgs.append({"role": "user", "content": pergunta})
         return msgs
+
+    def _system_compacto(self, pergunta: str, extra_context: str | None,
+                         contexto_cerebro: str | None) -> str:
+        """System prompt enxuto do agente LOCAL (~0,5k em vez de ~9k caracteres)."""
+        agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+        partes = [
+            "Você é o YVAKOR, assistente pessoal do usuário, rodando no PC dele "
+            "(Windows). Responda em português do Brasil, direto. Aja em vez de "
+            "perguntar; só afirme que fez algo se uma ferramenta confirmou; se "
+            f"não souber, diga. Agora são {agora}."]
+        if contexto_cerebro:
+            partes.append("Contexto conhecido:\n" + contexto_cerebro[:600])
+        if extra_context:
+            partes.append(extra_context[:1500])
+        return "\n\n".join(partes)
 
     _RECUSA_LOCAL = _re.compile(
         r"(como (um )?(modelo|assistente|ia)\b.{0,40}(linguagem|ia\b)|"
@@ -1143,6 +1179,13 @@ class Orchestrator:
                         task_type: str) -> None:
         """Avalia e SÓ absorve/destila se a resposta foi boa. Antes absorção e
         avaliação eram threads independentes: a nota não influenciava nada."""
+        # Sem provedor externo só sobra o 3B local (CPU): avaliar/extrair fatos
+        # em segundo plano competiria com o chat e a qualidade seria ruim.
+        try:
+            if self.router.sem_externos():
+                return
+        except Exception:
+            pass
         nota = None
         if self.settings["agent"].get("avaliar_auto"):
             nota = self._avaliar_fundo(pergunta, resposta)

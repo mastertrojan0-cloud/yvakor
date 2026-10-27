@@ -85,14 +85,34 @@ class ToolRegistry:
                 saida[chave] = valor
         return saida
 
+    def _reconciliar_args(self, name: str, kwargs: dict) -> dict:
+        """Modelos pequenos erram os NOMES dos argumentos (ex.: numero1/numero2
+        em vez de a/b). Se algum nome não existe na especificação: com a mesma
+        quantidade de argumentos, mapeia por posição; senão descarta os
+        desconhecidos. Só mexe em ferramentas com especificação declarada e só
+        quando há divergência — chamadas corretas passam intactas."""
+        spec = list(((self.specs.get(name) or {}).get("args") or {}))
+        if not spec or all(k in spec for k in kwargs):
+            return kwargs
+        if len(kwargs) == len(spec):
+            return dict(zip(spec, kwargs.values()))
+        return {k: v for k, v in kwargs.items() if k in spec}
+
     def run(self, name: str, **kwargs) -> dict:
         if name not in self.tools:
             return {"ok": False, "error": f"ferramenta desconhecida: {name}"}
         if self.guard.requires_confirmation(name):
             if not self.guard.confirm(name, str(kwargs)[:200]):
                 return {"ok": False, "error": "cancelado pelo usuário"}
+        kwargs = self._reconciliar_args(name, kwargs)
         try:
             valor = self.tools[name](**kwargs)
+        except TypeError as e:
+            # Argumento errado/faltando: diz ao modelo QUAIS eram esperados,
+            # em vez de só "unexpected keyword argument" (que o 3B não corrige).
+            esperado = list(((self.specs.get(name) or {}).get("args") or {}))
+            dica = f" — argumentos esperados: {', '.join(esperado)}" if esperado else ""
+            return {"ok": False, "error": f"{e}{dica}"}
         except Exception as e:
             return {"ok": False, "error": str(e)}
         # Ferramentas que já devolvem {"ok": ...} não são embrulhadas de novo:

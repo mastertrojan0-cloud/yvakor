@@ -54,7 +54,14 @@ class Maintenance:
         # 1b. consolida memória semântica (dedup/limpeza) — usa a IA principal
         if self.cfg.get("consolidate_memory", True):
             try:
-                res["memoria"] = self.o.absorber.consolidate_memory()
+                # consolidate_memory() SUBSTITUI todos os fatos pelo que o modelo
+                # devolver. Com a nuvem fora só sobra o 3B local, que pode
+                # devolver uma lista empobrecida e apagar memória de verdade:
+                # adia para quando houver o modelo principal.
+                if self.o.router.sem_externos():
+                    res["memoria"] = {"adiado": "provedor externo indisponível"}
+                else:
+                    res["memoria"] = self.o.absorber.consolidate_memory()
             except Exception as e:
                 res["memoria"] = {"erro": str(e)}
         self.last["conhecimento"] = res

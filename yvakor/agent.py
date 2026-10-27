@@ -162,6 +162,22 @@ ou `gerar_imagem`. REGRAS CRÍTICAS:
 """
 
 
+# Protocolo ENXUTO para o modelo local (3B em CPU). O PROTOCOLO completo + o
+# system prompt passam de ~7k caracteres e levam ~110s por passo neste hardware;
+# este cabe em ~2k e mantém só o essencial do contrato JSON.
+PROTOCOLO_COMPACTO = """## FERRAMENTAS
+{manifesto}
+
+## COMO RESPONDER
+- Para usar uma ferramenta responda SOMENTE com um JSON neste formato, sem
+  texto extra (use EXATAMENTE os nomes de argumentos da lista acima):
+  {exemplo}
+- Para responder ao usuário escreva texto normal em português (sem JSON).
+- Uma ferramenta por vez; depois da OBSERVAÇÃO decida o próximo passo.
+- Não invente ferramentas, caminhos nem resultados. O sistema é Windows.
+"""
+
+
 def _extrair_resposta_final(raw: str) -> str:
     """Se o modelo respondeu no formato JSON {"acao":"responder", ...} em vez
     de texto puro (acontece com alguns modelos), extrai só o texto. Caso
@@ -309,8 +325,9 @@ class AgentLoop:
     def ultima_selecao(self, valor: list[str]) -> None:
         self._tl.ultima_selecao = valor
 
-    def _selecionar(self, history: list[dict]) -> list[str] | None:
-        if not self.roteador:
+    def _selecionar(self, history: list[dict],
+                    limite: int | None = None) -> list[str] | None:
+        if not self.roteador and limite is None:
             return None
         mensagem = ""
         for item in reversed(history):
@@ -319,11 +336,33 @@ class AgentLoop:
                 break
         from yvakor.tools.router import selecionar
         self.ultima_selecao = selecionar(self.registry, mensagem,
-                                         self.max_ferramentas)
+                                         limite or self.max_ferramentas)
         return self.ultima_selecao
 
     def system_with_tools(self, base_system: str,
-                          nomes: list[str] | None = None) -> str:
+                          nomes: list[str] | None = None,
+                          compacto: bool = False) -> str:
+        if compacto:
+            # Manifesto enxuto: 1 linha curta por ferramenta (o texto completo
+            # de ~14 ferramentas é o que mais pesa no prompt do modelo local).
+            manifesto = "\n".join(
+                linha[:170] for linha in self.registry.manifest(nomes).splitlines())
+            # Exemplo CONCRETO com a 1ª ferramenta e os nomes reais dos
+            # argumentos: o 3B inventava nomes ("numero1") quando só via um
+            # molde genérico, e a chamada falhava.
+            primeira = (nomes or list(self.registry.specs))[:1]
+            args_ex = {}
+            if primeira:
+                for arg, tipo in (self.registry.specs.get(primeira[0], {})
+                                  .get("args") or {}).items():
+                    args_ex[arg] = 0 if str(tipo).rstrip("?") in (
+                        "int", "float") else "..."
+            exemplo = json.dumps(
+                {"acao": "usar_ferramenta",
+                 "ferramenta": primeira[0] if primeira else "nome_exato",
+                 "args": args_ex}, ensure_ascii=False)
+            return base_system + "\n\n" + PROTOCOLO_COMPACTO.format(
+                manifesto=manifesto, exemplo=exemplo)
         return base_system + "\n\n" + PROTOCOLO.format(
             manifesto=self.registry.manifest(nomes))
 
@@ -404,16 +443,26 @@ class AgentLoop:
             "licenca": resultado.get("licenca") or "",
             "url_origem": resultado.get("url_origem") or ""})
 
+    # Modo compacto (modelo local): cada passo é lento, então menos passos e
+    # um teto de tempo bem maior; cada chamada ao modelo ganha timeout próprio.
+    COMPACTO_MAX_PASSOS = 8
+    COMPACTO_TIMEOUT_TOTAL_S = 900
+    COMPACTO_TIMEOUT_CHAMADA_S = 240
+    COMPACTO_MAX_FERRAMENTAS = 5
+
     def run(self, base_system: str, history: list[dict], on_event=None,
-            should_stop=None, forcar_provider=None) -> str:
+            should_stop=None, forcar_provider=None,
+            compacto: bool = False) -> str:
         """history = lista de {"role":"user"|"assistant","content":...}.
         on_event(tipo, dado) opcional p/ logar passos (ferramenta, observação).
         should_stop() opcional: retorna True para interromper (cancelamento de
         tarefa em segundo plano) entre um passo e outro."""
         self.artefatos = []   # zera a lista desta thread (ver properties acima)
-        nomes = self._selecionar(history)
+        nomes = self._selecionar(
+            history, self.COMPACTO_MAX_FERRAMENTAS if compacto else None)
         messages = [{"role": "system",
-                     "content": self.system_with_tools(base_system, nomes)}]
+                     "content": self.system_with_tools(base_system, nomes,
+                                                       compacto)}]
         messages += history
         base = len(messages)   # system + histórico: nunca podados (ver _janela)
 
@@ -422,7 +471,7 @@ class AgentLoop:
         # nenhuma ferramenta já tiver rodado, para não re-executar ações com
         # efeito colateral (ex.: enviar e-mail duas vezes). A exceção é logada,
         # não engolida em silêncio (A4).
-        if self.nativo and forcar_provider != "ollama":
+        if self.nativo and forcar_provider != "ollama" and not compacto:
             estado = {"ferramentas": 0}
             try:
                 return self._run_nativo(messages, on_event, should_stop,
@@ -440,12 +489,18 @@ class AgentLoop:
                             f"Detalhe: {str(exc)[:200]}")
 
         inicio_run = time.time()
-        for _ in range(self.max_iterations):
+        max_passos = (min(self.max_iterations, self.COMPACTO_MAX_PASSOS)
+                      if compacto else self.max_iterations)
+        limite_s = (max(self.timeout_s, self.COMPACTO_TIMEOUT_TOTAL_S)
+                    if compacto else self.timeout_s)
+        kw_modelo = ({"timeout": self.COMPACTO_TIMEOUT_CHAMADA_S}
+                     if compacto else {})
+        for _ in range(max_passos):
             if should_stop is not None and should_stop():
                 return "⏹ Tarefa interrompida a pedido do usuário."
-            if time.time() - inicio_run > self.timeout_s:
+            if time.time() - inicio_run > limite_s:
                 aviso = (f"⏹ Interrompi a tarefa: excedi o limite de "
-                         f"{self.timeout_s}s. O que já foi feito está no histórico.")
+                         f"{limite_s}s. O que já foi feito está no histórico.")
                 try:
                     from yvakor.notificacoes import emitir
                     emitir(aviso, "tarefa", 2)
@@ -454,7 +509,7 @@ class AgentLoop:
                 return aviso
             raw = (self.router.complete_messages(
                 "analise_complexa", self._janela(messages, base),
-                forcar=forcar_provider) or "").strip()
+                forcar=forcar_provider, **kw_modelo) or "").strip()
             acoes = _parse_acoes(raw, self.registry)
 
             # Nenhuma ferramenta reconhecida → resposta final (ou erro claro).
@@ -495,7 +550,7 @@ class AgentLoop:
                          "final em texto puro, resumindo o que foi feito."})
         final = (self.router.complete_messages(
             "analise_complexa", self._janela(messages, base),
-            forcar=forcar_provider) or "").strip()
+            forcar=forcar_provider, **kw_modelo) or "").strip()
         return _extrair_resposta_final(final) or \
             "Concluí os passos possíveis, mas não obtive resposta final."
 
