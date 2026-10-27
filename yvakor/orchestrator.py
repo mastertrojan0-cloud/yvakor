@@ -227,6 +227,9 @@ class Orchestrator:
         # Progresso ao vivo das tarefas (por conversa) p/ a interface acompanhar
         self.progress: dict = {}
         self._prog_lock = threading.Lock()
+        # Botão Parar: sessões cuja execução o usuário mandou interromper.
+        self._cancel_lock = threading.Lock()
+        self._cancelados: set[str] = set()
         # Estado por-requisição (chat e cowork compartilham esta instância e
         # rodam em threads diferentes): a mensagem atual precisa ser isolada
         # por thread, senão os wrappers de navegador/shell de uma requisição
@@ -771,17 +774,51 @@ class Orchestrator:
                 on_event=None, private: bool = False,
                 history_override: list[dict] | None = None) -> str:
         """Processa uma mensagem; `private` não grava nada no histórico."""
+        sid = session_id or getattr(self.episodic, "active_id", "default")
+        with self._cancel_lock:
+            self._cancelados.discard(sid)      # execução nova começa limpa
+
+        def parar() -> bool:
+            # botão Parar (cancelar(sid)) OU o should_stop de quem chamou (cowork)
+            return (sid in self._cancelados) or bool(should_stop and should_stop())
+
         try:
             self.episodic.modo_privado(private)
             return self._process_impl(
-                user_message, session_id=session_id, should_stop=should_stop,
+                user_message, session_id=session_id, should_stop=parar,
                 extra_context=extra_context, on_event=on_event,
                 private=private, history_override=history_override)
         finally:
+            with self._cancel_lock:
+                self._cancelados.discard(sid)
             try:
                 self.episodic.modo_privado(False)
             except Exception:
                 pass
+
+    def cancelar(self, sid: str | None = None) -> list[str]:
+        """Botão Parar. Sem `sid`, interrompe TODA execução em andamento.
+
+        Além de marcar a sessão (o agente confere entre os passos), destrava o
+        que a deixaria parada: uma confirmação pendente (nega) e comandos
+        esperando a extensão do navegador (abortam na hora).
+        """
+        with self._prog_lock:
+            alvos = ([s for s, p in self.progress.items() if p.get("running")]
+                     if sid is None else [sid])
+        with self._cancel_lock:
+            self._cancelados.update(alvos)
+        for s in alvos:
+            try:
+                self.confirm_broker.resolve(s, False)
+            except Exception:
+                pass
+        try:
+            from yvakor.extensao_bridge import PONTE
+            PONTE.cancelar_pendentes()
+        except Exception:
+            pass
+        return alvos
 
     def _process_impl(self, user_message: str, session_id: str | None = None,
                       should_stop=None, extra_context: str | None = None,

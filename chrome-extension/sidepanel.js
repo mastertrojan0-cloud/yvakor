@@ -452,7 +452,9 @@ async function enviarMensagem() {
     catch (e) { add("agente", "Núcleo indisponível: " + e.message); return; }
   }
   ocupado = true;
-  enviar.disabled = true;
+  // Enquanto roda, o botão vira PARAR (nunca fica desabilitado).
+  enviar.textContent = "Parar";
+  enviar.classList.add("parar");
   entrada.value = "";
   ajustarAltura();
   add("user", texto);
@@ -485,7 +487,10 @@ async function enviarMensagem() {
     add("agente", "Erro: " + e.message);
   } finally {
     ocupado = false;
+    enviar.textContent = "Enviar";
+    enviar.classList.remove("parar");
     enviar.disabled = false;
+    try { chrome.runtime.sendMessage({ tipo: "fim_tarefa" }); } catch (e) {}
     clearInterval(timerProgresso);
     tickProgresso();   // leitura final: pinta "concluído · N passos" e recolhe sozinho
     tratarPendencia(null);   // a requisição acabou: nenhuma confirmação fica aberta
@@ -517,7 +522,22 @@ entrada.addEventListener("keydown", (e) => {
   }
 });
 entrada.addEventListener("input", ajustarAltura);
-enviar.addEventListener("click", enviarMensagem);
+// Parar: cancela a execução no núcleo (o agente confere entre os passos; uma
+// confirmação pendente é negada e um comando esperando o navegador aborta).
+async function pararTarefa() {
+  enviar.textContent = "Parando…";
+  procStatus.textContent = "parando…";
+  try {
+    await api("/api/chat/cancelar", { method: "POST", body: { session: sessao }, timeout: 5000 });
+  } catch (e) {
+    add("agente", "Não consegui parar a tarefa: " + e.message);
+  }
+  try { chrome.runtime.sendMessage({ tipo: "fim_tarefa" }); } catch (e) {}
+}
+enviar.addEventListener("click", () => (ocupado ? pararTarefa() : enviarMensagem()));
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && ocupado && $("confirmacao").classList.contains("oculto")) pararTarefa();
+});
 $("nova").addEventListener("click", limparConversa);
 
 /* ------------------------------ voz -------------------------------- */

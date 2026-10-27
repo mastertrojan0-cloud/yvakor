@@ -114,12 +114,29 @@ class PonteExtensao:
                   tab_id: int | None = None, titulo: str = "",
                   dados: dict | None = None) -> None:
         with self._lock:
+            ev = self._eventos.get(cid)
+            if ev is None:
+                # ninguém espera mais por este comando (cancelado/expirado):
+                # descarta em vez de acumular resultados órfãos.
+                return
             self._resultados[cid] = {"ok": bool(ok), "erro": erro,
                                      "tab_id": tab_id, "titulo": titulo,
                                      "via": "extensao", **(dados or {})}
-            ev = self._eventos.get(cid)
-        if ev:
+        ev.set()
+
+    def cancelar_pendentes(self, motivo: str = "cancelado pelo usuário") -> int:
+        """Aborta TODOS os comandos em espera (botão Parar): quem aguarda em
+        comando() acorda na hora com erro, em vez de esperar até 45s."""
+        with self._lock:
+            ids = list(self._eventos)
+            for cid in ids:
+                self._resultados[cid] = {"ok": False, "erro": motivo,
+                                         "via": "extensao"}
+            eventos = [self._eventos[c] for c in ids]
+            self._comandos.clear()
+        for ev in eventos:
             ev.set()
+        return len(ids)
 
 
 PONTE = PonteExtensao()

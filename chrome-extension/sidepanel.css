@@ -488,3 +488,7 @@ body {
 }
 .conf-botoes #conf-permitir { background: var(--ouro); border-color: var(--ouro); color: #1c1a14; font-weight: 700; }
 .conf-botoes button:hover { filter: brightness(.96); }
+
+/* Botão Enviar vira Parar enquanto o agente trabalha */
+#enviar.parar { background: #b3382e; border-color: #b3382e; color: #fff; }
+#enviar.parar:hover { filter: brightness(1.08); }

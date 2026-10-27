@@ -102,6 +102,7 @@ async function acaoPagina(nome, args = {}) {
     throw new Error("esta página do navegador (" + String(t.url).split(":")[0] +
                     ":) não aceita automação; abra um site normal");
   }
+  await indicadorLigar(t.id);
   await chrome.scripting.executeScript({
     target: { tabId: t.id }, files: ["overlay.js", "pagina.js"] });
   const r = await chrome.scripting.executeScript({
@@ -130,6 +131,97 @@ const BUSCADORES = {
   bing: "https://www.bing.com/search?q=",
   youtube: "https://www.youtube.com/results?search_query="
 };
+
+// ---------------------------------------------------------------------------
+// Indicador "YVAKOR está controlando esta aba" + botão Parar (como o Claude no
+// Chrome): borda dourada e um pílula com Parar enquanto o agente trabalha.
+// O Parar da página manda {tipo:"parar"} para cá, que cancela a execução no
+// núcleo e remove o indicador de todas as abas.
+// ---------------------------------------------------------------------------
+const IND_CHAVE = "yvakor_abas_indicadas";
+let ultimaAcao = 0;
+
+// Roda DENTRO da página (serializada pelo executeScript): sem variáveis externas.
+function bannerNaPagina(ligar) {
+  const ID = "yvk-banner", BORDA = "yvk-borda";
+  const velho = document.getElementById(ID), borda = document.getElementById(BORDA);
+  if (!ligar) {
+    if (velho) velho.remove();
+    if (borda) borda.remove();
+    return true;
+  }
+  if (velho) return true;                       // idempotente
+  const b = document.createElement("div");
+  b.id = BORDA;
+  b.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:2147483645;" +
+    "box-shadow:inset 0 0 0 3px #e0a83c,inset 0 0 28px #e0a83c66;";
+  const el = document.createElement("div");
+  el.id = ID;
+  el.setAttribute("role", "status");
+  el.style.cssText = "position:fixed;top:10px;left:50%;transform:translateX(-50%);" +
+    "z-index:2147483647;display:flex;gap:10px;align-items:center;background:#171d21;" +
+    "color:#f4efe4;font:600 12px/1.2 'Segoe UI',sans-serif;padding:7px 8px 7px 14px;" +
+    "border:1px solid #e0a83c;border-radius:999px;box-shadow:0 4px 18px #0009;";
+  const ponto = document.createElement("span");
+  ponto.textContent = "●";
+  ponto.style.color = "#e0a83c";
+  const txt = document.createElement("span");
+  txt.textContent = "YVAKOR está controlando esta aba";
+  const parar = document.createElement("button");
+  parar.type = "button";
+  parar.textContent = "Parar";
+  parar.style.cssText = "all:unset;cursor:pointer;background:#b3382e;color:#fff;" +
+    "padding:5px 12px;border-radius:999px;font:700 11px 'Segoe UI',sans-serif;";
+  parar.addEventListener("click", () => {
+    parar.textContent = "Parando…";
+    try { chrome.runtime.sendMessage({ tipo: "parar" }); } catch (e) { /* sem runtime */ }
+  });
+  el.append(ponto, txt, parar);
+  document.documentElement.append(b, el);
+  return true;
+}
+
+async function indicadorLigar(tabId) {
+  ultimaAcao = Date.now();
+  // sempre injeta (é idempotente): uma navegação apaga o banner da página
+  await chrome.scripting.executeScript({
+    target: { tabId }, func: bannerNaPagina, args: [true] }).catch(() => {});
+  try {
+    const o = await chrome.storage.session.get(IND_CHAVE);
+    const ids = new Set(o[IND_CHAVE] || []);
+    if (!ids.has(tabId)) {
+      ids.add(tabId);
+      await chrome.storage.session.set({ [IND_CHAVE]: [...ids] });
+    }
+  } catch (e) { /* storage.session indisponível */ }
+}
+
+async function indicadorDesligar() {
+  ultimaAcao = 0;
+  let ids = [];
+  try { ids = (await chrome.storage.session.get(IND_CHAVE))[IND_CHAVE] || []; } catch (e) {}
+  for (const id of ids) {
+    await chrome.scripting.executeScript({
+      target: { tabId: id }, func: bannerNaPagina, args: [false] }).catch(() => {});
+  }
+  try { await chrome.storage.session.set({ [IND_CHAVE]: [] }); } catch (e) {}
+}
+
+chrome.runtime.onMessage.addListener((msg, _remetente, responder) => {
+  if (!msg) return;
+  if (msg.tipo === "parar") {
+    (async () => {
+      try { await postNucleo("/api/chat/cancelar", {}); } catch (e) { /* núcleo fora */ }
+      await indicadorDesligar();
+      responder({ ok: true });
+    })();
+    return true;                                 // resposta assíncrona
+  }
+  if (msg.tipo === "fim_tarefa") {
+    indicadorDesligar().then(() => responder({ ok: true }));
+    return true;
+  }
+});
 
 async function executarBG(c) {
   const a = c.args || {};
@@ -312,7 +404,10 @@ try {
   chrome.alarms.create("yvakor-bridge", { periodInMinutes: 0.5 });
 } catch (e) { /* versões antigas exigem >=1 min */ }
 chrome.alarms.onAlarm.addListener((a) => {
-  if (a.name === "yvakor-bridge") { pontePing(); ponteComandos(); }
+  if (a.name === "yvakor-bridge") {
+    pontePing(); ponteComandos();
+    if (ultimaAcao && Date.now() - ultimaAcao > 120000) indicadorDesligar();
+  }
 });
 chrome.tabs.onActivated.addListener(pontePing);
 chrome.tabs.onUpdated.addListener((id, info) => {

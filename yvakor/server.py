@@ -1292,6 +1292,11 @@ class Handler(BaseHTTPRequestHandler):
                 r = ag.connectors.authorize_url(cid)
                 return self._json(200 if r.get("ok") else 400, r)
 
+            # Botão Parar: interrompe a execução da conversa (ou todas).
+            if self.path == "/api/chat/cancelar":
+                alvos = ag.cancelar(str(data.get("session") or "") or None)
+                return self._json(200, {"ok": True, "cancelados": alvos})
+
             # Escolha do modelo: {"modo": local|auto|deepseek, "local": "<nome>"}
             if self.path == "/api/modelo":
                 try:
