@@ -87,5 +87,10 @@ sh.innerHTML = '<input id="sh-in" placeholder="dentro do shadow">';
 </script>
 <script src="pagina.js"></script>
 <script src="teste_acoes.js"></script>
+<label id="anexar-rotulo" for="arq-oculto">Anexar currículo</label>
+<input type="file" id="arq-oculto" style="display:none">
+<script>document.getElementById("arq-oculto").addEventListener("change", function (e) {
+  window.__arq = Array.from(e.target.files).map(function (f) { return f.name + ":" + f.size + ":" + f.type; }).join("|");
+});</script>
 </body>
 </html>

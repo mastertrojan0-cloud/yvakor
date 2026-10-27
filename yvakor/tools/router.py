@@ -32,7 +32,7 @@ GRUPOS = {
                      "duckduck", "abr", "aperte", "pression", "rol", "extens",
                      "chrome", "edge", "campo", "seleci", "marc", "espere",
                      "aguard", "volt", "recarreg", "avanc", "pagin", "site",
-                     "link", "aba", "tecla", "enter", "login", "entrar",
+                     "link", "aba", "tecla", "enter", "login", "entrar", "anex", "upload",
                      "acess", "screenshot", "print", "captur"),
         # Ordem de importância: o limite de ferramentas corta pelo FIM, e a
         # ordem de registro punha navegador_pesquisar na 11ª posição.
@@ -40,7 +40,8 @@ GRUPOS = {
                        "navegador_ir",
                        "navegador_clicar", "navegador_preencher",
                        "navegador_digitar", "navegador_pressionar",
-                       "navegador_selecionar", "navegador_esperar",
+                       "navegador_selecionar", "navegador_enviar_arquivo",
+                       "navegador_esperar",
                        "navegador_extrair", "navegador_rolar",
                        "navegador_abrir", "navegador_historico",
                        "navegador_passar_mouse", "navegador_captura"),

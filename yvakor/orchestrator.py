@@ -12,6 +12,7 @@ Fluxo por mensagem do usuário:
 
 from __future__ import annotations
 import json
+import os
 import re as _re
 import threading
 import time
@@ -43,6 +44,36 @@ from yvakor.arquivos import register_arquivos_tools
 from yvakor.telemetria import Telemetria
 
 ROOT = Path(__file__).resolve().parent.parent
+
+ENVIO_MAX_BYTES = 5 * 1024 * 1024
+# Arquivos que nunca saem do computador por upload (segredos e dados do próprio YVAKOR).
+_ENVIO_SECRETO = _re.compile(
+    r"(^\.env|\.env$|id_rsa|id_ed25519|\.pem$|\.key$|\.pfx$|\.kdbx$|"
+    r"credential|secret|senha|password|passwd|token|cookies|login data)", _re.I)
+
+
+def _checar_arquivo_envio(caminho: str) -> str:
+    """'' se o arquivo pode ser enviado a um site; senão, a mensagem de erro."""
+    if not str(caminho or "").strip():
+        return "informe o caminho do arquivo"
+    try:
+        p = Path(os.path.expandvars(str(caminho))).expanduser().resolve()
+    except OSError:
+        return "caminho inválido"
+    if not p.is_file():
+        return f"arquivo não encontrado: {caminho}"
+    if _ENVIO_SECRETO.search(p.name):
+        return "este arquivo parece conter segredos; não envio a sites"
+    try:
+        p.relative_to(ROOT.resolve())
+        return "arquivos do próprio YVAKOR não são enviados a sites"
+    except ValueError:
+        pass
+    if p.stat().st_size > ENVIO_MAX_BYTES:
+        return "arquivo maior que 5 MB"
+    if p.stat().st_size == 0:
+        return "arquivo vazio"
+    return ""
 
 
 class ConfirmationBroker:
@@ -340,7 +371,7 @@ class Orchestrator:
                 return False
             return True
 
-        acoes_com_efeito = {"click", "fill", "type", "press", "select"}
+        acoes_com_efeito = {"click", "fill", "type", "press", "select", "upload"}
 
         def chamar(tipo: str, _orig, **kw) -> dict:
             pol = getattr(self, "politica_sites", None)
@@ -526,6 +557,38 @@ class Orchestrator:
             self.tools.register(nome, wrapper_nova,
                                 desc + " Usa a janela do Chrome da extensão.",
                                 args)
+
+        # Anexar arquivo do computador num <input type=file>. O núcleo lê o arquivo
+        # (a página não tem acesso ao disco) e manda em base64; a extensão pergunta
+        # SEMPRE ao usuário antes de anexar (ação sensível, nos dois modos).
+        def enviar_arquivo(caminho: str = "", alvo: str = "", aba=None,
+                           navegador: str = "") -> dict:
+            if not alvo_ext(navegador):
+                return {"ok": False, "error": "enviar arquivo só funciona pela "
+                        "extensão do Chrome."}
+            erro = _checar_arquivo_envio(caminho)
+            if erro:
+                return {"ok": False, "error": erro}
+            import base64
+            import mimetypes
+            p = Path(os.path.expandvars(str(caminho))).expanduser()
+            mime = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+            dados = {"alvo": alvo or "", "nome": p.name, "mime": mime,
+                     "b64": base64.b64encode(p.read_bytes()).decode("ascii")}
+            if aba is not None:
+                dados["aba"] = aba
+            r = chamar("upload", None, **dados)
+            if r.get("ok"):
+                r["arquivo"] = str(p)
+            return r
+
+        self.tools.register(
+            "navegador_enviar_arquivo", enviar_arquivo,
+            "Anexa um arquivo do computador a um campo de upload da página "
+            "(<input type=file>). caminho = arquivo local (até 5 MB); alvo = ref do "
+            "campo ou do botão 'anexar' (opcional se a página tem só um campo). "
+            "O usuário sempre confirma. Usa a janela do Chrome da extensão.",
+            {"caminho": "str", "alvo": "str?", "aba": "int?", "navegador": "str?"})
 
         for nome, comando_tipo in (("navegador_abrir", "open"),
                                    ("navegador_nova_aba", "newtab")):

@@ -448,6 +448,47 @@
     } finally { esconder(); }
   }
 
+  // ---- enviar arquivo (<input type=file>) ----
+  // Campos de arquivo costumam ficar ocultos atrás de um botão/área de soltar:
+  // aceita a ref do input, um rótulo/botão ligado a ele, ou a única entrada da página.
+  function acharArquivo(alvo) {
+    const ehArq = (e) => e && e.tagName && e.tagName.toLowerCase() === "input" && (e.type || "").toLowerCase() === "file";
+    const el = alvo ? achar(alvo) : null;
+    if (ehArq(el)) return el;
+    if (el) {
+      const lig = el.control || el.querySelector && el.querySelector("input[type='file']")
+        || (el.closest && el.closest("label,form,div") && el.closest("label,form,div").querySelector("input[type='file']"));
+      if (ehArq(lig)) return lig;
+    }
+    const todos = consultar("input[type='file']");
+    return todos.length === 1 ? todos[0] : null;
+  }
+  async function enviar_arquivo({ alvo = "", nome = "arquivo", mime = "", b64 = "" } = {}) {
+    const el = acharArquivo(alvo);
+    if (!el) return { ok: false, erro: "campo de arquivo não encontrado — use navegador_ver/navegador_procurar ('enviar arquivo') e passe a ref do campo" };
+    if (!b64) return { ok: false, erro: "arquivo vazio" };
+    let bytes;
+    try {
+      const bin = atob(b64);
+      bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    } catch (e) { return { ok: false, erro: "conteúdo do arquivo inválido" }; }
+    const arq = new File([bytes], nome, { type: mime || "application/octet-stream" });
+    const dt = new DataTransfer();
+    if (el.multiple) Array.from(el.files || []).forEach((f) => dt.items.add(f));
+    dt.items.add(arq);
+    el.scrollIntoView({ block: "center" });
+    await mostrar("enviando arquivo", el);
+    try {
+      el.files = dt.files;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      await dormir(150);
+      return comPagina({ anexado: nome, bytes: bytes.length,
+                         total_no_campo: el.files ? el.files.length : 1 });
+    } finally { esconder(); }
+  }
+
   // ---- mouse / espera / rolagem ----
   async function passar_mouse({ alvo = "" } = {}) {
     const el = achar(alvo);
@@ -616,6 +657,8 @@
             ? document.activeElement : campoPadrao());
     } else if (acao === "escrever") {
       el = alvo ? achar(alvo) : campoPadrao();
+    } else if (acao === "enviar_arquivo") {
+      el = acharArquivo(alvo);
     } else {
       el = achar(alvo);
     }
@@ -653,6 +696,10 @@
       if (/^enter$/i.test(tecla) && formTemSenha) { sensivel = true; motivo = "envia um formulário com senha/cartão"; }
     } else if (acao === "selecionar") {
       descricao = "Escolher «" + curto(val, 40) + "» em «" + nome + "»";
+    } else if (acao === "enviar_arquivo") {
+      // sempre pergunta: um arquivo do computador do usuário sairá para o site
+      descricao = "Anexar o arquivo «" + curto(val || "arquivo", 60) + "» do seu computador em «" + nome + "»";
+      sensivel = true; motivo = "envia um arquivo do seu computador para este site";
     } else {
       descricao = acao + " em «" + nome + "»";
     }
@@ -660,6 +707,6 @@
   }
 
   window.__yvakorAcoes = { snapshot, extrair, clicar, escrever, pressionar,
-                           selecionar, passar_mouse, esperar, rolar,
+                           selecionar, enviar_arquivo, passar_mouse, esperar, rolar,
                            descrever_acao, procurar };
 })();

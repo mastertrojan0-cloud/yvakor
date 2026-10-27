@@ -582,3 +582,50 @@ def test_atalhos_barra_no_node_e_ligados_ao_painel():
     assert "contextMenus" in m["permissions"] and "abrir-yvakor" in m["commands"]
     bg = (EXT / "background.js").read_text(encoding="utf-8")
     assert "yvakor-selecao" in bg and "pedido_painel" in bg
+
+
+def test_enviar_arquivo_manda_base64_e_recusa_segredos_e_arquivos_grandes(tmp_path):
+    import base64
+    from unittest import mock
+    from yvakor.extensao_bridge import PONTE
+    from yvakor.orchestrator import _checar_arquivo_envio, ENVIO_MAX_BYTES
+    eu, pw = _eu_com_politica()
+    eu.politica_sites.definir_modo("autonomo")
+    ok = tmp_path / "curriculo.pdf"
+    ok.write_bytes(b"%PDF-1.4 conteudo")
+    ponte = _PonteScript()
+    with mock.patch.object(PONTE, "comando", ponte):
+        r = eu.tools.run("navegador_enviar_arquivo", caminho=str(ok), alvo="e7", aba=5)
+    tipo, kw = ponte.chamadas[0][0], ponte.chamadas[0][1]
+    assert tipo == "upload" and kw["alvo"] == "e7" and kw["aba"] == 5
+    assert kw["nome"] == "curriculo.pdf" and kw["mime"] == "application/pdf"
+    assert base64.b64decode(kw["b64"]) == b"%PDF-1.4 conteudo"
+    assert "politica" in kw                      # ação com efeito: vai com a política
+    assert r.get("arquivo")
+
+    # recusas — a extensão nem é chamada
+    segredo = tmp_path / ".env"
+    segredo.write_text("CHAVE=1")
+    grande = tmp_path / "grande.bin"
+    grande.write_bytes(b"x" * (ENVIO_MAX_BYTES + 1))
+    vazio = tmp_path / "vazio.txt"
+    vazio.write_bytes(b"")
+    assert "segredos" in _checar_arquivo_envio(str(segredo))
+    assert "5 MB" in _checar_arquivo_envio(str(grande))
+    assert "vazio" in _checar_arquivo_envio(str(vazio))
+    assert "não encontrado" in _checar_arquivo_envio(str(tmp_path / "nao.txt"))
+    assert "próprio YVAKOR" in _checar_arquivo_envio(str(ROOT / "config" / "settings.yaml"))
+    assert _checar_arquivo_envio("") != ""
+    ponte2 = _PonteScript()
+    with mock.patch.object(PONTE, "comando", ponte2):
+        r = eu.tools.run("navegador_enviar_arquivo", caminho=str(segredo))
+    assert ponte2.chamadas == [] and not r.get("ok")
+
+
+def test_upload_pergunta_sempre_e_esta_no_seletor_e_no_background():
+    from yvakor.tools.router import GRUPOS
+    assert "navegador_enviar_arquivo" in GRUPOS["navegador"]["prioridade"]
+    bg = (EXT / "background.js").read_text(encoding="utf-8")
+    assert '"enviar_arquivo"' in bg and 'c.tipo === "upload"' in bg
+    pg = (EXT / "pagina.js").read_text(encoding="utf-8")
+    assert "envia um arquivo do seu computador" in pg and "enviar_arquivo," in pg

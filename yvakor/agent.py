@@ -105,6 +105,7 @@ Regras do navegador:
 - Página grande? `navegador_procurar` {{"consulta":"campo de busca"}} acha só o
   elemento descrito (com ref), sem ler a página toda.
 - Listas: `navegador_selecionar` {{"alvo":"e5","valor":"Portugal"}}.
+- Anexar arquivo: `navegador_enviar_arquivo` {{"caminho":"C:/docs/cv.pdf","alvo":"e7"}} (o usuário confirma).
 - Teclas: `navegador_pressionar` {{"tecla":"Enter"}} (aceita Control+A, Tab,
   Escape, ArrowDown…). Menus que abrem ao passar o mouse: `navegador_passar_mouse`.
 - Página lenta: `navegador_esperar` {{"texto":"Resultados"}} ou {{"seletor":"#lista"}}.

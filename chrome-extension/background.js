@@ -178,7 +178,7 @@ async function executarNaPagina(t, nome, args) {
 }
 
 // ---- permissões (inspirado no Claude no Chrome) ----
-const ACOES_COM_EFEITO = new Set(["clicar", "escrever", "pressionar", "selecionar"]);
+const ACOES_COM_EFEITO = new Set(["clicar", "escrever", "pressionar", "selecionar", "enviar_arquivo"]);
 const HOST_SENSIVEL = /(bank|banco|bradesco|itau|santander|caixa\.gov|nubank|inter\.co|c6bank|sicredi|sicoob|bancodobrasil|paypal|mercadopago|pagseguro|pagbank|picpay|stripe|wise\.com|binance|coinbase|mercadobitcoin|gov\.br|receita\.fazenda)/i;
 
 function hostDe(url) {
@@ -473,6 +473,12 @@ async function executarBGInterno(c) {
   if (c.tipo === "select") {
     const { resultado } = await acaoPagina("selecionar", Object.assign({ alvo: a.alvo || "", valor: String(a.valor || "") }, politicaDe(a)));
     return resultado;
+  }
+  if (c.tipo === "upload") {
+    const { tab, resultado } = await acaoPagina("enviar_arquivo", Object.assign({
+      alvo: a.alvo || "", nome: String(a.nome || "arquivo"), valor: String(a.nome || "arquivo"),
+      mime: String(a.mime || ""), b64: String(a.b64 || "") }, politicaDe(a)));
+    return Object.assign({ tab_id: tab.id }, resultado);
   }
   if (c.tipo === "hover") {
     const { resultado } = await acaoPagina("passar_mouse", { alvo: a.alvo || "" });

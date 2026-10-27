@@ -175,5 +175,20 @@ async function rodarTestes() {
     new Set(Array.from(document.querySelectorAll("[data-yvakor-ref]")).map((e) => e.getAttribute("data-yvakor-ref"))).size ===
     document.querySelectorAll("[data-yvakor-ref]").length);
 
+  // ---- enviar arquivo ----
+  const b64 = btoa("%PDF-1.4 teste");
+  r = await A.enviar_arquivo({ alvo: "Anexar currículo", nome: "cv.pdf", mime: "application/pdf", b64 });
+  t("anexa o arquivo num input oculto achado pelo rótulo",
+    r.ok && window.__arq === "cv.pdf:14:application/pdf", JSON.stringify(r) + " | " + window.__arq);
+  r = await A.enviar_arquivo({ nome: "x.txt", b64 });
+  t("sem alvo usa o único campo de arquivo da página", r.ok && window.__arq === "x.txt:14:application/octet-stream", window.__arq);
+  r = await A.enviar_arquivo({ alvo: "Anexar currículo", nome: "y.png", b64: "@@@" });
+  t("conteúdo inválido → erro, sem anexar", r.ok === false && /inválido/.test(r.erro), JSON.stringify(r));
+  r = await A.enviar_arquivo({ alvo: "q", nome: "z.txt", b64 });
+  t("alvo que não é de arquivo e há 1 campo na página → usa o campo", r.ok === true, JSON.stringify(r));
+  const dArq = A.descrever_acao({ acao: "enviar_arquivo", alvo: "Anexar currículo", valor: "cv.pdf" });
+  t("descrever_acao: anexar SEMPRE é sensível e mostra o nome",
+    dArq.sensivel === true && /cv\.pdf/.test(dArq.descricao) && /computador/.test(dArq.motivo), JSON.stringify(dArq));
+
   return { total: R.length, falhas: R.filter((x) => !x.ok), todos: R };
 }
