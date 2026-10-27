@@ -22,6 +22,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 
 
+# Perfil "assinatura": voz masculina grave, calma e presente (estilo locutor).
+PERFIL_ASSINATURA = {"tom": "-12Hz", "taxa": "-5%"}
+# Calor nos graves, um respiro a menos nos agudos, compressão leve (voz "cheia")
+# e nível constante entre falas.
+FILTRO_ASSINATURA = (
+    "highpass=f=70,"
+    "equalizer=f=130:t=q:w=1.0:g=3.5,"
+    "equalizer=f=280:t=q:w=1.2:g=1.5,"
+    "equalizer=f=4200:t=q:w=1.5:g=-2,"
+    "acompressor=threshold=0.125:ratio=3:attack=6:release=90:makeup=1.6,"
+    "loudnorm=I=-16:TP=-1.5:LRA=9,"
+    "aresample=24000"           # o loudnorm sobe para 192 kHz: volta ao nativo da voz
+)
+
+
 class TTS:
     def __init__(self, settings: dict):
         cfg = (settings or {}).get("voz", {}) or {}
@@ -33,7 +48,12 @@ class TTS:
         self.vozes_idioma = cfg.get("vozes") or {
             "pt-BR": self.voz_edge, "es-ES": "es-ES-AlvaroNeural"}
         self.velocidade = int(cfg.get("velocidade") or 0)
-        self.tom = str(cfg.get("tom") or "-2Hz")
+        self.tom = str(cfg.get("tom") or PERFIL_ASSINATURA["tom"])
+        # Voz de assinatura do YVAKOR: o Antonio (único pt-BR masculino neural)
+        # mais grave e pausado + acabamento de estúdio. `taxa` e `efeito` mandam
+        # nas configurações; "nenhum" devolve a voz crua.
+        self.taxa = str(cfg.get("taxa") or "")
+        self.efeito = str(cfg.get("efeito") or "assinatura").lower()
         self.dir = ROOT / "data" / "voz"
         self.cache_dir = self.dir / "cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -48,7 +68,7 @@ class TTS:
 
     def _cache_path(self, texto: str, motor: str, voz: str = "") -> Path:
         chave = (f"{motor}|{voz or self.voz_edge}|{self.voz_sapi}|"
-                 f"{self.velocidade}|{self.tom}|{texto}")
+                 f"{self.velocidade}|{self.tom}|{self.taxa}|{self.efeito}|{texto}")
         h = hashlib.sha1(chave.encode("utf-8")).hexdigest()[:20]
         return self.cache_dir / f"{h}.wav"
 
@@ -145,7 +165,9 @@ class TTS:
             return None
         self.dir.mkdir(parents=True, exist_ok=True)
         destino = self.dir / f"fala_edge_{time.strftime('%Y%m%d_%H%M%S')}.mp3"
-        taxa = f"{'+' if self.velocidade >= 0 else ''}{self.velocidade * 10}%"
+        taxa = self.taxa or (PERFIL_ASSINATURA["taxa"] if self.efeito == "assinatura"
+                             and not self.velocidade else
+                             f"{'+' if self.velocidade >= 0 else ''}{self.velocidade * 10}%")
 
         async def gerar():
             try:
@@ -196,9 +218,16 @@ class TTS:
                     ff = self._ffmpeg()
                     if ff:
                         try:
-                            _ywproc.run([ff, "-hide_banner", "-loglevel", "error",
-                                            "-y", "-i", str(mp3), str(wav)],
-                                           capture_output=True, timeout=60)
+                            filtro = (["-af", FILTRO_ASSINATURA]
+                                      if self.efeito == "assinatura" else [])
+                            r = _ywproc.run([ff, "-hide_banner", "-loglevel", "error",
+                                             "-y", "-i", str(mp3), *filtro, str(wav)],
+                                            capture_output=True, timeout=60)
+                            if filtro and (r.returncode != 0 or not wav.exists()):
+                                # filtro recusado pelo ffmpeg: converte sem efeito
+                                _ywproc.run([ff, "-hide_banner", "-loglevel", "error",
+                                             "-y", "-i", str(mp3), str(wav)],
+                                            capture_output=True, timeout=60)
                         except Exception:
                             pass
                     if wav.exists():

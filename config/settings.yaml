@@ -221,8 +221,10 @@ voz:
     pt-BR: "pt-BR-AntonioNeural"
     es-ES: "es-ES-AlvaroNeural"
   voz_sapi: ""                # vazio = melhor voz masculina pt-BR instalada
-  velocidade: 0               # cadência natural
-  tom: "+0Hz"                 # sem deslocamento artificial de pitch
+  velocidade: 0               # (legado: passos de 10%) — vale se "taxa" estiver vazio e efeito=nenhum
+  taxa: "-5%"                 # cadência: levemente pausada (voz de comando)
+  tom: "-12Hz"                # grave; o Antonio é o único pt-BR masculino neural
+  efeito: "assinatura"        # assinatura = EQ de estúdio + compressão + nível fixo; nenhum = voz crua
   escuta_segundos: 7          # tempo máximo de uma fala
   silencio_rms: 0.012         # abaixo disso conta como silêncio
   silencio_fim_ms: 900        # silêncio contínuo que encerra a escuta

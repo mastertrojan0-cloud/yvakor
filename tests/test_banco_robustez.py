@@ -369,3 +369,20 @@ def test_gui_tem_vigia_do_nucleo_e_tratamento_de_erro_de_callback():
     assert "_encerrar_nucleo_travado" in src and "instalar as _instalar_robustez" in src
     srv = (Path(__file__).resolve().parent.parent / "yvakor" / "server.py").read_text(encoding="utf-8")
     assert "guardiao_inicial" in srv and "banco.encerrar()" in srv and "ao_encerrar" in srv
+
+
+# --------------------------------------------------------------------------- #
+# voz de assinatura (TTS)
+# --------------------------------------------------------------------------- #
+def test_voz_de_assinatura_e_masculina_grave_e_muda_o_cache(tmp_path):
+    from yvakor.config import load_settings
+    from yvakor.voz import tts as T
+    s = load_settings()
+    assert s["voz"]["voz_edge"] == "pt-BR-AntonioNeural"           # masculina
+    t = T.TTS(s)
+    assert t.tom == "-12Hz" and t.taxa == "-5%" and t.efeito == "assinatura"
+    assert "aresample=24000" in T.FILTRO_ASSINATURA                 # loudnorm sobe p/ 192 kHz: volta ao nativo
+    t.cache_dir = tmp_path
+    crua = dict(s["voz"], tom="+0Hz", taxa="+0%", efeito="nenhum")
+    s2 = dict(s, voz=crua)
+    assert T.TTS(s2)._cache_path("oi", "edge", "x") != t._cache_path("oi", "edge", "x")   # trocar a voz invalida o cache
