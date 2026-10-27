@@ -127,6 +127,9 @@ def _orquestrador_falso():
         "navegador_extrair": {"seletor": "str?", "max_chars": "int?", "navegador": "str?"},
         "navegador_captura": {"pagina_inteira": "bool?", "navegador": "str?"},
         "navegador_pesquisar": {"termo": "str", "navegador": "str?"},
+        "navegador_abas": {"navegador": "str?"},
+        "navegador_trocar_aba": {"indice": "int?", "navegador": "str?"},
+        "navegador_fechar_aba": {"indice": "int?", "navegador": "str?"},
     }
     for nome, args in specs.items():
         reg.register(nome, original(nome, args), "d", args)

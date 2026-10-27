@@ -426,6 +426,14 @@ class Orchestrator:
                 "navegador": "str?"},
         }
         descr_extra = {
+            "navegador_abas": " Lista as abas de TODAS as janelas com id, qual é a"
+                              " controlada e quais são do grupo YVAKOR. Use o id"
+                              " em `aba` de qualquer ferramenta para agir noutra aba.",
+            "navegador_trocar_aba": " Passa a CONTROLAR essa aba (as próximas ações"
+                                    " valem nela). Aceita indice ou aba (id).",
+            "navegador_fechar_aba": " Sem alvo fecha a aba controlada. Só fecha abas"
+                                    " do grupo YVAKOR (as que o agente abriu ou passou"
+                                    " a controlar), nunca uma aba do usuário.",
             "navegador_pesquisar": " buscador=google|duckduckgo|bing|youtube "
                                    "(padrão google).",
             "navegador_preencher": " limpar=False acrescenta em vez de substituir;"
@@ -439,6 +447,7 @@ class Orchestrator:
             if original is None:
                 continue
             spec = self.tools.specs.get(nome, {})
+            campos = tuple(campos) + ("aba",)      # id da aba (ver navegador_abas)
 
             def wrapper(*_args, _orig=original, _tipo=tipo,
                         _campos=campos, **kwargs):
@@ -453,7 +462,8 @@ class Orchestrator:
                 nome, wrapper,
                 (spec.get("desc") or "Navegador.") + descr_extra.get(nome, "")
                 + " Usa a janela do Chrome da extensão.",
-                args_extra.get(nome) or spec.get("args") or {})
+                {**(args_extra.get(nome) or spec.get("args") or {}),
+                 "aba": "int?"})
 
         # Ferramentas NOVAS (o motor Playwright não as tem): quem as executa é a
         # extensão. (comando, campos, descrição, argumentos, tradução p/ o
@@ -497,6 +507,9 @@ class Orchestrator:
                 {"acao": "str", "navegador": "str?"}, None),
         }
         for nome, (tipo, campos, desc, args, fallback) in novas.items():
+            campos = tuple(campos) + ("aba",)
+            args = {**args, "aba": "int?"}
+
             def wrapper_nova(*_args, _tipo=tipo, _campos=campos,
                              _fb=fallback, **kwargs):
                 navegador = kwargs.get("navegador", "")

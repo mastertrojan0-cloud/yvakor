@@ -9,7 +9,8 @@
     "tabs",
     "scripting",
     "activeTab",
-    "alarms"
+    "alarms",
+    "tabGroups"
   ],
   "host_permissions": [
     "http://127.0.0.1:7777/*",

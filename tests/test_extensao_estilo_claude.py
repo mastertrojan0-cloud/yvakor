@@ -489,3 +489,71 @@ def test_extensao_usa_laco_de_longpoll_e_nao_o_polling_de_1_2s():
     assert "ponteComandos(20)" in bg                    # < 30s de ociosidade do service worker
     assert "setInterval(ponteComandos" not in bg        # o polling antigo saiu
     assert "AbortSignal.timeout" in bg                  # nenhuma volta pode pendurar
+
+
+# --------------------------------------------------------------------------- #
+# Etapa C — várias abas, id explícito e grupo YVAKOR
+# --------------------------------------------------------------------------- #
+def test_todas_as_ferramentas_aceitam_e_encaminham_o_id_da_aba():
+    from unittest import mock
+    from yvakor.extensao_bridge import PONTE
+    if str(ROOT / "tests") not in sys.path:
+        sys.path.insert(0, str(ROOT / "tests"))
+    eu, pw = _eu_com_politica()
+    eu.politica_sites.definir_modo("autonomo")   # só mede o encaminhamento de `aba`
+    ponte = _PonteScript()
+    chamadas = {
+        "navegador_ver": {}, "navegador_clicar": {"alvo": "e1"},
+        "navegador_digitar": {"alvo": "e1", "texto": "x"},
+        "navegador_preencher": {"alvo": "e1", "valor": "x"},
+        "navegador_rolar": {"direcao": "fim"}, "navegador_procurar": {"consulta": "busca"},
+        "navegador_extrair": {}, "navegador_ir": {"url": "https://x.com"},
+    }
+    with mock.patch.object(PONTE, "comando", ponte):
+        for nome, args in chamadas.items():
+            eu.tools.run(nome, aba=42, **args)
+    assert [c[1].get("aba") for c in ponte.chamadas] == [42] * len(chamadas)
+    for nome in chamadas:                               # e todas anunciam o argumento ao modelo
+        assert eu.tools.specs[nome]["args"].get("aba") == "int?", nome
+
+
+def test_sem_aba_o_argumento_nem_vai_junto_e_forcar_nunca_e_exposto_ao_modelo():
+    from unittest import mock
+    from yvakor.extensao_bridge import PONTE
+    if str(ROOT / "tests") not in sys.path:
+        sys.path.insert(0, str(ROOT / "tests"))
+    import test_extensao_acoes as base
+    eu, pw = base._orquestrador_falso()
+    ponte = _PonteScript()
+    with mock.patch.object(PONTE, "comando", ponte):
+        eu.tools.run("navegador_ver")
+        eu.tools.run("navegador_fechar_aba", indice=3, forcar=True)   # tentativa de burlar
+    assert "aba" not in ponte.chamadas[0][1]
+    # `forcar` não é um campo encaminhado: só o núcleo, por código, poderia usá-lo
+    assert "forcar" not in ponte.chamadas[1][1]
+    assert "forcar" not in eu.tools.specs["navegador_fechar_aba"]["args"]
+    assert "aba" in eu.tools.specs["navegador_fechar_aba"]["args"]
+    assert "grupo YVAKOR" in eu.tools.specs["navegador_fechar_aba"]["desc"]
+
+
+def test_manifest_pede_a_permissao_de_grupos_de_abas():
+    m = json.loads((EXT / "manifest.json").read_text(encoding="utf-8"))
+    assert "tabGroups" in m["permissions"] and "tabs" in m["permissions"]
+
+
+def test_controle_de_abas_do_background_no_node():
+    """Roda o background.js REAL num Chrome simulado em memória (22 casos)."""
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        import pytest
+        pytest.skip("node não instalado")
+    r = subprocess.run([node, str(ROOT / "tests" / "extensao" / "abas_background.js")],
+                       capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", timeout=60)
+    assert r.returncode == 0, r.stdout[:300] + r.stderr[:300]
+    j = json.loads(r.stdout)
+    assert "erro" not in j, j.get("erro", "")[:300]
+    assert len(j["casos"]) >= 22
+    assert [c["nome"] for c in j["casos"] if not c["ok"]] == []

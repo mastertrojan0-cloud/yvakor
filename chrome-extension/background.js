@@ -62,13 +62,61 @@ async function ctrlIdBG() {
 async function setCtrlIdBG(id) {
   try { await chrome.storage.session.set({ [CTRL_KEY]: id }); } catch (e) {}
 }
+// Aba pedida no comando atual (`aba`). Os comandos rodam UM por vez (a trava
+// ponteOcupada), então uma variável de módulo é segura.
+let abaAlvo = null;
+const ABAS_CHAVE = "yvakor_abas_do_agente";
+const GRUPO_TITULO = "YVAKOR";
+
 async function ctrlOrActiveBG() {
+  if (abaAlvo != null) {
+    const t = await chrome.tabs.get(abaAlvo).catch(() => null);
+    if (!t) throw new Error("a aba " + abaAlvo + " não existe mais (use navegador_abas para ver as atuais)");
+    return t;
+  }
   const id = await ctrlIdBG();
   if (id) {
     const t = await chrome.tabs.get(id).catch(() => null);
     if (t) return t;
   }
   return abaAtivaBG();
+}
+
+// ---- grupo de abas "YVAKOR" (como o grupo do Claude no Chrome) ----
+// As abas que o agente abre ou passa a controlar entram num grupo amarelo, para
+// o usuário ver quais são. O agente só FECHA abas desse conjunto.
+async function lembrarAbaDoAgente(id) {
+  try {
+    const o = await chrome.storage.session.get(ABAS_CHAVE);
+    const s = new Set(o[ABAS_CHAVE] || []);
+    s.add(id);
+    await chrome.storage.session.set({ [ABAS_CHAVE]: [...s] });
+  } catch (e) { /* sem storage.session */ }
+}
+
+async function agruparBG(tabId) {
+  await lembrarAbaDoAgente(tabId);
+  try {                     // agrupar é cosmético: nunca quebra o comando
+    if (!chrome.tabGroups || !chrome.tabs.group) return;
+    const tab = await chrome.tabs.get(tabId);
+    const existentes = await chrome.tabGroups.query({ windowId: tab.windowId, title: GRUPO_TITULO });
+    if (existentes.length && tab.groupId === existentes[0].id) return;
+    const gid = await chrome.tabs.group(existentes.length
+      ? { tabIds: [tabId], groupId: existentes[0].id } : { tabIds: [tabId] });
+    if (!existentes.length) await chrome.tabGroups.update(gid, { title: GRUPO_TITULO, color: "yellow" });
+  } catch (e) { /* ignora */ }
+}
+
+async function abaDoAgente(tab) {
+  try {
+    const o = await chrome.storage.session.get(ABAS_CHAVE);
+    if ((o[ABAS_CHAVE] || []).includes(tab.id)) return true;
+    if (chrome.tabGroups && tab.groupId != null && tab.groupId >= 0) {
+      const g = await chrome.tabGroups.get(tab.groupId).catch(() => null);
+      return !!g && g.title === GRUPO_TITULO;
+    }
+  } catch (e) { /* ignora */ }
+  return false;
 }
 
 const dormirBG = (ms) => new Promise(r => setTimeout(r, ms));
@@ -275,6 +323,12 @@ const politicaDe = (a) => ({ politica: a.politica, confirmado_site: a.confirmado
                              confirmado_acao: a.confirmado_acao });
 
 async function executarBG(c) {
+  const a = (c && c.args) || {};
+  abaAlvo = (a.aba != null && a.aba !== "") ? Number(a.aba) : null;
+  try { return await executarBGInterno(c); } finally { abaAlvo = null; }
+}
+
+async function executarBGInterno(c) {
   const a = c.args || {};
   if (c.tipo === "open") {
     // Reaproveita a aba de controle em vez de abrir várias.
@@ -295,6 +349,7 @@ async function executarBG(c) {
     }
     tab = await chrome.tabs.create({ url: a.url || "about:blank", active: ativo });
     await setCtrlIdBG(tab.id);
+    await agruparBG(tab.id);
     tab = await aguardarCarregarBG(tab.id);
     return { tab_id: tab.id, titulo: a.url || tab.title || "",
              url: a.url || tab.url || "" };
@@ -303,6 +358,7 @@ async function executarBG(c) {
     let tab = await chrome.tabs.create({ url: a.url || "about:blank",
                                          active: a.ativo !== false });
     await setCtrlIdBG(tab.id);
+    await agruparBG(tab.id);
     tab = await aguardarCarregarBG(tab.id);
     return { tab_id: tab.id, titulo: a.url || tab.title || "",
              url: a.url || tab.url || "" };
@@ -322,24 +378,53 @@ async function executarBG(c) {
     return { ok: true, tab_id: t.id, url, titulo: (n && n.title) || "" };
   }
   if (c.tipo === "tabs") {
-    const tabs = await chrome.tabs.query({ currentWindow: true });
-    return { abas: tabs.map(t => ({ indice: t.index, id: t.id,
-                                    url: t.url || "", titulo: t.title || "",
-                                    ativa: !!t.active })) };
+    // TODAS as janelas (antes só a atual), com id, quem é a controlada e quais
+    // pertencem ao grupo YVAKOR.
+    const todas = await chrome.tabs.query({});
+    const ctrl = await ctrlIdBG();
+    const lista = [];
+    for (const t of todas.slice(0, 60)) {
+      lista.push({ indice: t.index, id: t.id, janela: t.windowId, url: t.url || "",
+                   titulo: t.title || "", ativa: !!t.active, controlada: t.id === ctrl,
+                   do_yvakor: await abaDoAgente(t) });
+    }
+    return { abas: lista };
   }
   if (c.tipo === "switch_tab") {
-    const tabs = await chrome.tabs.query({ currentWindow: true });
-    const i = Math.max(0, Math.min(tabs.length - 1, Number(a.indice) || 0));
-    await chrome.tabs.update(tabs[i].id, { active: true });
-    return { tab_id: tabs[i].id, url: tabs[i].url || "" };
+    let alvo = null;
+    if (a.aba != null && a.aba !== "") {
+      alvo = await chrome.tabs.get(Number(a.aba)).catch(() => null);
+    } else {
+      const tabs = await chrome.tabs.query({ currentWindow: true });
+      alvo = tabs[Math.max(0, Math.min(tabs.length - 1, Number(a.indice) || 0))] || null;
+    }
+    if (!alvo) throw new Error("aba não encontrada (use navegador_abas para ver os ids)");
+    await chrome.tabs.update(alvo.id, { active: a.ativo !== false });
+    // Antes só ativava a aba: as ações seguintes continuavam indo para a ANTIGA.
+    await setCtrlIdBG(alvo.id);
+    await agruparBG(alvo.id);
+    return { tab_id: alvo.id, url: alvo.url || "", titulo: alvo.title || "", controlada: true };
   }
   if (c.tipo === "close_tab") {
-    const tabs = await chrome.tabs.query({ currentWindow: true });
-    let i = Number(a.indice);
-    if (i === -1 || i === undefined) i = tabs.findIndex(t => t.active);
-    i = Math.max(0, Math.min(tabs.length - 1, i || 0));
-    await chrome.tabs.remove(tabs[i].id);
-    return { tab_id: tabs[i].id };
+    let alvo = null;
+    if (a.aba != null && a.aba !== "") {
+      alvo = await chrome.tabs.get(Number(a.aba)).catch(() => null);
+    } else if (a.indice != null && Number(a.indice) >= 0) {
+      const tabs = await chrome.tabs.query({ currentWindow: true });
+      alvo = tabs[Math.min(tabs.length - 1, Number(a.indice))] || null;
+    } else {
+      // Sem alvo: a aba CONTROLADA. Antes `Number(undefined)` virava NaN → índice 0,
+      // que fechava a primeira aba do usuário.
+      alvo = await ctrlOrActiveBG();
+    }
+    if (!alvo) throw new Error("aba não encontrada");
+    // Só fecha o que o agente abriu ou passou a controlar (como o Claude no Chrome).
+    if (a.forcar !== true && !(await abaDoAgente(alvo))) {
+      return { ok: false, tab_id: alvo.id,
+               erro: "só fecho abas do grupo YVAKOR (as que abri ou passei a controlar); esta é uma aba sua" };
+    }
+    await chrome.tabs.remove(alvo.id);
+    return { ok: true, tab_id: alvo.id };
   }
   if (c.tipo === "snapshot") {
     let r = null;
