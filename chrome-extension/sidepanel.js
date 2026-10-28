@@ -609,26 +609,65 @@ function tratarPendencia(pend) {
   }
   if (pend.id === pendenciaId) return;           // já exibida
   pendenciaId = pend.id;
+  // tipo: "confirmar" (ação protegida) | "pergunta" (perguntar_usuario) |
+  // "plano" (modo plano). Mesmo cartão, mesmo /api/confirm.
+  const tipo = pend.tipo || "confirmar";
+  const interativo = tipo === "pergunta" || tipo === "plano";
+  $("conf-topo").textContent = tipo === "pergunta"
+    ? "PERGUNTA DO YVAKOR · ESCOLHA OU ESCREVA"
+    : tipo === "plano" ? "PLANO PARA SUA APROVAÇÃO"
+    : "AÇÃO PROTEGIDA · PRECISA DA SUA RESPOSTA";
   $("conf-acao").textContent = pend.action || "ação protegida";
   $("conf-detalhe").textContent = pend.detail || "";
   $("conf-detalhe").classList.toggle("oculto", !pend.detail);
-  $("conf-prazo").textContent =
-    `Sem resposta em ${pend.timeout || 90}s a ação é negada.`;
+  $("conf-detalhe").classList.toggle("plano", tipo === "plano");
+  const opcoes = $("conf-opcoes");
+  opcoes.innerHTML = "";
+  for (const op of (interativo ? pend.opcoes || [] : [])) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = op;
+    b.addEventListener("click", () =>
+      responderConfirmacao(!/^cancelar$/i.test(op), op));
+    opcoes.appendChild(b);
+  }
+  opcoes.classList.toggle("oculto", !opcoes.children.length);
+  $("conf-livre").classList.toggle("oculto", !interativo);
+  $("conf-texto").value = "";
+  $("conf-texto").placeholder = tipo === "plano"
+    ? "ajustar o plano… (ex.: não envie, só salve o rascunho)"
+    : "ou escreva sua resposta…";
+  // Permitir/Negar só na ação protegida; na pergunta, "Negar" vira "Pular".
+  $("conf-permitir").classList.toggle("oculto", interativo);
+  $("conf-negar").classList.toggle("oculto", tipo === "plano");
+  $("conf-negar").textContent = tipo === "pergunta" ? "Pular" : "Negar";
+  $("conf-prazo").textContent = interativo
+    ? `Esperando você (até ${Math.round((pend.timeout || 300) / 60)} min).`
+    : `Sem resposta em ${pend.timeout || 90}s a ação é negada.`;
   cartao.classList.remove("oculto");
-  $("conf-permitir").focus();
+  (opcoes.firstChild || $("conf-permitir")).focus();
   rolar();
 }
-async function responderConfirmacao(permitir) {
+async function responderConfirmacao(permitir, resposta) {
   $("confirmacao").classList.add("oculto");
+  const body = { session: sidProgresso, allow: !!permitir };
+  if (resposta !== undefined) body.resposta = resposta;
   try {
     await api("/api/confirm", {
-      method: "POST", timeout: 5000,
-      body: { session: sidProgresso, allow: !!permitir } });
+      method: "POST", timeout: 5000, body });
   } catch (e) {
     add("agente", "Não consegui enviar sua resposta ao núcleo: " + e.message);
   }
 }
 $("conf-permitir").addEventListener("click", () => responderConfirmacao(true));
+function enviarTextoLivre() {
+  const texto = $("conf-texto").value.trim();
+  if (texto) responderConfirmacao(true, texto);
+}
+$("conf-enviar-texto").addEventListener("click", enviarTextoLivre);
+$("conf-texto").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); enviarTextoLivre(); }
+});
 $("conf-negar").addEventListener("click", () => responderConfirmacao(false));
 $("confirmacao").addEventListener("keydown", (e) => {
   if (e.key === "Escape") responderConfirmacao(false);

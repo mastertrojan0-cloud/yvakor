@@ -20,6 +20,11 @@ agent:
   raciocinio:
     planejar: true           # plano explícito antes de tarefas de vários passos (+1 chamada)
     verificar: true          # confere o resultado antes da resposta final (+1 chamada)
+    # Modo plano: mostra o plano e espera "Aprovar e executar" / "Cancelar" /
+    # ajuste em texto. auto = só quando há passo arriscado (enviar, apagar,
+    # comprar, publicar…) ou quando você pede "me mostre o plano antes";
+    # sempre = toda tarefa planejada; nunca = executa direto.
+    aprovar_plano: auto
 
 # Motor de contexto: seleciona o conteúdo relevante da página/arquivos.
 contexto:

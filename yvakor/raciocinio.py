@@ -131,9 +131,16 @@ def ler_plano(raw: str) -> dict | None:
                 "riscos": str(obj.get("riscos") or "")[:240]}
 
 
-def bloco_plano(plano: dict) -> str:
+def bloco_plano(plano: dict, aprovado: bool = False,
+                ajustes: list[str] | None = None) -> str:
     linhas = ["PLANO DE TRABALHO (feito por você antes de agir; siga-o, mas "
               "ajuste se uma observação mostrar que ele está errado):"]
+    if aprovado:
+        linhas[0] = ("PLANO DE TRABALHO — APROVADO PELO USUÁRIO. Siga-o; se uma "
+                     "observação mostrar que um passo é impossível, diga isso em "
+                     "vez de fazer algo diferente do aprovado:")
+    for ajuste in ajustes or []:
+        linhas.append(f"Ajuste pedido pelo usuário: {ajuste}")
     if plano.get("objetivo"):
         linhas.append(f"Objetivo: {plano['objetivo']}")
     for n, passo in enumerate(plano.get("passos") or [], 1):
@@ -144,6 +151,77 @@ def bloco_plano(plano: dict) -> str:
         linhas.append(f"Atenção: {plano['riscos']}")
     linhas.append("Agora execute o passo 1.")
     return "\n".join(linhas)
+
+
+# --------------------------------------------------------------- modo plano
+# O usuário pede para ver o plano antes ("modo plano", "me mostre o plano",
+# "só execute depois que eu aprovar"…) → sempre pede aprovação.
+_PEDIU_PLANO = re.compile(
+    r"(modo plano|me mostr[ae] o plano|mostr[ae]-me o plano|"
+    r"planej[ae] (antes|primeiro)|fa[cç]a (um|o) plano|monte (um|o) plano|"
+    r"antes de (executar|fazer|come[cç]ar)[^.\n]{0,40}(plano|mostr|aprov)|"
+    r"(s[oó]|somente) (execut|fa[cç])\w* (depois|quando) (que )?eu aprov)", re.I)
+# Plano com efeito difícil de desfazer ou externo → pede aprovação no modo auto.
+_RISCO = re.compile(
+    r"\b(envi[ae]r?\b|envio|mand[ae]r? (o |a |um |uma )?(e-?mail|mensagem)|"
+    r"apag\w*|exclu\w*|delet\w*|remov\w*|compr[ae]r?\b|compra\b|pag[ae]r?\b|"
+    r"pagamento|transfer\w*|publi\w*|postar|instal\w*|desinstal\w*|format\w*|"
+    r"sobrescrev\w*|mover|mova|renome\w*|commit|push|deploy|cancelar assinatura|"
+    r"agend\w* (reuni|consulta|pagamento))", re.I)
+
+OPCAO_APROVAR = "Aprovar e executar"
+OPCAO_CANCELAR = "Cancelar"
+OPCOES_PLANO = [OPCAO_APROVAR, OPCAO_CANCELAR]
+
+
+def pediu_modo_plano(pedido: str) -> bool:
+    return bool(_PEDIU_PLANO.search(pedido or ""))
+
+
+def pedido_arriscado(pedido: str) -> bool:
+    """Pedido de um passo só, mas com efeito difícil de desfazer ("apague os
+    .tmp"): precisa de plano para o modo plano poder pedir aprovação."""
+    return bool(_RISCO.search(pedido or ""))
+
+
+def plano_arriscado(plano: dict, pedido: str = "") -> bool:
+    texto = " ".join([pedido or "", plano.get("objetivo") or "",
+                      *(plano.get("passos") or [])])
+    return bool(_RISCO.search(texto))
+
+
+def texto_plano(plano: dict) -> str:
+    """O plano como o usuário lê na interface (sem jargão de ferramenta)."""
+    linhas = []
+    if plano.get("objetivo"):
+        linhas.append(f"Objetivo: {plano['objetivo']}")
+    linhas += [f"{n}. {p}" for n, p in enumerate(plano.get("passos") or [], 1)]
+    if plano.get("pronto_quando"):
+        linhas.append(f"Pronto quando: {plano['pronto_quando']}")
+    if plano.get("riscos"):
+        linhas.append(f"Atenção: {plano['riscos']}")
+    linhas.append("Escreva abaixo se quiser ajustar algo.")
+    return "\n".join(linhas)
+
+
+def ler_decisao(res: dict | None) -> tuple[str, str]:
+    """Resposta do usuário ao plano → ("aprovar"|"cancelar"|"ajustar"|
+    "sem_resposta", texto do ajuste)."""
+    if not res:
+        return "sem_resposta", ""
+    resposta = (res.get("resposta") or "").strip()
+    if not res.get("allow") or resposta.lower() == OPCAO_CANCELAR.lower():
+        return "cancelar", ""
+    if not resposta or resposta.lower() in (OPCAO_APROVAR.lower(), "aprovar", "ok",
+                                            "sim", "pode", "pode seguir", "segue"):
+        return "aprovar", ""
+    return "ajustar", resposta
+
+
+def pedido_ajuste(plano: dict, ajuste: str) -> str:
+    return (f"O usuário leu seu plano e pediu este AJUSTE: \"{ajuste}\".\n"
+            "Plano anterior: " + json.dumps(plano, ensure_ascii=False) + "\n"
+            + PEDIR_PLANO)
 
 
 def pedido_verificacao(plano: dict | None) -> str:

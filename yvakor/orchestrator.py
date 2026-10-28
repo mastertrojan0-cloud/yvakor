@@ -82,43 +82,66 @@ class ConfirmationBroker:
     A thread que processa /api/chat chama request() e bloqueia num Event até
     que outra thread (endpoint /api/confirm) chame resolve(). A interface
     descobre a pendência via /api/progress (campo 'pending') e mostra o popup.
+
+    Além da confirmação de ação protegida (tipo "confirmar"), o mesmo canal
+    leva PERGUNTAS do agente ao usuário (tipo "pergunta", com opções) e o
+    PLANO para aprovação (tipo "plano"). Interfaces que não conhecem o campo
+    'tipo' continuam funcionando como antes (Permitir/Negar).
     """
+
+    TIMEOUT_PERGUNTA = 300.0      # pergunta/plano: o usuário precisa ler e decidir
 
     def __init__(self, timeout: float = 180.0):
         self.timeout = timeout
         self._lock = threading.Lock()
-        self._pending: dict[str, dict] = {}   # sid -> {id, action, detail}
+        self._pending: dict[str, dict] = {}   # sid -> {id, tipo, action, detail…}
         self._events: dict[str, threading.Event] = {}
-        self._results: dict[str, bool] = {}
+        self._results: dict[str, dict] = {}
         self._seq = 0
 
-    def request(self, sid: str, action: str, detail: str) -> bool:
+    def _esperar(self, sid: str, dados: dict, timeout: float) -> dict | None:
         ev = threading.Event()
         with self._lock:
             self._seq += 1
-            self._pending[sid] = {"id": self._seq, "action": action,
-                                  "detail": str(detail)[:300],
-                                  "timeout": int(self.timeout)}
+            self._pending[sid] = {"id": self._seq, "tipo": "confirmar", **dados,
+                                  "timeout": int(timeout)}
             self._events[sid] = ev
             self._results.pop(sid, None)
-        aprovou = ev.wait(self.timeout)  # False se estourar o tempo → nega
+        respondeu = ev.wait(timeout)     # False se estourar o tempo
         with self._lock:
-            res = self._results.pop(sid, False) if aprovou else False
+            res = self._results.pop(sid, None) if respondeu else None
             self._pending.pop(sid, None)
             self._events.pop(sid, None)
         return res
+
+    def request(self, sid: str, action: str, detail: str) -> bool:
+        res = self._esperar(sid, {"action": action, "detail": str(detail)[:300]},
+                            self.timeout)
+        return bool(res and res.get("allow"))   # sem resposta → nega
+
+    def perguntar(self, sid: str, tipo: str, action: str, detail: str = "",
+                  opcoes: list[str] | None = None,
+                  timeout: float | None = None) -> dict | None:
+        """Pergunta/plano: devolve {"allow", "resposta"} ou None (sem resposta)."""
+        return self._esperar(sid, {
+            "tipo": tipo, "action": str(action)[:300],
+            "detail": str(detail)[:2000],
+            "opcoes": [str(o)[:80] for o in (opcoes or [])][:6]},
+            float(timeout or self.TIMEOUT_PERGUNTA))
 
     def pending_for(self, sid: str) -> dict | None:
         with self._lock:
             p = self._pending.get(sid)
             return dict(p, session=sid) if p else None
 
-    def resolve(self, sid: str, allow: bool) -> bool:
+    def resolve(self, sid: str, allow: bool, resposta: str | None = None) -> bool:
         with self._lock:
             ev = self._events.get(sid)
             if not ev:
                 return False
-            self._results[sid] = bool(allow)
+            self._results[sid] = {"allow": bool(allow),
+                                  "resposta": (str(resposta).strip()[:1000]
+                                               if resposta is not None else None)}
             ev.set()
             return True
 
@@ -260,7 +283,8 @@ class Orchestrator:
                                    "timeout_s", 180)),
                                raciocinio=self.settings["agent"].get(
                                    "raciocinio") or {"planejar": True,
-                                                     "verificar": True})
+                                                     "verificar": True,
+                                                     "aprovar_plano": "auto"})
         self.ultimos_artefatos: list[dict] = []
         self.cowork = CoworkManager(self, self.settings)
         self.maintenance = Maintenance(self)
@@ -328,6 +352,8 @@ class Orchestrator:
             return resumo_checklist(a.get("itens"))
         if nome == "pensar":
             return "💭 pensando"
+        if nome == "perguntar_usuario":
+            return f"❓ esperando sua resposta: {str(a.get('pergunta', ''))[:70]}"
         if nome == "arquivos_grep":
             return f"🔎 procurando \"{str(a.get('padrao', ''))[:40]}\" nos arquivos"
         det = (a.get("caminho") or a.get("nome") or a.get("comando")
@@ -1345,6 +1371,8 @@ class Orchestrator:
                     pass
             elif tipo == "plano" and isinstance(dado, dict):
                 self._prog_step(sid, self._rotulo_plano(dado))
+            elif tipo == "aprovacao_plano":
+                self._prog_step(sid, "📋 esperando você aprovar o plano")
             elif tipo == "observacao" and isinstance(dado, dict):
                 res = dado.get("resultado", {})
                 if isinstance(res, dict) and not res.get("ok", True):
@@ -1373,6 +1401,18 @@ class Orchestrator:
                      f"(negada em {int(self.confirm_broker.timeout)}s sem resposta)")
             return self.confirm_broker.request(sid, action, detail)
         set_thread_confirmer(_confirmar)
+        # Mesmo canal para perguntas do agente (perguntar_usuario) e para a
+        # aprovação do plano (modo plano): ver yvakor/interacao.py.
+        from yvakor import interacao
+        def _perguntar(tipo, titulo, detalhe, opcoes):
+            try:
+                from yvakor.notificacoes import emitir
+                emitir("YVAKOR está esperando sua resposta: " + str(titulo)[:120],
+                       "tarefa", 2)
+            except Exception:
+                pass
+            return self.confirm_broker.perguntar(sid, tipo, titulo, detalhe, opcoes)
+        interacao.definir(_perguntar)
         try:
             answer = self.agent.run(system, history=history, on_event=_trace,
                                     should_stop=should_stop,
@@ -1388,6 +1428,7 @@ class Orchestrator:
                                           artefatos)
         finally:
             clear_thread_confirmer()
+            interacao.limpar()
             self._prog_done(sid)
 
         self.episodic.log("conversa", user_message, answer, session_id=sid)

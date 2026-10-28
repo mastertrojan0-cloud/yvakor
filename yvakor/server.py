@@ -8,7 +8,8 @@ Endpoints:
   GET    /                          → interface 3D (interface/index.html)
   GET    /api/status                → estado do agente (inclui navegador)
   POST   /api/chat                  → {"message","session?"} → {"answer","session"}
-  POST   /api/confirm               → {"session","allow"} responde a ação protegida
+  POST   /api/confirm               → {"session","allow","resposta"?} responde a ação
+                                      protegida, a pergunta do agente ou o plano
   GET    /api/sessions              → lista conversas + ativa
   POST   /api/sessions              → cria conversa {"title?"}
   GET    /api/sessions/<id>/messages→ histórico da conversa
@@ -1581,7 +1582,11 @@ class Handler(BaseHTTPRequestHandler):
             # resposta do usuário a uma ação protegida (popup da interface)
             if self.path == "/api/confirm":
                 sid = data.get("session") or ag.episodic.active_id
-                ok = ag.confirm_broker.resolve(sid, bool(data.get("allow")))
+                # pergunta/plano também mandam "resposta" (opção clicada ou texto)
+                resposta = data.get("resposta")
+                ok = ag.confirm_broker.resolve(
+                    sid, bool(data.get("allow")),
+                    str(resposta) if resposta is not None else None)
                 return self._json(200, {"ok": ok})
 
             if self.path == "/api/agenda":

@@ -1,6 +1,8 @@
 """
 YVAKOR — Ferramentas no estilo das do Claude
 
+  perguntar_usuario  → pergunta com opções e ESPERA a resposta (como o
+                       AskUserQuestion), pelo mesmo canal das confirmações.
   pensar             → espaço para raciocinar no meio da tarefa (o "think tool"
                        da Anthropic): sem efeito colateral, só organiza a ideia
                        antes de decidir o próximo passo.
@@ -36,6 +38,57 @@ def pensar(pensamento: str = "") -> dict:
         return {"ok": False, "error": "faltou o argumento obrigatório pensamento"}
     return {"ok": True, "registrado": True,
             "dica": "Pensamento anotado. Agora execute o próximo passo decidido."}
+
+
+# ------------------------------------------------------- perguntar_usuario
+def _ler_opcoes(opcoes) -> list[str]:
+    if isinstance(opcoes, str):
+        bruto = opcoes.strip()
+        lista = None
+        for leitor in (json.loads, ast.literal_eval):
+            try:
+                lista = leitor(bruto)
+                break
+            except Exception:
+                continue
+        if not isinstance(lista, list):
+            sep = "\n" if "\n" in bruto else ("|" if "|" in bruto else ";")
+            lista = bruto.split(sep)
+        opcoes = lista
+    saida = []
+    for o in opcoes or []:
+        if isinstance(o, dict):
+            o = o.get("label") or o.get("texto") or o.get("opcao") or ""
+        o = str(o).strip(" -•\t")
+        if o and o not in saida:
+            saida.append(o[:80])
+    return saida[:4]
+
+
+def perguntar_usuario(pergunta: str = "", opcoes="") -> dict:
+    """Pergunta ao usuário e ESPERA a resposta (botões + texto livre)."""
+    from yvakor import interacao
+    pergunta = str(pergunta or "").strip()
+    if not pergunta:
+        return {"ok": False, "error": "faltou o argumento obrigatório pergunta"}
+    lista = _ler_opcoes(opcoes)
+    if not interacao.disponivel():
+        return {"ok": False, "error": "não há ninguém na interface para responder "
+                "agora. Assuma o padrão mais sensato, siga e diga no final qual "
+                "suposição fez."}
+    res = interacao.perguntar("pergunta", pergunta, "", lista)
+    if not res:
+        return {"ok": False, "error": "o usuário não respondeu a tempo. Assuma o "
+                "padrão mais sensato, siga e diga no final qual suposição fez."}
+    resposta = res.get("resposta")
+    if not res.get("allow"):
+        return {"ok": True, "resposta": None, "pulou": True,
+                "dica": "O usuário preferiu não escolher: decida você pelo padrão "
+                        "mais sensato e diga qual foi."}
+    if not resposta and lista:             # interface antiga: só "Permitir"
+        resposta = lista[0]
+    return {"ok": True, "resposta": resposta,
+            "dica": "Siga exatamente a escolha do usuário."}
 
 
 # ------------------------------------------------------- tarefas_checklist
@@ -361,6 +414,13 @@ def register_ferramentas_claude(registry) -> list[str]:
         "decisão difícil, depois de uma observação confusa ou de um erro, para "
         "conferir regras/pedido e decidir o próximo passo.",
         {"pensamento": "str"})
+    reg("perguntar_usuario", perguntar_usuario,
+        "Pergunta ao usuário e ESPERA a resposta (ele vê botões com as opções "
+        "e pode escrever outra). Só quando a decisão é realmente dele (gosto, "
+        "escolha entre alternativas, dado que nenhuma ferramenta descobre); "
+        "não use para pedir permissão (o sistema já confirma ações "
+        "protegidas). opcoes = 2 a 4 alternativas curtas, a recomendada primeiro.",
+        {"pergunta": "str", "opcoes": "str?"})
     reg("tarefas_checklist", tarefas_checklist,
         "Mantém a lista de tarefas desta execução visível ao usuário (substitui "
         "a lista inteira). Use em tarefas com 3+ passos: crie no início, marque "
@@ -379,4 +439,5 @@ def register_ferramentas_claude(registry) -> list[str]:
         "inicio=N continua páginas longas. Para página com login ou JavaScript "
         "use o navegador.",
         {"url": "str", "inicio": "int?", "max_chars": "int?", "links": "bool?"})
-    return ["pensar", "tarefas_checklist", "arquivos_grep", "web_ler"]
+    return ["pensar", "perguntar_usuario", "tarefas_checklist",
+            "arquivos_grep", "web_ler"]

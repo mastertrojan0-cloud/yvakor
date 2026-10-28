@@ -488,6 +488,24 @@ body {
   max-height: 90px; overflow-y: auto;
 }
 .conf-prazo { margin-top: 6px; font-size: 9px; color: var(--muted); }
+/* pergunta do agente / plano: opções clicáveis + resposta livre */
+.conf-detalhe.plano { font-family: inherit; white-space: pre-wrap; max-height: 200px; font-size: 11px; }
+.conf-opcoes { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+.conf-opcoes button {
+  text-align: left; font-size: 11.5px; padding: 6px 10px; border-radius: 7px; cursor: pointer;
+  border: 1px solid var(--linha-forte); background: #fff; color: #2b2820;
+}
+.conf-opcoes button:first-child { border-color: var(--ouro); font-weight: 700; }
+.conf-opcoes button:hover { background: #fff3d6; }
+.conf-livre { display: flex; gap: 6px; margin-top: 7px; }
+.conf-livre input {
+  flex: 1; min-width: 0; font-size: 11px; padding: 5px 8px; border-radius: 7px;
+  border: 1px solid var(--linha-forte); background: #fff; color: #2b2820;
+}
+.conf-livre button {
+  font-size: 11px; padding: 5px 10px; border-radius: 7px; cursor: pointer;
+  border: 1px solid var(--ouro); background: var(--ouro); color: #1c1a14; font-weight: 700;
+}
 .conf-botoes { display: flex; justify-content: flex-end; gap: 7px; margin-top: 9px; }
 .conf-botoes button {
   font-size: 11px; padding: 5px 14px; border-radius: 7px; cursor: pointer;

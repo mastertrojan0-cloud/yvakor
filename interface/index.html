@@ -429,6 +429,16 @@
     font-weight:600;
   }
   #confirmar button.ok:hover{filter:brightness(1.08)}
+  /* pergunta do agente / plano: opções clicáveis + resposta livre */
+  #confirmar .detalhe.plano{white-space:pre-wrap; max-height:260px; opacity:1}
+  #confirmar .opcoes{display:flex; flex-direction:column; gap:8px; margin:4px 0 14px}
+  #confirmar .opcoes button{text-align:left; padding:10px 14px}
+  #confirmar .opcoes button:first-child{border-color:var(--solimoes); font-weight:600}
+  #confirmar .livre{display:flex; gap:8px; margin-bottom:16px}
+  #confirmar .livre input{flex:1; min-width:0; font:13px var(--fonte-texto);
+    padding:9px 12px; border-radius:9px; border:1px solid var(--linha);
+    background:transparent; color:var(--areia)}
+  #confirmar .oculto{display:none !important}
 
   /* ---------- painel de conectores ---------- */
   #conectores{
@@ -659,9 +669,14 @@
 
 <div id="confirmar" role="dialog" aria-modal="true" aria-labelledby="cf-titulo">
   <div class="caixa">
-    <h3 id="cf-titulo"><span class="ic">⚠</span> Confirmar ação protegida</h3>
-    <p>O YVAKOR quer executar: <span class="acao" id="cf-acao">—</span></p>
+    <h3 id="cf-titulo"><span class="ic">⚠</span> <span id="cf-titulo-txt">Confirmar ação protegida</span></h3>
+    <p><span id="cf-intro">O YVAKOR quer executar: </span><span class="acao" id="cf-acao">—</span></p>
     <div class="detalhe" id="cf-detalhe">—</div>
+    <div class="opcoes oculto" id="cf-opcoes"></div>
+    <div class="livre oculto" id="cf-livre">
+      <input id="cf-texto" type="text" maxlength="500" placeholder="ou escreva sua resposta…">
+      <button class="ok" id="cf-enviar-texto">Enviar</button>
+    </div>
     <div class="botoes">
       <button id="cf-negar">Negar</button>
       <button class="ok" id="cf-aprovar">Aprovar</button>
@@ -1091,21 +1106,57 @@ function tratarPendencia(pend){
   if(pend.id === pendenciaAtual) return;   // já estou mostrando esta
   pendenciaAtual = pend.id;
   pendenciaSessao = pend.session || conversaAtiva;
-  document.getElementById('cf-acao').textContent = pend.action || '—';
-  document.getElementById('cf-detalhe').textContent = pend.detail || '';
+  // tipo: "confirmar" (ação protegida) | "pergunta" (perguntar_usuario) |
+  // "plano" (modo plano). Mesmo popup, mesmo /api/confirm.
+  const tipo = pend.tipo || 'confirmar';
+  const interativo = tipo === 'pergunta' || tipo === 'plano';
+  const $id = (x)=> document.getElementById(x);
+  $id('cf-titulo-txt').textContent = tipo === 'pergunta' ? 'Pergunta do YVAKOR'
+    : tipo === 'plano' ? 'Plano para sua aprovação' : 'Confirmar ação protegida';
+  $id('cf-intro').textContent = interativo ? '' : 'O YVAKOR quer executar: ';
+  $id('cf-acao').textContent = pend.action || '—';
+  $id('cf-detalhe').textContent = pend.detail || '';
+  $id('cf-detalhe').classList.toggle('oculto', interativo && !pend.detail);
+  $id('cf-detalhe').classList.toggle('plano', tipo === 'plano');
+  const opcoes = $id('cf-opcoes');
+  opcoes.innerHTML = '';
+  (interativo ? (pend.opcoes || []) : []).forEach(op => {
+    const b = document.createElement('button');
+    b.textContent = op;
+    b.onclick = ()=> responderConfirmacao(!/^cancelar$/i.test(op), op);
+    opcoes.appendChild(b);
+  });
+  opcoes.classList.toggle('oculto', !opcoes.children.length);
+  $id('cf-livre').classList.toggle('oculto', !interativo);
+  $id('cf-texto').value = '';
+  $id('cf-texto').placeholder = tipo === 'plano'
+    ? 'ajustar o plano… (ex.: não envie, só salve o rascunho)' : 'ou escreva sua resposta…';
+  $id('cf-aprovar').classList.toggle('oculto', interativo);
+  $id('cf-negar').classList.toggle('oculto', tipo === 'plano');
+  $id('cf-negar').textContent = tipo === 'pergunta' ? 'Pular' : 'Negar';
   cfBox.classList.add('aberto');
 }
 
-async function responderConfirmacao(allow){
+async function responderConfirmacao(allow, resposta){
   cfBox.classList.remove('aberto');
+  const corpo = {session: pendenciaSessao || conversaAtiva, allow};
+  if(resposta !== undefined) corpo.resposta = resposta;
   try{
     await fetch('/api/confirm',{method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({session: pendenciaSessao || conversaAtiva, allow})});
+      body:JSON.stringify(corpo)});
   }catch(e){}
 }
 document.getElementById('cf-aprovar').onclick = ()=> responderConfirmacao(true);
 document.getElementById('cf-negar').onclick   = ()=> responderConfirmacao(false);
+function cfEnviarTexto(){
+  const t = document.getElementById('cf-texto').value.trim();
+  if(t) responderConfirmacao(true, t);
+}
+document.getElementById('cf-enviar-texto').onclick = cfEnviarTexto;
+document.getElementById('cf-texto').addEventListener('keydown', e => {
+  if(e.key === 'Enter'){ e.preventDefault(); cfEnviarTexto(); }
+});
 
 /* ---------------- conectores (integrações) ---------------- */
 const cxBox = document.getElementById('conectores');

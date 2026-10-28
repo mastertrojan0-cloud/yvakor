@@ -32,6 +32,9 @@ ferramentas abaixo. Use-as de verdade; não invente ferramentas.
 - NÃO faça perguntas de esclarecimento, exceto se for IMPOSSÍVEL agir sem um dado
   específico (ex.: um caminho que não dá para descobrir). Nesses casos, primeiro
   TENTE descobrir sozinho com as ferramentas (listar_diretorio, ler_arquivo_local).
+  Se ainda assim a decisão for do usuário (gosto, escolha entre alternativas),
+  use `perguntar_usuario` com 2–4 opções em vez de chutar ou de perguntar no
+  texto final — ele responde clicando e você continua a tarefa.
 - Quando faltar um detalhe não-crítico, ASSUMA um padrão sensato, AJA e diga
   no final qual suposição você fez.
 - Tarefa que envolve criar/editar arquivo ou rodar comando → USE a ferramenta
@@ -494,6 +497,10 @@ class AgentLoop:
         # final. Desligado por padrão aqui; o orquestrador liga pelo settings.
         cfg = raciocinio or {}
         self.planejar = bool(cfg.get("planejar", False))
+        # Modo plano: "auto" pede aprovação do plano quando ele tem passo
+        # arriscado (enviar, apagar, comprar…) ou quando o usuário pede para
+        # ver o plano antes; "sempre" pede em toda tarefa planejada; "nunca".
+        self.aprovar_plano = str(cfg.get("aprovar_plano", "nunca")).lower()
         self.verificar = bool(cfg.get("verificar", False))
         self.registry = registry
         self.max_iterations = max_iterations
@@ -590,7 +597,7 @@ class AgentLoop:
     # Conjunto mínimo e SEGURO quando nada casa com a mensagem.
     _BASE_SEGURA = ("pesquisa_web", "cerebro_buscar", "arquivos_listar",
                     "arquivos_ler", "http_get")
-    _SO_NUVEM = ("pensar", "tarefas_checklist")
+    _SO_NUVEM = ("pensar", "tarefas_checklist", "perguntar_usuario")
 
     def _limitar_compacto(self, nomes: list[str], mensagem: str,
                           limite: int) -> list[str]:
@@ -654,27 +661,87 @@ class AgentLoop:
         return base_system + "\n\n" + PROTOCOLO.format(
             manifesto=self.registry.manifest(nomes)) + raciocinio.METODO
 
+    @staticmethod
+    def _pedido_atual(history: list[dict]) -> str:
+        pedido = next((h.get("content") or "" for h in reversed(history)
+                       if h.get("role") == "user"), "")
+        return pedido if isinstance(pedido, str) else ""
+
+    def _gerar_plano(self, msgs: list[dict], forcar_provider) -> dict | None:
+        try:
+            raw = self.router.complete_messages(
+                "analise_complexa", msgs, forcar=forcar_provider) or ""
+        except Exception:
+            return None
+        return raciocinio.ler_plano(raw)
+
     def _planejar(self, messages: list[dict], history: list[dict], on_event,
                   forcar_provider, compacto: bool) -> dict | None:
         """Plano explícito antes de uma tarefa de vários passos (1 chamada
-        extra ao modelo, só quando a heurística indica vários passos)."""
-        if not self.planejar or compacto:
+        extra ao modelo, só quando a heurística indica vários passos ou o
+        usuário pediu para ver o plano)."""
+        if compacto:
             return None
-        pedido = next((h.get("content") or "" for h in reversed(history)
-                       if h.get("role") == "user"), "")
-        if not isinstance(pedido, str) or not raciocinio.precisa_planejar(pedido):
+        pedido = self._pedido_atual(history)
+        # Modo plano ligado: pedido explícito ("me mostre o plano") ou ação
+        # arriscada mesmo de um passo só ("apague os .tmp") também planejam.
+        pediu = (self.aprovar_plano != "nunca"
+                 and (raciocinio.pediu_modo_plano(pedido)
+                      or raciocinio.pedido_arriscado(pedido)))
+        if not pediu and not (self.planejar and raciocinio.precisa_planejar(pedido)):
             return None
-        try:
-            raw = self.router.complete_messages(
-                "analise_complexa",
-                messages + [{"role": "user", "content": raciocinio.PEDIR_PLANO}],
-                forcar=forcar_provider) or ""
-        except Exception:
-            return None
-        plano = raciocinio.ler_plano(raw)
+        plano = self._gerar_plano(
+            messages + [{"role": "user", "content": raciocinio.PEDIR_PLANO}],
+            forcar_provider)
         if plano and on_event:
             on_event("plano", plano)
         return plano
+
+    RODADAS_AJUSTE = 3
+
+    def _aprovar_plano(self, plano: dict, messages: list[dict],
+                       history: list[dict], on_event, forcar_provider):
+        """Modo plano: mostra o plano ao usuário e espera Aprovar / Cancelar /
+        ajuste em texto livre (pelo mesmo canal das confirmações).
+        Devolve (plano, aprovado, ajustes, resposta_para_encerrar|None)."""
+        from yvakor import interacao
+        pedido = self._pedido_atual(history)
+        precisa = (self.aprovar_plano == "sempre"
+                   or (self.aprovar_plano == "auto"
+                       and (raciocinio.pediu_modo_plano(pedido)
+                            or raciocinio.plano_arriscado(plano, pedido))))
+        if not precisa or not interacao.disponivel():
+            return plano, False, [], None
+        ajustes: list[str] = []
+        for _ in range(self.RODADAS_AJUSTE):
+            if on_event:
+                on_event("aprovacao_plano", plano)
+            res = interacao.perguntar(
+                "plano", "Posso executar este plano?",
+                raciocinio.texto_plano(plano), raciocinio.OPCOES_PLANO)
+            decisao, ajuste = raciocinio.ler_decisao(res)
+            if decisao == "aprovar":
+                return plano, True, ajustes, None
+            if decisao == "cancelar":
+                return plano, False, ajustes, (
+                    "Ok, cancelei: não executei nenhum passo do plano. Se quiser, "
+                    "me diga o que mudar e eu monto outro.")
+            if decisao == "sem_resposta":
+                return plano, False, ajustes, (
+                    "⏸ Não recebi sua aprovação do plano a tempo, então não "
+                    "executei nada. Para seguir, responda \"pode executar\" (ou "
+                    "diga o que ajustar).")
+            ajustes.append(ajuste)
+            novo = self._gerar_plano(messages + [{"role": "user", "content":
+                                                  raciocinio.pedido_ajuste(plano, ajuste)}],
+                                     forcar_provider)
+            if novo:
+                plano = novo
+                if on_event:
+                    on_event("plano", plano)
+        return plano, False, ajustes, (
+            "Ajustei o plano algumas vezes, mas ainda não tenho sua aprovação; "
+            "não executei nada. Me diga como prefere que eu faça.")
 
     @staticmethod
     def _janela(messages: list[dict], base: int, manter: int = 14) -> list[dict]:
@@ -779,8 +846,12 @@ class AgentLoop:
         plano = self._planejar(messages, history, on_event, forcar_provider,
                                compacto)
         if plano:
-            messages.append({"role": "user",
-                             "content": raciocinio.bloco_plano(plano)})
+            plano, aprovado, ajustes, encerrar = self._aprovar_plano(
+                plano, messages, history, on_event, forcar_provider)
+            if encerrar:
+                return encerrar
+            messages.append({"role": "user", "content":
+                             raciocinio.bloco_plano(plano, aprovado, ajustes)})
         base = len(messages)   # system + histórico (+ plano): nunca podados
 
         # 1ª tentativa: function calling nativo (schema + validação).

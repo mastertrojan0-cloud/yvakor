@@ -125,7 +125,8 @@ def test_registro_e_roteador():
     from yvakor.tools.router import selecionar
     reg = ToolRegistry(load_settings())
     assert fc.register_ferramentas_claude(reg) == [
-        "pensar", "tarefas_checklist", "arquivos_grep", "web_ler"]
+        "pensar", "perguntar_usuario", "tarefas_checklist", "arquivos_grep",
+        "web_ler"]
     reg.register("arquivos_ler", lambda **k: {}, "Lê.", {"caminho": "str"})
     sel = selecionar(reg, "procure a função main no código do projeto")
     assert "arquivos_grep" in sel and "pensar" in sel

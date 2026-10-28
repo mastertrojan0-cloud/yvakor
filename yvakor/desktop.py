@@ -4444,6 +4444,8 @@ class App:
     def _abrir_confirmacao(self, pend: dict):
         if self._confirm_win is not None:
             return
+        if pend.get("tipo") in ("pergunta", "plano"):
+            return self._abrir_pergunta(pend)
         acao = pend.get("action") or "ação protegida"
         detalhe = pend.get("detail") or ""
         win = tk.Toplevel(self.root)
@@ -4512,7 +4514,101 @@ class App:
         except Exception:
             pass
 
-    def _responder_confirmacao(self, win, pend: dict, allow: bool):
+    def _abrir_pergunta(self, pend: dict):
+        """Pergunta do agente (perguntar_usuario) ou plano para aprovação:
+        botões com as opções + resposta livre, pelo mesmo /api/confirm."""
+        tipo = pend.get("tipo")
+        win = tk.Toplevel(self.root)
+        win.title("Plano para aprovação" if tipo == "plano" else "Pergunta do YVAKOR")
+        win.configure(bg=BG)
+        win.transient(self.root)
+        win.resizable(False, False)
+        win.grab_set()
+        _barra_titulo_escura(win)
+        tk.Label(win, text=("PLANO PARA SUA APROVAÇÃO" if tipo == "plano"
+                            else "PERGUNTA DO YVAKOR"),
+                 bg=BG, fg=GOLD, font=(UI_SEMI, 7)).pack(anchor="w", padx=20,
+                                                         pady=(18, 4))
+        tk.Label(win, text=pend.get("action") or "", bg=BG, fg=FG, font=FONT_B,
+                 wraplength=460, justify="left").pack(anchor="w", padx=20)
+        detalhe = pend.get("detail") or ""
+        if detalhe:
+            tk.Label(win, text=detalhe, bg=PANEL2, fg=FG if tipo == "plano" else MUTED,
+                     font=FONT_XS, wraplength=450, justify="left", anchor="w",
+                     padx=10, pady=8).pack(fill="x", padx=20, pady=(10, 0))
+
+        def responder(allow, resposta=None):
+            self._responder_confirmacao(win, pend, allow, resposta)
+
+        opcoes = tk.Frame(win, bg=BG)
+        opcoes.pack(fill="x", padx=20, pady=(12, 0))
+        for i, op in enumerate(pend.get("opcoes") or []):
+            principal = i == 0
+            b = tk.Label(opcoes, text=op, bg=GOLD if principal else PANEL2,
+                         fg=ON_GOLD if principal else FG,
+                         font=(UI_SEMI, 9) if principal else FONT_XS,
+                         anchor="w", padx=12, pady=6, cursor="hand2")
+            b.pack(fill="x", pady=2)
+            cancelar = op.strip().lower() == "cancelar"
+            b.bind("<Button-1>", lambda e, o=op, c=cancelar: responder(not c, o))
+            if principal:
+                self._hover(b, GOLD, GOLD_HOVER)
+            else:
+                self._hover(b, PANEL2, LINE)
+        livre = tk.Frame(win, bg=BG)
+        livre.pack(fill="x", padx=20, pady=(10, 0))
+        entrada = tk.Entry(livre, bg=PANEL2, fg=FG, insertbackground=FG,
+                           relief="flat", font=FONT_XS)
+        entrada.pack(side="left", fill="x", expand=True, ipady=5)
+        dica = ("ajustar o plano… (ex.: não envie, só salve)" if tipo == "plano"
+                else "ou escreva sua resposta…")
+        tk.Label(win, text=dica, bg=BG, fg=DIM, font=(UI, 7)).pack(
+            anchor="w", padx=20, pady=(3, 0))
+
+        def enviar_texto(_e=None):
+            texto = entrada.get().strip()
+            if texto:
+                responder(True, texto)
+
+        enviar = tk.Label(livre, text="Enviar", bg=PANEL2, fg=FG, font=FONT_XS,
+                          padx=12, pady=5, cursor="hand2")
+        enviar.pack(side="left", padx=(6, 0))
+        enviar.bind("<Button-1>", enviar_texto)
+        entrada.bind("<Return>", enviar_texto)
+        rodape = tk.Frame(win, bg=BG)
+        rodape.pack(fill="x", padx=20, pady=14)
+        if tipo == "pergunta":
+            pular = tk.Label(rodape, text="Pular (decida você)", bg=BG, fg=MUTED,
+                             font=FONT_XS, cursor="hand2")
+            pular.pack(side="right")
+            pular.bind("<Button-1>", lambda e: responder(False))
+        win.bind("<Escape>", lambda e: responder(False))
+        win.protocol("WM_DELETE_WINDOW", lambda: responder(False))
+        self._confirm_win = win
+        try:
+            self.root.update_idletasks()
+            largura = 510
+            altura = min(640, win.winfo_reqheight() + 10)
+            x = (self.root.winfo_rootx()
+                 + (self.root.winfo_width() - largura) // 2)
+            y = (self.root.winfo_rooty()
+                 + (self.root.winfo_height() - altura) // 2)
+            win.geometry(f"{largura}x{altura}+{x}+{y}")
+        except Exception:
+            pass
+        try:
+            if self.root.state() == "iconic":
+                self.root.deiconify()
+            win.lift()
+            win.attributes("-topmost", True)
+            win.after(1500, lambda: win.attributes("-topmost", False))
+            entrada.focus_force()
+            self.root.bell()
+        except Exception:
+            pass
+
+    def _responder_confirmacao(self, win, pend: dict, allow: bool,
+                               resposta: str | None = None):
         try:
             win.grab_release()
         except Exception:
@@ -4523,13 +4619,18 @@ class App:
             pass
         self._confirm_win = None
         sid = pend.get("session") or self.sessao
-        self.set_status("ação permitida" if allow else "ação negada",
-                        OK if allow else MUTED)
+        if pend.get("tipo") in ("pergunta", "plano"):
+            self.set_status("resposta enviada", OK)
+        else:
+            self.set_status("ação permitida" if allow else "ação negada",
+                            OK if allow else MUTED)
+        corpo = {"session": sid, "allow": bool(allow)}
+        if resposta is not None:
+            corpo["resposta"] = resposta
 
         def trabalho():
             try:
-                api("/api/confirm",
-                    {"session": sid, "allow": bool(allow)}, timeout=15)
+                api("/api/confirm", corpo, timeout=15)
             except Exception as exc:
                 self._post(self.set_status,
                            f"confirmação: {type(exc).__name__}: {exc}", ERR)

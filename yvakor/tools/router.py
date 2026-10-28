@@ -130,7 +130,7 @@ GRUPOS = {
 }
 
 NUCLEO = ("executar_shell", "arquivos_listar", "arquivos_ler",
-          "cerebro_buscar", "pensar", "tarefas_checklist")
+          "cerebro_buscar", "pensar", "tarefas_checklist", "perguntar_usuario")
 
 
 def _palavras(texto: str) -> set[str]:

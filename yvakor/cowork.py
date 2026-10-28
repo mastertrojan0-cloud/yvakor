@@ -424,6 +424,8 @@ class CoworkManager:
                     self._anotar(tid, self._orch._rotulo_plano(dado))
                 except Exception:
                     pass
+            elif tipo == "aprovacao_plano":
+                self._anotar(tid, "📋 esperando você aprovar o plano", tipo="aviso")
             elif tipo == "observacao" and isinstance(dado, dict):
                 res = dado.get("resultado", {}) or {}
                 if isinstance(res, dict):
