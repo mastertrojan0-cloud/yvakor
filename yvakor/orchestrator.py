@@ -1294,7 +1294,7 @@ class Orchestrator:
         # forma — o roteador não chama a nuvem.)
         _acao_navegador = bool(AgentLoop._INTENCAO_NAVEGADOR.search(user_message))
         if (forcar is None and not extra_context
-                and self.router.modo != "deepseek"
+                and self.router.modo not in ("deepseek", "gemini")
                 and not (_acao_navegador and self.router.modo == "auto")
                 and _tipo_simples in (
                     "resposta_simples", "resumo_curto", "classificacao")):

@@ -25,6 +25,10 @@ MODOS = {
     "deepseek": {
         "rotulo": "DeepSeek",
         "descricao": "DeepSeek primeiro; o local entra se ele falhar."},
+    "gemini": {
+        "rotulo": "Gemini",
+        "descricao": "Gemini (Google AI Studio) primeiro; DeepSeek e o local "
+                     "entram se ele falhar."},
 }
 MODO_PADRAO = "local"
 ARQ_PREFS = ROOT / "data" / "preferencias.json"
@@ -131,6 +135,7 @@ class LLMRouter:
 
     def info(self) -> dict:
         ds = self._cooldown.get("deepseek", 0.0) - time.time()
+        gm = self._cooldown.get("gemini", 0.0) - time.time()
         return {
             "modo": self.modo,
             "modos": [{"id": k, **v} for k, v in MODOS.items()],
@@ -140,6 +145,10 @@ class LLMRouter:
             "deepseek": {
                 "modelo": getattr(self.providers.get("deepseek"), "model", ""),
                 "indisponivel_s": max(0, round(ds)) if ds > 0 else 0},
+            "gemini": {
+                "modelo": getattr(self.providers.get("gemini"), "model", ""),
+                "com_chave": bool(getattr(self.providers.get("gemini"), "api_key", None)),
+                "indisponivel_s": max(0, round(gm)) if gm > 0 else 0},
         }
 
     def classify(self, message: str) -> str:
@@ -164,15 +173,23 @@ class LLMRouter:
         if self.modo == "local" and "ollama" in self.providers:
             return self.providers["ollama"]
         profundas = set(self.routing.get("external", []))
-        if self.modo == "deepseek" or task_type in profundas:
+        if self.modo == "gemini":
+            order = ["gemini"] + [n for n in self.routing["fallback_order"]
+                                  if n != "gemini"]           # gemini primeiro
+        elif self.modo == "deepseek" or task_type in profundas:
             order = self.routing["fallback_order"]            # deepseek primeiro
         else:
             resto = [n for n in self.routing["fallback_order"] if n != "ollama"]
             order = ["ollama"] + resto                        # local primeiro
         for name in order:
-            if name in self.providers:
+            if name in self.providers and self._tem_chave(self.providers[name]):
                 return self.providers[name]
         return self.providers[self.default]
+
+    @staticmethod
+    def _tem_chave(p) -> bool:
+        """Provedor de nuvem sem chave configurada fica fora da rota."""
+        return not getattr(p, "precisa_chave", False) or bool(getattr(p, "api_key", None))
 
     # ------------------------------------------------------------------ #
     # Circuit breaker: provider que falhou é pulado por um tempo
@@ -216,7 +233,8 @@ class LLMRouter:
 
     def externos(self) -> list[str]:
         """Providers de nuvem (tudo que não é o local 'ollama')."""
-        return [n for n in self.providers if n != "ollama"]
+        return [n for n in self.providers
+                if n != "ollama" and self._tem_chave(self.providers[n])]
 
     def sem_externos(self) -> bool:
         """True se há provider externo configurado e TODOS estão em cooldown
@@ -261,6 +279,7 @@ class LLMRouter:
         resto = [self.providers[n] for n in self.routing["fallback_order"]
                  if n in self.providers and self.providers[n] is not primeiro]
         ordem = [primeiro] + resto
+        ordem = [p for p in ordem if self._tem_chave(p)] or ordem
         vivos = [p for p in ordem if not self._em_cooldown(p.name)]
         return vivos or ordem      # todos em cooldown: tenta mesmo assim
 

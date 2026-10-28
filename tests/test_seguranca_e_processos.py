@@ -429,7 +429,7 @@ def test_api_modelo_get_post_exige_token_e_valida():
             st, corpo = _req(port, "GET", "/api/modelo")
             info = json.loads(corpo)
             assert st == 200 and info["modo"] == "local"
-            assert [m["id"] for m in info["modos"]] == ["local", "auto", "deepseek"]
+            assert [m["id"] for m in info["modos"]] == ["local", "auto", "deepseek", "gemini"]
             assert info["locais"] == ["qwen2.5:3b", "llama3.2:3b"]
             # POST sem token: barrado
             assert _req(port, "POST", "/api/modelo", body={"modo": "auto"})[0] == 403

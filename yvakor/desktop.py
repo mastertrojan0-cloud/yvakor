@@ -4285,7 +4285,7 @@ class App:
         motor = motores.get(padrao) or {}
         try:
             rotulo_modo = {"local": "local", "auto": "auto",
-                           "deepseek": "deepseek"}.get(
+                           "deepseek": "deepseek", "gemini": "gemini"}.get(
                 s.get("modo_modelo"), s.get("provider"))
             self._st["modelo"].configure(
                 text=f"{rotulo_modo} · {s.get('model')}  ▾")

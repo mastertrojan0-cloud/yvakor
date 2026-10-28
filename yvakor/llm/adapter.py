@@ -29,8 +29,15 @@ class LLMProvider:
                  api_key: str | None = None,
                  temperature: float = 0.3, max_tokens: int = 4096,
                  timeout: float = 120, num_thread: int | None = None,
-                 keep_alive: str = "5m", num_ctx: int | None = None):
+                 keep_alive: str = "5m", num_ctx: int | None = None,
+                 extra: dict | None = None, precisa_chave: bool = False):
         self.name = name
+        # Campos a mais no corpo da requisição, específicos do provedor (ex.:
+        # Gemini: reasoning_effort, para o "pensamento" não comer o teto de saída).
+        self.extra = dict(extra or {})
+        # Provedor de nuvem que só funciona com chave: sem ela fica fora da
+        # rota (senão cada tarefa levava um 401 e 30 min de cooldown).
+        self.precisa_chave = precisa_chave
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
@@ -184,6 +191,7 @@ class LLMProvider:
         if self.num_thread:
             return self._chat_ollama_nativo(messages, timeout, max_tokens)
         data = self._post({
+            **self.extra,
             "model": self.model,
             "temperature": self.temperature,
             "max_tokens": max_tokens or self.max_tokens,
@@ -211,7 +219,7 @@ class LLMProvider:
                    tool_choice: str = "auto", max_tokens: int | None = None) -> dict:
         """Chamada com function calling nativo; devolve a mensagem do modelo."""
         self._tl.uso = None
-        payload = {"model": self.model, "temperature": self.temperature,
+        payload = {**self.extra, "model": self.model, "temperature": self.temperature,
                    "max_tokens": max_tokens or self.max_tokens, "messages": messages,
                    "tools": tools, "tool_choice": tool_choice}
         data = self._post(payload)
@@ -259,6 +267,8 @@ def build_provider(name: str, cfg: dict) -> LLMProvider:
         num_thread=(_threads_ollama(cfg) if _eh_ollama(name, cfg) else None),
         keep_alive=str(cfg.get("keep_alive", "5m")),
         num_ctx=(int(cfg["num_ctx"]) if cfg.get("num_ctx") else None),
+        extra=cfg.get("extra") if isinstance(cfg.get("extra"), dict) else None,
+        precisa_chave="api_key_env" in cfg,
     )
 
 

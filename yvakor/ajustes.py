@@ -33,6 +33,9 @@ CHAVES = {
     "DEEPSEEK_API_KEY": {"rotulo": "DeepSeek", "grupo": "Modelos",
                          "ajuda": "Modelo de nuvem para tarefas profundas (modo Automático/DeepSeek).",
                          "link": "https://platform.deepseek.com/api_keys", "testavel": True},
+    "GEMINI_API_KEY": {"rotulo": "Gemini (Google AI Studio)", "grupo": "Modelos",
+                       "ajuda": "Nuvem de reserva do DeepSeek, ou a principal no modo Gemini.",
+                       "link": "https://aistudio.google.com/apikey", "testavel": True},
     "OPENAI_API_KEY": {"rotulo": "OpenAI", "grupo": "Modelos",
                        "ajuda": "Opcional: visão/imagens compatíveis com a API da OpenAI.",
                        "link": "https://platform.openai.com/api-keys", "testavel": False},
@@ -55,7 +58,7 @@ CHAVES = {
     "SLACK_CLIENT_SECRET": {"rotulo": "Slack · Client Secret", "grupo": "Login (OAuth)", "ajuda": "", "link": "", "testavel": False},
 }
 # chave de ambiente -> (provedor do roteador que a usa)
-_PROVEDOR_DA_CHAVE = {"DEEPSEEK_API_KEY": "deepseek"}
+_PROVEDOR_DA_CHAVE = {"DEEPSEEK_API_KEY": "deepseek", "GEMINI_API_KEY": "gemini"}
 
 
 def mascarar(valor: str, publica: bool = False) -> str:
@@ -157,6 +160,14 @@ def recarregar_provedores(agente) -> None:
         pass
 
 
+def _modelo_configurado(provedor: str) -> str:
+    try:
+        from yvakor.config import load_settings
+        return str(load_settings()["llm"]["providers"][provedor]["model"])
+    except Exception:
+        return ""
+
+
 def testar_chave(nome: str, valor: str | None = None) -> dict:
     """Verifica a chave na própria API (sem gastar tokens). Se `valor` vier, testa ele; senão a salva."""
     if nome not in CHAVES:
@@ -176,6 +187,20 @@ def testar_chave(nome: str, valor: str | None = None) -> dict:
                 return {"ok": False, "erro": f"chave válida, mas sem saldo ({saldo}) — recarregue em platform.deepseek.com",
                         "saldo": saldo}
             return {"ok": True, "detalhe": f"chave válida · saldo {saldo}", "saldo": saldo}
+        if nome == "GEMINI_API_KEY":
+            # Lista os modelos (não gasta tokens) e confere o configurado.
+            req = urllib.request.Request(
+                "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
+                headers={"x-goog-api-key": chave, "Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                d = json.loads(r.read().decode("utf-8", "replace"))
+            nomes = [str(m.get("name", "")).split("/", 1)[-1] for m in d.get("models") or []]
+            alvo = _modelo_configurado("gemini")
+            if alvo and nomes and alvo not in nomes and not alvo.endswith("-latest"):
+                flash = [n for n in nomes if "flash" in n][:4]
+                return {"ok": False, "erro": f"chave válida, mas o modelo '{alvo}' não está "
+                        f"disponível; troque em config/settings.yaml (ex.: {', '.join(flash) or nomes[0]})"}
+            return {"ok": True, "detalhe": f"chave válida · modelo {alvo or '?'} · {len(nomes)} modelos"}
         if nome == "BRAVE_API_KEY":
             req = urllib.request.Request("https://api.search.brave.com/res/v1/web/search?q=teste&count=1",
                                          headers={"X-Subscription-Token": chave, "Accept": "application/json"})

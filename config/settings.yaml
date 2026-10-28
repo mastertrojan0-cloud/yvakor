@@ -48,6 +48,18 @@ llm:
       api_key_env: "DEEPSEEK_API_KEY"
       temperature: 0.1             # 0.1 = mais determinístico e previsível para ferramentas
       max_tokens: 4096
+    # Gemini (Google AI Studio) pela API compatível com OpenAI. Chave em
+    # Ajustes → Chaves (GEMINI_API_KEY); sem chave ele fica fora da rota.
+    # "gemini-flash-latest" acompanha o Flash mais novo; o teste da chave em
+    # Ajustes diz se o modelo existe na sua conta.
+    gemini:
+      base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
+      model: "gemini-flash-latest"
+      api_key_env: "GEMINI_API_KEY"
+      temperature: 1.0             # o Google recomenda 1.0 nos Gemini 3 (abaixo disso pode entrar em laço)
+      max_tokens: 8192             # o "pensamento" conta dentro deste teto
+      extra:
+        reasoning_effort: "low"    # pensa pouco: mais rápido e não come a saída
     # Ollama local — fallback e tarefas simples (sem custo de API).
     # Modelo 3B escolhido para esta máquina (4 núcleos, sem AVX2/GPU).
     ollama:
@@ -79,6 +91,8 @@ llm:
     # Preços em USD por 1 milhão de tokens — CONFIRA na página de preços da API.
     precos_usd_por_milhao:
       deepseek: {entrada: 0.28, cache: 0.028, saida: 0.42}
+      # gemini: sem preço aqui = o plano grátis do AI Studio não entra no
+      # orçamento em US$. Se ativar cobrança, preencha com a tabela do Google.
     orcamento_prompt_tokens: {local: 1800, nuvem: 7000}
 
   # Roteador: LOCAL primeiro, DeepSeek para tarefas mais profundas.
@@ -91,7 +105,7 @@ llm:
   routing:
     local:    ["classificacao", "resumo_curto", "resposta_simples"]
     external: ["codigo", "arquitetura", "analise_complexa", "prospeccao", "pesquisa_sintese", "geracao_imagem"]
-    fallback_order: ["deepseek", "ollama"]   # se um falhar, tenta o próximo
+    fallback_order: ["deepseek", "gemini", "ollama"]   # se um falhar, tenta o próximo (sem chave = pulado)
 
 memory:
   episodic_db: "data/yvakor_memory.db"
