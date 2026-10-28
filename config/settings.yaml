@@ -15,6 +15,11 @@ agent:
   ferramentas_nativas: false # opt-in: o provedor atual trava com tools; JSON é o padrão
   router_ferramentas: true   # envia somente as ferramentas relevantes
   max_ferramentas: 14        # teto por mensagem
+  # Método de raciocínio (yvakor/raciocinio.py): entender → planejar → agir
+  # passo a passo → diagnosticar erros → verificar → responder com honestidade.
+  raciocinio:
+    planejar: true           # plano explícito antes de tarefas de vários passos (+1 chamada)
+    verificar: true          # confere o resultado antes da resposta final (+1 chamada)
 
 # Motor de contexto: seleciona o conteúdo relevante da página/arquivos.
 contexto:

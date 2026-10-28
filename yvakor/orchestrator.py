@@ -254,7 +254,10 @@ class Orchestrator:
                                max_ferramentas=int(self.settings["agent"].get(
                                    "max_ferramentas", 14)),
                                timeout_s=int(self.settings["agent"].get(
-                                   "timeout_s", 180)))
+                                   "timeout_s", 180)),
+                               raciocinio=self.settings["agent"].get(
+                                   "raciocinio") or {"planejar": True,
+                                                     "verificar": True})
         self.ultimos_artefatos: list[dict] = []
         self.cowork = CoworkManager(self, self.settings)
         self.maintenance = Maintenance(self)
@@ -304,6 +307,14 @@ class Orchestrator:
         # Anexa pendência de confirmação (se houver) para a interface mostrar o popup
         p["pending"] = self.confirm_broker.pending_for(sid)
         return p
+
+    @staticmethod
+    def _rotulo_plano(plano: dict) -> str:
+        passos = plano.get("passos") or []
+        texto = " → ".join(str(p)[:60] for p in passos[:5])
+        if len(passos) > 5:
+            texto += " → …"
+        return f"🧭 Plano: {texto}"
 
     @staticmethod
     def _rotulo_passo(dado: dict) -> str:
@@ -1321,6 +1332,8 @@ class Orchestrator:
                     print(f"\n  {label}", flush=True)
                 except Exception:
                     pass
+            elif tipo == "plano" and isinstance(dado, dict):
+                self._prog_step(sid, self._rotulo_plano(dado))
             elif tipo == "observacao" and isinstance(dado, dict):
                 res = dado.get("resultado", {})
                 if isinstance(res, dict) and not res.get("ok", True):

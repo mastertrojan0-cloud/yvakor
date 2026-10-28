@@ -194,6 +194,7 @@ PROTOCOLO_COMPACTO = """## FERRAMENTAS
 
 
 from yvakor.textos import sem_json_de_ferramenta  # noqa: E402
+from yvakor import raciocinio  # noqa: E402
 
 # Resposta que "desiste" sem ter tentado: o modelo via no histórico uma falha
 # antiga da extensão ("não está respondendo") e repetia isso SEM chamar
@@ -472,8 +473,15 @@ def _parse_acoes(raw: str, registry=None) -> list[dict]:
 class AgentLoop:
     def __init__(self, router, registry, max_iterations: int = 8,
                  nativo: bool = False, roteador: bool = True,
-                 max_ferramentas: int = 14, timeout_s: int = 300):
+                 max_ferramentas: int = 14, timeout_s: int = 300,
+                 raciocinio: dict | None = None):
         self.router = router
+        # Método de raciocínio (ver yvakor/raciocinio.py): plano explícito
+        # antes de tarefas de vários passos e conferência antes da resposta
+        # final. Desligado por padrão aqui; o orquestrador liga pelo settings.
+        cfg = raciocinio or {}
+        self.planejar = bool(cfg.get("planejar", False))
+        self.verificar = bool(cfg.get("verificar", False))
         self.registry = registry
         self.max_iterations = max_iterations
         self.nativo = nativo
@@ -626,9 +634,31 @@ class AgentLoop:
                           "navegador_pesquisar. Depois de clicar ou navegar, chame "
                           "navegador_ver de novo. Em página grande, "
                           "navegador_procurar acha só o elemento descrito.\n")
-            return base_system + "\n\n" + texto
+            return base_system + "\n\n" + texto + raciocinio.METODO_COMPACTO
         return base_system + "\n\n" + PROTOCOLO.format(
-            manifesto=self.registry.manifest(nomes))
+            manifesto=self.registry.manifest(nomes)) + raciocinio.METODO
+
+    def _planejar(self, messages: list[dict], history: list[dict], on_event,
+                  forcar_provider, compacto: bool) -> dict | None:
+        """Plano explícito antes de uma tarefa de vários passos (1 chamada
+        extra ao modelo, só quando a heurística indica vários passos)."""
+        if not self.planejar or compacto:
+            return None
+        pedido = next((h.get("content") or "" for h in reversed(history)
+                       if h.get("role") == "user"), "")
+        if not isinstance(pedido, str) or not raciocinio.precisa_planejar(pedido):
+            return None
+        try:
+            raw = self.router.complete_messages(
+                "analise_complexa",
+                messages + [{"role": "user", "content": raciocinio.PEDIR_PLANO}],
+                forcar=forcar_provider) or ""
+        except Exception:
+            return None
+        plano = raciocinio.ler_plano(raw)
+        if plano and on_event:
+            on_event("plano", plano)
+        return plano
 
     @staticmethod
     def _janela(messages: list[dict], base: int, manter: int = 14) -> list[dict]:
@@ -728,7 +758,12 @@ class AgentLoop:
                      "content": self.system_with_tools(base_system, nomes,
                                                        compacto)}]
         messages += history
-        base = len(messages)   # system + histórico: nunca podados (ver _janela)
+        plano = self._planejar(messages, history, on_event, forcar_provider,
+                               compacto)
+        if plano:
+            messages.append({"role": "user",
+                             "content": raciocinio.bloco_plano(plano)})
+        base = len(messages)   # system + histórico (+ plano): nunca podados
 
         # 1ª tentativa: function calling nativo (schema + validação).
         # Se o provedor não suportar, cai no protocolo JSON abaixo — MAS só se
@@ -739,7 +774,7 @@ class AgentLoop:
             estado = {"ferramentas": 0}
             try:
                 return self._run_nativo(messages, on_event, should_stop,
-                                        forcar_provider, nomes, estado)
+                                        forcar_provider, nomes, estado, plano)
             except Exception as exc:
                 import logging
                 logging.getLogger("yvakor.agent").warning(
@@ -764,6 +799,8 @@ class AgentLoop:
         correcoes = 0
         feitos: dict[str, list[bool]] = {}     # ferramenta → sucesso de cada chamada
         cobrou_prova = False
+        reflexao = raciocinio.Reflexao()
+        verificou = False
         for _ in range(max_passos):
             if should_stop is not None and should_stop():
                 return "⏹ Tarefa interrompida a pedido do usuário."
@@ -822,6 +859,12 @@ class AgentLoop:
                     messages.append({"role": "assistant", "content": raw})
                     messages.append({"role": "user", "content": cobranca})
                     continue
+                if self._deve_verificar(verificou, usadas, plano):
+                    verificou = True
+                    messages.append({"role": "assistant", "content": raw})
+                    messages.append({"role": "user",
+                                     "content": raciocinio.pedido_verificacao(plano)})
+                    continue
                 if cobranca:
                     texto = AVISO_SEM_PROVA + texto
                 return texto or "(sem resposta do modelo)"
@@ -842,7 +885,8 @@ class AgentLoop:
                     bool(isinstance(resultado, dict) and resultado.get("ok")))
                 if on_event:
                     on_event("observacao", {"nome": nome, "resultado": resultado})
-                obs = json.dumps(resultado, ensure_ascii=False)[:2000]
+                obs = (json.dumps(resultado, ensure_ascii=False, default=str)[:2000]
+                       + reflexao.registrar(nome, args, resultado))
                 messages.append({"role": "user",
                                  "content": f"OBSERVAÇÃO ({nome}): {obs}"})
 
@@ -861,9 +905,19 @@ class AgentLoop:
     # ------------------------------------------------------------------ #
     # Function calling nativo
     # ------------------------------------------------------------------ #
+    # Conferência final só quando houve trabalho de verdade: tarefa planejada
+    # ou várias ferramentas. Pergunta simples não paga a chamada extra.
+    VERIFICAR_A_PARTIR_DE = 3
+
+    def _deve_verificar(self, verificou: bool, usadas: int,
+                        plano: dict | None) -> bool:
+        return (self.verificar and not verificou and usadas > 0
+                and (plano is not None or usadas >= self.VERIFICAR_A_PARTIR_DE))
+
     def _run_nativo(self, messages: list[dict], on_event, should_stop,
                     forcar_provider, nomes: list[str] | None = None,
-                    estado: dict | None = None) -> str:
+                    estado: dict | None = None,
+                    plano: dict | None = None) -> str:
         msgs = list(messages)
         esquemas = self.registry.schemas(nomes)
         inicio_run = time.time()
@@ -872,6 +926,8 @@ class AgentLoop:
         vazamentos = 0
         feitos: dict[str, list[bool]] = {}
         cobrou_prova = False
+        reflexao = raciocinio.Reflexao()
+        verificou = False
         for _ in range(self.max_iterations):
             if should_stop is not None and should_stop():
                 return "⏹ Tarefa interrompida a pedido do usuário."
@@ -915,7 +971,8 @@ class AgentLoop:
                             on_event("observacao", {"nome": nome, "resultado": resultado})
                         msgs.append({"role": "user", "content": (
                             f"OBSERVAÇÃO ({nome}): "
-                            + json.dumps(resultado, ensure_ascii=False)[:4000])})
+                            + json.dumps(resultado, ensure_ascii=False, default=str)[:4000]
+                            + reflexao.registrar(nome, args, resultado))})
                     continue
                 if not insistiu and desistiu_sem_tentar(texto, nomes, usadas):
                     insistiu = True
@@ -927,6 +984,12 @@ class AgentLoop:
                     cobrou_prova = True
                     msgs.append({"role": "assistant", "content": texto})
                     msgs.append({"role": "user", "content": cobranca})
+                    continue
+                if texto and self._deve_verificar(verificou, usadas, plano):
+                    verificou = True
+                    msgs.append({"role": "assistant", "content": texto})
+                    msgs.append({"role": "user",
+                                 "content": raciocinio.pedido_verificacao(plano)})
                     continue
                 if texto:
                     return (AVISO_SEM_PROVA if cobranca else "") + \
@@ -957,7 +1020,9 @@ class AgentLoop:
                     on_event("observacao", {"nome": nome, "resultado": resultado})
                 msgs.append({"role": "tool",
                              "tool_call_id": tc.get("id", "yvakor"),
-                             "content": json.dumps(resultado, ensure_ascii=False)[:4000]})
+                             "content": json.dumps(resultado, ensure_ascii=False,
+                                                   default=str)[:4000]
+                                        + reflexao.registrar(nome, args, resultado)})
         msgs.append({"role": "user", "content": "Resuma em texto o que foi feito."})
         return (self.router.complete_messages(
             "analise_complexa", msgs, forcar=forcar_provider) or "").strip()

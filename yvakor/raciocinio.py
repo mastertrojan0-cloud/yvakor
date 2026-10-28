@@ -1,0 +1,206 @@
+"""
+YVAKOR — Método de raciocínio do agente
+
+Inspirado no jeito de trabalhar do Claude (o comportamento observável, não o
+modelo): entender o pedido real → planejar tarefas de vários passos → agir um
+passo por vez lendo cada observação → tratar erro como diagnóstico, não como
+repetição → verificar com evidência antes de declarar pronto → responder de
+forma honesta, começando pelo resultado.
+
+Partes:
+  METODO / METODO_COMPACTO  → entram no system prompt (como pensar).
+  precisa_planejar / PEDIR_PLANO / ler_plano / bloco_plano
+                            → plano explícito antes de tarefas de vários passos.
+  Reflexao                  → acompanha falhas e anexa à observação uma
+                              orientação (não repetir, mudar abordagem, parar).
+  pedido_verificacao        → antes da resposta final, confere o plano e o
+                              critério de pronto contra o que foi observado.
+"""
+from __future__ import annotations
+
+import json
+import re
+
+METODO = """
+## MÉTODO DE TRABALHO (pense assim antes e durante cada tarefa)
+1. ENTENDA o pedido real: qual resultado o usuário quer no fim e que
+   restrições ele deu. Pergunta → responda. Tarefa → execute.
+2. FATOS ANTES DE SUPOSIÇÕES: se dá para descobrir com uma ferramenta (ler o
+   arquivo, ver a página, listar a pasta), descubra. Nunca invente resultados,
+   caminhos, números, refs ou conteúdo de páginas.
+3. PLANEJE tarefas de vários passos: a sequência mínima até o resultado. Faça
+   um passo por vez e leia a observação inteira antes de decidir o próximo.
+4. ATUALIZE o que você sabe a cada observação: deu certo? O estado mudou como
+   esperado? Se não, descubra o porquê antes de tentar de novo.
+5. ERRO = DIAGNÓSTICO, não repetição. Leia a mensagem de erro, ajuste a causa
+   (outro alvo, outro argumento, outra ferramenta). Depois de 2–3 falhas do
+   mesmo tipo, pare e explique o bloqueio ao usuário.
+6. VERIFIQUE antes de dizer "pronto": confirme por uma observação que o
+   resultado existe (arquivo criado, página mudou, valor aparece na tela).
+7. CUIDADO com o irreversível ou externo (enviar, comprar, apagar, publicar):
+   faça exatamente o que foi pedido, nada além.
+8. RESPOSTA FINAL honesta e direta: comece pelo resultado; diga o que fez, o
+   que NÃO conseguiu e por quê, e qualquer suposição feita. Sem enrolação, sem
+   repetir a pergunta, sem afirmar o que as ferramentas não confirmaram.
+"""
+
+METODO_COMPACTO = """## MÉTODO
+- Descubra com ferramentas em vez de chutar; não invente resultados.
+- Um passo por vez; se falhar, mude a abordagem (não repita igual).
+- Só diga que fez o que uma observação confirmou; diga o que não conseguiu.
+"""
+
+
+# --------------------------------------------------------------------- plano
+_CONECTORES = re.compile(
+    r"(\be (depois|em seguida|então|entao|tamb[eé]m)\b|\bdepois\b|"
+    r"\bem seguida\b|\bap[oó]s\b|\bpasso a passo\b|\betapas?\b|;|\n\s*(\d+[.)]|-)\s)",
+    re.I)
+# Radicais de verbos de ação (imperativo/infinitivo: "extraia", "extrair"…).
+_VERBOS = re.compile(
+    r"\b(abr[aei]|acess|pesquis|busqu|busc[ae]|procur|preench|cliqu|clic[ae]|"
+    r"envi[ae]|baix[ae]|salv[ae]|cri[ae]|ger[ae]|compar|analis|extra[ií]|"
+    r"resum|escrev|edit[ae]|mov[ae]|copi[ae]|consult|mont[ae]|instal|"
+    r"configur|verifi|list[ae]|organiz|calcul|vej[ae]|leia|ler\b|traduz|"
+    r"respond|apag|delet|instal|cadastr|agend|imprim)\w*", re.I)
+_CONVERSA = re.compile(
+    r"^\s*(oi|ol[aá]|bom dia|boa (tarde|noite)|obrigad[oa]|valeu|ok|blz|"
+    r"beleza|tudo bem|sim|n[aã]o)\b[\s!.?]*$", re.I)
+
+
+def precisa_planejar(mensagem: str) -> bool:
+    """Tarefa de vários passos? (heurística barata, sem chamar o modelo)."""
+    texto = (mensagem or "").strip()
+    if len(texto) < 25 or _CONVERSA.match(texto):
+        return False
+    verbos = {m.group(0).lower()[:5] for m in _VERBOS.finditer(texto)}
+    if len(verbos) >= 2:                  # duas ações ou mais = vários passos
+        return True
+    if verbos and _CONECTORES.search(texto):
+        return True
+    return len(texto) > 280 and len(verbos) >= 1
+
+
+PEDIR_PLANO = (
+    "ANTES DE AGIR, planeje. Responda SOMENTE com um JSON neste formato, sem "
+    "texto extra e sem chamar ferramenta ainda:\n"
+    '{"objetivo":"o resultado final que o usuário quer, em 1 frase",'
+    '"pronto_quando":"como saber, por uma observação, que terminou",'
+    '"passos":["passo 1 (ferramenta prevista)","passo 2", "..."],'
+    '"riscos":"o que pode dar errado ou exigir o usuário (login, captcha, '
+    'confirmação) — ou vazio"}\n'
+    "Use de 2 a 7 passos, cada um curto e concreto. Não invente dados que "
+    "ainda não foram observados.")
+
+
+def ler_plano(raw: str) -> dict | None:
+    """Extrai o plano JSON da resposta do modelo (tolerante a texto em volta)."""
+    if not raw:
+        return None
+    dec = json.JSONDecoder()
+    i = 0
+    while True:
+        j = raw.find("{", i)
+        if j < 0:
+            return None
+        try:
+            obj, fim = dec.raw_decode(raw[j:])
+        except Exception:
+            i = j + 1
+            continue
+        i = j + fim
+        if not isinstance(obj, dict) or "acao" in obj:
+            continue
+        passos = obj.get("passos") or obj.get("etapas") or obj.get("steps")
+        if isinstance(passos, str):
+            passos = [p.strip(" -•") for p in re.split(r"\n|;", passos) if p.strip(" -•")]
+        if not isinstance(passos, list):
+            continue
+        passos = [str(p).strip()[:160] for p in passos if str(p).strip()][:7]
+        if not passos:
+            continue
+        return {"objetivo": str(obj.get("objetivo") or obj.get("goal") or "")[:240],
+                "pronto_quando": str(obj.get("pronto_quando") or
+                                     obj.get("criterio") or "")[:240],
+                "passos": passos,
+                "riscos": str(obj.get("riscos") or "")[:240]}
+
+
+def bloco_plano(plano: dict) -> str:
+    linhas = ["PLANO DE TRABALHO (feito por você antes de agir; siga-o, mas "
+              "ajuste se uma observação mostrar que ele está errado):"]
+    if plano.get("objetivo"):
+        linhas.append(f"Objetivo: {plano['objetivo']}")
+    for n, passo in enumerate(plano.get("passos") or [], 1):
+        linhas.append(f"{n}. {passo}")
+    if plano.get("pronto_quando"):
+        linhas.append(f"Pronto quando: {plano['pronto_quando']}")
+    if plano.get("riscos"):
+        linhas.append(f"Atenção: {plano['riscos']}")
+    linhas.append("Agora execute o passo 1.")
+    return "\n".join(linhas)
+
+
+def pedido_verificacao(plano: dict | None) -> str:
+    """Pede a conferência final: o que foi pedido × o que as observações provam."""
+    partes = ["ANTES DE RESPONDER, confira seu trabalho contra as OBSERVAÇÕES "
+              "desta tarefa:"]
+    if plano:
+        if plano.get("objetivo"):
+            partes.append(f"- Objetivo: {plano['objetivo']}")
+        if plano.get("pronto_quando"):
+            partes.append(f"- Pronto quando: {plano['pronto_quando']}")
+        partes.append("- Passos: " + " | ".join(plano.get("passos") or []))
+    partes.append(
+        "Se falta um passo que ainda dá para fazer, chame a ferramenta agora. "
+        "Se está concluído (ou bloqueado), escreva a RESPOSTA FINAL ao usuário "
+        "em texto puro: comece pelo resultado, cite só o que as observações "
+        "confirmam e diga claramente o que não foi possível e por quê. Não "
+        "mencione esta conferência nem escreva 'tarefa concluída' ou 'nada "
+        "ficou pendente': vá direto ao resultado.")
+    return "\n".join(partes)
+
+
+# ------------------------------------------------------------------ reflexão
+def _assinatura(nome: str, args) -> str:
+    try:
+        return nome + json.dumps(args, sort_keys=True, ensure_ascii=False, default=str)
+    except Exception:
+        return nome + str(args)
+
+
+def _erro(resultado) -> str:
+    if isinstance(resultado, dict):
+        return str(resultado.get("error") or resultado.get("erro") or "")[:160]
+    return ""
+
+
+class Reflexao:
+    """Acompanha os resultados das ferramentas e devolve uma orientação curta
+    para anexar à observação quando algo falha (ou falha de novo)."""
+
+    LIMITE_SEGUIDAS = 3
+
+    def __init__(self) -> None:
+        self.falhas: dict[str, int] = {}
+        self.seguidas = 0
+
+    def registrar(self, nome: str, args, resultado) -> str:
+        ok = isinstance(resultado, dict) and bool(resultado.get("ok"))
+        if ok:
+            self.seguidas = 0
+            return ""
+        self.seguidas += 1
+        chave = _assinatura(nome, args)
+        self.falhas[chave] = self.falhas.get(chave, 0) + 1
+        if self.seguidas >= self.LIMITE_SEGUIDAS:
+            return ("\nREFLEXÃO: {n} falhas seguidas. Pare de tentar às cegas: "
+                    "leia o estado atual (ex.: navegador_ver, arquivos_listar) "
+                    "para entender o que mudou, ou responda ao usuário "
+                    "explicando o que bloqueou e o que ele precisa fazer."
+                    ).format(n=self.seguidas)
+        if self.falhas[chave] >= 2:
+            return ("\nREFLEXÃO: esta chamada IDÊNTICA já falhou antes. Não "
+                    "repita: mude o alvo, os argumentos ou a ferramenta.")
+        return ("\nREFLEXÃO: falhou. Identifique a causa provável no erro acima "
+                "e ajuste antes do próximo passo (não repita igual).")

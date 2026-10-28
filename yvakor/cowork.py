@@ -419,6 +419,11 @@ class CoworkManager:
                 except Exception:
                     rotulo = f"🔧 {dado.get('nome', '')}"
                 self._anotar(tid, rotulo)
+            elif tipo == "plano" and isinstance(dado, dict):
+                try:
+                    self._anotar(tid, self._orch._rotulo_plano(dado))
+                except Exception:
+                    pass
             elif tipo == "observacao" and isinstance(dado, dict):
                 res = dado.get("resultado", {}) or {}
                 if isinstance(res, dict):
