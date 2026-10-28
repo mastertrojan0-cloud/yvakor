@@ -1307,8 +1307,9 @@ class Orchestrator:
         self.episodic.log("conversa", user_message, answer, session_id=sid)
         # Título automático só na conversa do usuário (sessões de tarefa têm
         # nome próprio e não devem ser renomeadas).
-        if sid == self.episodic.active_id:
-            self.episodic.maybe_autotitle(user_message)
+        # (app e extensão podem estar em conversas diferentes: vale o sid da mensagem)
+        if session_id is None or sid == self.episodic.active_id or self._eh_chat(sid):
+            self.episodic.maybe_autotitle(user_message, session_id=sid)
 
         # Aprendizado automático: avalia a resposta e SÓ absorve fatos/destila
         # skills se a nota for boa (a nota 1-5 agora gateia o aprendizado, em
@@ -1341,6 +1342,15 @@ class Orchestrator:
         # Obsidian quase em tempo real: sincroniza no máximo a cada 2 min.
         self._sincronizar_cerebro_async()
         return answer
+
+    def _eh_chat(self, sid: str | None) -> bool:
+        """Conversa do usuário (não sessão de tarefa cowork, que tem nome próprio)."""
+        try:
+            row = self.episodic.conn.execute(
+                "SELECT COALESCE(kind,'chat') FROM sessions WHERE id=?", (sid,)).fetchone()
+            return bool(row) and row[0] == "chat"
+        except Exception:
+            return False
 
     _FALHA_EXTENSAO = _re.compile(
         r"extens[aã]o[^\n]{0,80}(n[aã]o (est[aá] )?respond|sem responder|"

@@ -868,6 +868,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"sessions": ag.episodic.listar_conversas(),
                                     "active": ag.episodic.active_id})
 
+        if self.path.startswith("/api/sessions/buscar"):
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            termo = ((q.get("q") or [""])[0])[:120]
+            ag = get_agent()
+            return self._json(200, {"sessions": ag.episodic.buscar_conversas(termo),
+                                    "active": ag.episodic.active_id, "q": termo})
+
         if self.path.startswith("/api/sessions/") and self.path.endswith("/messages"):
             sid = self.path[len("/api/sessions/"):-len("/messages")]
             return self._json(200,
@@ -1843,7 +1850,11 @@ class Handler(BaseHTTPRequestHandler):
 
             # criar conversa
             if self.path == "/api/sessions":
-                ag.episodic.nova_conversa(data.get("title", ""))
+                if data.get("ao_abrir"):
+                    # app/extensão abrindo: conversa nova (reaproveita uma vazia)
+                    ag.episodic.conversa_nova_ao_abrir()
+                else:
+                    ag.episodic.nova_conversa(data.get("title", ""))
                 return self._json(200, {"active": ag.episodic.active_id,
                                         "sessions": ag.episodic.listar_conversas()})
 

@@ -1094,6 +1094,9 @@ class SessaoLista(tk.Frame):
                              fg=DIM, font=(UI_SEMI, 7),
                              anchor="w").pack(fill="x", padx=14,
                                               pady=(10, 2))
+                achadas = getattr(self, "_achadas", None) or {}
+                if self._filtro and achadas.get(s.get("id")):
+                    s = {**s, "preview": achadas[s.get("id")]}   # trecho que casou
                 self._criar_item(s)
         self.inner.update_idletasks()
         self._inner_config()
@@ -1102,8 +1105,21 @@ class SessaoLista(tk.Frame):
         except Exception:
             pass
 
+    def resultado_busca(self, achadas):
+        """Resultado da busca no conteúdo (servidor): None limpa."""
+        novo = None if achadas is None else {
+            s.get("id"): s.get("trecho") or "" for s in achadas}
+        if novo == getattr(self, "_achadas", None):
+            return
+        self._achadas = novo
+        self._assinatura = None
+        self._reconstruir()
+
     def _passa(self, s) -> bool:
         if not self._filtro:
+            return True
+        achadas = getattr(self, "_achadas", None)
+        if achadas and s.get("id") in achadas:
             return True
         alvo = " ".join((str(s.get("title") or ""),
                          str(s.get("preview") or ""))).lower()
@@ -2585,6 +2601,30 @@ class App:
     def _busca_digitou(self, _evt=None):
         texto = "" if self._busca_ph else self.busca.get()
         self.lista.filtrar(texto)
+        # Também procura no CONTEÚDO das conversas (o filtro local só via o
+        # título e a última mensagem), com espera curta para não chamar a cada tecla.
+        self._cancelar(getattr(self, "_busca_job", None))
+        termo = texto.strip()
+        if len(termo) < 3:
+            self.lista.resultado_busca(None)
+            return
+
+        def trabalho():
+            try:
+                j = api("/api/sessions/buscar?q=" + urllib.parse.quote(termo),
+                        timeout=10)
+            except Exception:
+                return
+            self._post(self._pintar_busca, termo, j)
+
+        self._busca_job = self._agendar(
+            350, lambda: threading.Thread(target=trabalho, daemon=True).start())
+
+    def _pintar_busca(self, termo, j):
+        atual = "" if self._busca_ph else self.busca.get().strip()
+        if atual != termo:
+            return                      # o usuário já digitou outra coisa
+        self.lista.resultado_busca(j.get("sessions") or [])
 
     def _escapar(self):
         if self._confirm_win is not None:
@@ -3473,7 +3513,7 @@ class App:
         """Compatibilidade: nova conversa sempre na janela atual."""
         self.nova_conversa()
 
-    def nova_conversa(self):
+    def nova_conversa(self, ao_abrir: bool = False):
         self._privado = False
         self._pintar_botao_privado(False)
         if self._criando:
@@ -3483,7 +3523,8 @@ class App:
 
         def trabalho():
             try:
-                j = api("/api/sessions", {}, timeout=12)
+                j = api("/api/sessions", {"ao_abrir": True} if ao_abrir else {},
+                        timeout=12)
             except Exception as exc:
                 self._post(self._nova_erro, f"{type(exc).__name__}: {exc}")
                 return
@@ -4351,7 +4392,7 @@ class App:
         self.carregar_sistema()
         if self._nova_boot:
             self._nova_boot = False
-            self._agendar(900, self.nova_conversa)
+            self._agendar(900, lambda: self.nova_conversa(ao_abrir=True))
         self._cancelar(self._poll_job)
         self._poll_job = self._agendar(400, self.poll_tarefas)
 
@@ -4531,4 +4572,6 @@ if __name__ == "__main__":
         _instalar_robustez()
     except Exception:
         pass
-    App(nova="--nova" in sys.argv).run()
+    # Abre sempre numa conversa nova (as anteriores ficam no histórico, à
+    # esquerda, com busca). --retomar volta a abrir na última conversa.
+    App(nova="--retomar" not in sys.argv).run()

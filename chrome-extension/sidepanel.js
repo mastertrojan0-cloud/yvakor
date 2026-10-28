@@ -199,11 +199,102 @@ async function lerSessao() {
   try { return (await chrome.storage.local.get(CHAVE_SESSAO))[CHAVE_SESSAO]; }
   catch (e) { return localStorage.getItem(CHAVE_SESSAO); }
 }
-async function novaSessao() {
-  const j = await api("/api/sessions", { method: "POST", body: {} });
+// aoAbrir: o painel acabou de abrir → conversa nova, mas reaproveita a atual se
+// ainda estiver vazia (não acumula conversas vazias a cada abertura).
+async function novaSessao(aoAbrir = false) {
+  const j = await api("/api/sessions", { method: "POST", body: aoAbrir ? { ao_abrir: true } : {} });
   sessao = j.active;
   await guardarSessao();
 }
+
+/* ------------------- histórico (buscar e retomar) ------------------- */
+const histPainel = $("hist-painel");
+const histLista = $("hist-lista");
+const histBusca = $("hist-busca");
+let histJob = null;
+
+function quando(iso) {
+  const d = new Date(String(iso || "").replace(" ", "T"));
+  if (isNaN(d)) return "";
+  const hoje = new Date();
+  return d.toDateString() === hoje.toDateString()
+    ? d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+}
+
+function pintarHistorico(lista, termo) {
+  histLista.textContent = "";
+  const conversas = (lista || []).filter(s => (s.episodes || 0) > 0 || s.trecho);
+  if (!conversas.length) {
+    const v = document.createElement("div");
+    v.className = "sites-vazio";
+    v.textContent = termo ? "Nada encontrado para essa busca." : "Nenhuma conversa anterior.";
+    histLista.appendChild(v);
+    return;
+  }
+  for (const s of conversas.slice(0, 60)) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "hist-item" + (s.id === sessao ? " atual" : "");
+    const t = document.createElement("b");
+    t.textContent = s.title || "Conversa";
+    const p = document.createElement("span");
+    p.textContent = `${quando(s.last_at)} · ${s.trecho || s.preview || ""}`;
+    b.append(t, p);
+    b.addEventListener("click", () => retomarConversa(s.id));
+    histLista.appendChild(b);
+  }
+}
+
+async function carregarHistorico() {
+  const termo = histBusca.value.trim();
+  try {
+    const j = termo
+      ? await api("/api/sessions/buscar?q=" + encodeURIComponent(termo), { timeout: 8000 })
+      : await api("/api/sessions", { timeout: 8000 });
+    if (histBusca.value.trim() === termo) pintarHistorico(j.sessions, termo);
+  } catch (e) {
+    histLista.textContent = "Núcleo indisponível: " + e.message;
+  }
+}
+
+async function retomarConversa(sid) {
+  if (ocupado) { add("agente", "Espere a tarefa atual terminar (ou pare) para trocar de conversa."); return; }
+  try {
+    const j = await api(`/api/sessions/${encodeURIComponent(sid)}/messages`, { timeout: 15000 });
+    sessao = sid;
+    await guardarSessao();
+    try { await api(`/api/sessions/${encodeURIComponent(sid)}/activate`, { method: "POST", body: {} }); }
+    catch (e) { /* só marca a ativa; a conversa já vai pelo id */ }
+    chat.querySelectorAll(".msg").forEach(e => e.remove());
+    const msgs = j.messages || [];
+    if (vazio) vazio.style.display = msgs.length ? "none" : "";
+    for (const m of msgs) {
+      if (!m.content) continue;
+      add(m.role === "user" ? "user" : "agente", m.content);
+    }
+    histPainel.classList.add("oculto");
+    $("historico").classList.remove("on");
+    mostrarProcesso(false);
+    entrada.focus();
+  } catch (e) {
+    add("agente", "Não consegui abrir essa conversa: " + e.message);
+  }
+}
+
+$("historico").addEventListener("click", () => {
+  histPainel.classList.toggle("oculto");
+  $("historico").classList.toggle("on", !histPainel.classList.contains("oculto"));
+  if (!histPainel.classList.contains("oculto")) {
+    histBusca.value = "";
+    carregarHistorico();
+    histBusca.focus();
+  }
+});
+histBusca.addEventListener("input", () => {
+  clearTimeout(histJob);
+  histJob = setTimeout(carregarHistorico, 300);
+});
 
 /* --------------------------- contexto ------------------------------ */
 // completo=false: só atualiza a legenda (título/URL da aba) — NÃO injeta script
@@ -885,13 +976,9 @@ mic.addEventListener("click", alternarMicrofone);
   await carregarBuild();
   await ping();
   setInterval(ping, 5000);
-  const salva = await lerSessao();
-  if (salva) sessao = salva;
+  // Abre sempre numa conversa nova; as anteriores ficam no histórico (🕘).
   try {
-    const lista = await api("/api/sessions", { timeout: 5000 });
-    if (!sessao || !(lista.sessions || []).some(s => s.id === sessao)) {
-      await novaSessao();
-    }
+    await novaSessao(true);
   } catch (e) { await ping(); }
   await atualizarContexto();
   entrada.focus();

@@ -17,7 +17,8 @@
     <select id="modelo" title="Modelo de IA" aria-label="Modelo de IA"></select>
     <button id="voz" title="Ativar voz">🔇</button>
     <button id="ajustes" title="Configurações (chaves, conectores, voz…)">⚙</button>
-    <button id="nova" title="Nova conversa">+</button>
+    <button id="historico" title="Conversas anteriores (buscar e retomar)" aria-label="Histórico de conversas">🕘</button>
+<button id="nova" title="Nova conversa">+</button>
   </header>
 
   <div class="contexto" id="contexto">
@@ -33,6 +34,11 @@
       <input id="sites-novo" type="text" placeholder="exemplo.com" aria-label="Adicionar site">
       <button type="submit">Permitir</button>
     </form>
+  </section>
+  <section id="hist-painel" class="hist-painel oculto" aria-label="Conversas anteriores">
+    <div class="sites-topo">CONVERSAS ANTERIORES</div>
+    <input id="hist-busca" type="search" placeholder="Buscar no que foi conversado…" aria-label="Buscar conversas">
+    <div id="hist-lista" class="hist-lista"></div>
   </section>
 
   <main class="painel">

@@ -343,6 +343,50 @@ class EpisodicMemory:
                                 (sid,)).fetchone()
         return f"{sid} ({row[0] if row else ''})"
 
+    def conversa_nova_ao_abrir(self) -> str:
+        """App/extensão abriram: começa numa conversa nova. Se a ativa ainda está
+        vazia (ninguém escreveu nela), reaproveita — sem acumular "Conversa N"
+        vazias a cada abertura. As anteriores ficam no histórico."""
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT id, COALESCE(msg_count,0) FROM sessions WHERE active=1 "
+                "AND COALESCE(kind,'chat')='chat' LIMIT 1").fetchone()
+            if row:
+                tem = self.conn.execute(
+                    "SELECT 1 FROM episodes WHERE session_id=? AND kind='conversa' "
+                    "LIMIT 1", (row[0],)).fetchone()
+                if not row[1] and not tem:
+                    return row[0]
+            return self._create_session("")
+
+    def buscar_conversas(self, termo: str, limite: int = 40) -> list[dict]:
+        """Conversas cujo título OU conteúdo (perguntas e respostas) contém o
+        termo — para retomar uma conversa antiga pelo que se falou nela."""
+        termo = (termo or "").strip()
+        if not termo:
+            return self.listar_conversas()
+        like = f"%{termo.lower()}%"
+        achados = self.conn.execute(
+            "SELECT session_id, MAX(id), "
+            "MAX(CASE WHEN lower(input) LIKE ? THEN input ELSE output END) "
+            "FROM episodes WHERE kind='conversa' AND session_id IS NOT NULL AND "
+            "(lower(input) LIKE ? OR lower(output) LIKE ?) "
+            "GROUP BY session_id", (like, like, like)).fetchall()
+        trechos = {sid: (txt or "") for sid, _, txt in achados}
+        saida = []
+        for s in self.listar_conversas():
+            if s["id"] in trechos or termo.lower() in (s["title"] or "").lower():
+                t = trechos.get(s["id"], "")
+                i = t.lower().find(termo.lower())
+                if i >= 0:
+                    ini = max(0, i - 50)
+                    s = {**s, "trecho": ("…" if ini else "")
+                         + " ".join(t[ini:i + len(termo) + 90].split())}
+                saida.append(s)
+            if len(saida) >= limite:
+                break
+        return saida
+
     def retomar_conversa(self, sid: str) -> bool:
         with self._lock:
             existe = self.conn.execute("SELECT 1 FROM sessions WHERE id=?",
@@ -380,9 +424,9 @@ class EpisodicMemory:
                                     (titulo, sid))
         return cur.rowcount > 0
 
-    def maybe_autotitle(self, texto: str) -> None:
+    def maybe_autotitle(self, texto: str, session_id: str | None = None) -> None:
         import re as _re
-        sid = self.active_id
+        sid = session_id or self.active_id
         if not sid:
             return
         row = self.conn.execute("SELECT title FROM sessions WHERE id=?",
