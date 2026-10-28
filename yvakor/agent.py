@@ -409,7 +409,20 @@ _ALIAS_XML = {
 
 
 def _parse_acoes(raw: str, registry=None) -> list[dict]:
-    """Extrai TODAS as chamadas de ferramenta: JSON e formato DSML."""
+    """Extrai TODAS as chamadas de ferramenta: JSON e formato DSML. Chamadas
+    IDÊNTICAS na mesma resposta saem uma vez só: o DeepSeek repetia o mesmo
+    JSON duas vezes e a ação rodava em dobro (e-mail/formulário enviado 2x)."""
+    vistas, unicas = set(), []
+    for acao in _parse_acoes_brutas(raw, registry):
+        chave = json.dumps([acao.get("ferramenta"), acao.get("args")],
+                           sort_keys=True, ensure_ascii=False, default=str)
+        if chave not in vistas:
+            vistas.add(chave)
+            unicas.append(acao)
+    return unicas
+
+
+def _parse_acoes_brutas(raw: str, registry=None) -> list[dict]:
     dec = json.JSONDecoder()
     acoes, i = [], 0
     # 1) Formato DSML (DeepSeek): <｜｜DSML｜｜ invoke name="x"> ... </...>
@@ -577,6 +590,7 @@ class AgentLoop:
     # Conjunto mínimo e SEGURO quando nada casa com a mensagem.
     _BASE_SEGURA = ("pesquisa_web", "cerebro_buscar", "arquivos_listar",
                     "arquivos_ler", "http_get")
+    _SO_NUVEM = ("pensar", "tarefas_checklist")
 
     def _limitar_compacto(self, nomes: list[str], mensagem: str,
                           limite: int) -> list[str]:
@@ -591,6 +605,8 @@ class AgentLoop:
                                 "always_confirm", ()) or ())
         if len(nomes) >= len(disponiveis) > limite:
             nomes = []                           # nada casou: não é "tudo"
+        # pensar/checklist ocupariam vagas preciosas do modelo local de 5 slots
+        nomes = [n for n in nomes if n not in self._SO_NUVEM]
         if not self._ACAO_EXPLICITA.search(mensagem or ""):
             nomes = [n for n in nomes if n not in perigosas]
         if self._INTENCAO_NAVEGADOR.search(mensagem or ""):
@@ -752,6 +768,8 @@ class AgentLoop:
         should_stop() opcional: retorna True para interromper (cancelamento de
         tarefa em segundo plano) entre um passo e outro."""
         self.artefatos = []   # zera a lista desta thread (ver properties acima)
+        from yvakor.ferramentas_claude import limpar_checklist
+        limpar_checklist()    # checklist (tarefas_checklist) é por execução
         nomes = self._selecionar(
             history, self.COMPACTO_MAX_FERRAMENTAS if compacto else None)
         messages = [{"role": "system",
@@ -911,8 +929,10 @@ class AgentLoop:
 
     def _deve_verificar(self, verificou: bool, usadas: int,
                         plano: dict | None) -> bool:
+        from yvakor.ferramentas_claude import checklist_atual
         return (self.verificar and not verificou and usadas > 0
-                and (plano is not None or usadas >= self.VERIFICAR_A_PARTIR_DE))
+                and (plano is not None or bool(checklist_atual())
+                     or usadas >= self.VERIFICAR_A_PARTIR_DE))
 
     def _run_nativo(self, messages: list[dict], on_event, should_stop,
                     forcar_provider, nomes: list[str] | None = None,

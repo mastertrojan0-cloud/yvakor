@@ -19,7 +19,7 @@ from yvakor.memory.db import normalizar
 
 GRUPOS = {
     "navegador": {
-        "prefixos": ("navegador_",),
+        "prefixos": ("navegador_", "web_"),
         "palavras": ("site", "pagina", "página", "url", "navegar", "navegue",
                      "clique", "login", "web", "http", "pesquis", "baixar",
                      "download", "formulario", "formulário", "link", "aba",
@@ -51,7 +51,15 @@ GRUPOS = {
                        "navegador_extrair", "navegador_rolar",
                        "navegador_abrir", "navegador_historico",
                        "navegador_passar_mouse", "navegador_captura",
-                       "navegador_aguardar_captcha"),
+                       "navegador_aguardar_captcha", "web_ler"),
+    },
+    "web": {
+        # leitura de páginas/documentação sem abrir o navegador
+        "prefixos": ("web_",),
+        "palavras": ("artigo", "documentacao", "documentação", "docs", "wiki",
+                     "wikipedia", "noticia", "notícia", "blog", "url", "http",
+                     "https", "leia", "ler"),
+        "radicais": ("http", "www", "document", "notici", "artig"),
     },
     "mercado": {
         "prefixos": ("mercado_", "binance_", "tradingview_", "coingecko_", "cryptopanic_", "stocktwits_", "medo_"),
@@ -67,7 +75,13 @@ GRUPOS = {
         "palavras": ("arquivo", "pasta", "diretorio", "diretório", "ler",
                      "escrever", "editar", "apagar", "excluir", "mover",
                      "copiar", "zip", "compactar", "extrair", "pdf", "csv",
-                     "xlsx", "planilha", "documento", "backup", "desfazer"),
+                     "xlsx", "planilha", "documento", "backup", "desfazer",
+                     "grep", "contem", "contém", "ocorrencia", "ocorrência",
+                     "codigo", "código", "funcao", "função", "trecho",
+                     "classe", "projeto", "variavel", "variável"),
+        "radicais": ("grep", "codig", "defini", "ocorr"),
+        "prioridade": ("arquivos_grep", "arquivos_buscar", "arquivos_ler",
+                       "arquivos_editar"),
     },
     "rede": {
         "prefixos": ("rede_",),
@@ -116,7 +130,7 @@ GRUPOS = {
 }
 
 NUCLEO = ("executar_shell", "arquivos_listar", "arquivos_ler",
-          "cerebro_buscar")
+          "cerebro_buscar", "pensar", "tarefas_checklist")
 
 
 def _palavras(texto: str) -> set[str]:

@@ -176,6 +176,9 @@ class Orchestrator:
         register_notificacoes_tools(self.tools, self.notificador)
         register_builtins(self.tools)
         register_arquivos_tools(self.tools)   # acesso total ao sistema de arquivos
+        # pensar, checklist, grep e leitura web no estilo das ferramentas do Claude
+        from yvakor.ferramentas_claude import register_ferramentas_claude
+        register_ferramentas_claude(self.tools)
         # Navegador real (controle de Edge/Chrome). Se o Playwright não estiver
         # instalado, o agente continua funcionando — só sem as ferramentas web.
         # Navegadores reais (Edge + Chrome), cada um com perfil próprio.
@@ -320,6 +323,13 @@ class Orchestrator:
     def _rotulo_passo(dado: dict) -> str:
         nome = dado.get("nome", "")
         a = dado.get("args", {}) or {}
+        if nome == "tarefas_checklist":
+            from yvakor.ferramentas_claude import resumo_checklist
+            return resumo_checklist(a.get("itens"))
+        if nome == "pensar":
+            return "💭 pensando"
+        if nome == "arquivos_grep":
+            return f"🔎 procurando \"{str(a.get('padrao', ''))[:40]}\" nos arquivos"
         det = (a.get("caminho") or a.get("nome") or a.get("comando")
                or a.get("url") or a.get("doc") or "")
         det = str(det)[:60]
@@ -328,7 +338,8 @@ class Orchestrator:
             "ler_arquivo": "📄 lendo", "escrever_arquivo": "✍️ escrevendo",
             "escrever_arquivo_local": "✍️ escrevendo", "editar_arquivo_local": "✏️ editando",
             "executar_shell": "⌨️ shell", "executar_python": "🐍 python",
-            "http_get": "🌐 baixando", "validar_documento": "🔎 validando",
+            "http_get": "🌐 baixando", "web_ler": "🌐 lendo página",
+            "validar_documento": "🔎 validando",
             "converter_xlsx_para_json": "📊 convertendo",
             "gerar_proposta_html": "📝 gerando proposta",
             "extrair_log_docker": "🐳 logs docker",

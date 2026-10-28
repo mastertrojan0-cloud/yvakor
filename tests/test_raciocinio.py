@@ -56,6 +56,12 @@ def test_reflexao_orienta_sem_repetir_e_manda_parar():
     assert "IDÊNTICA" in r.registrar("f", {"a": 1}, {"ok": False})
     assert "falhas seguidas" in r.registrar("g", {}, {"ok": False})
     assert r.registrar("g", {}, {"ok": True}) == "" and r.seguidas == 0
+    # leitura estável repetida igual: avisa; navegador_ver repetido é normal
+    assert r.registrar("arquivos_listar", {"caminho": "C:/x"}, {"ok": True}) == ""
+    assert "MESMA leitura" in r.registrar("arquivos_listar", {"caminho": "C:/x"}, {"ok": True})
+    assert r.registrar("arquivos_listar", {"caminho": "C:/y"}, {"ok": True}) == ""
+    r.registrar("navegador_ver", {}, {"ok": True})
+    assert r.registrar("navegador_ver", {}, {"ok": True}) == ""
 
 
 def test_metodo_entra_no_prompt():

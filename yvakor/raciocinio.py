@@ -42,6 +42,11 @@ METODO = """
 8. RESPOSTA FINAL honesta e direta: comece pelo resultado; diga o que fez, o
    que NÃO conseguiu e por quê, e qualquer suposição feita. Sem enrolação, sem
    repetir a pergunta, sem afirmar o que as ferramentas não confirmaram.
+Ferramentas de apoio (quando estiverem na lista): `pensar` para raciocinar
+antes de uma decisão difícil ou depois de um erro; `tarefas_checklist` para
+manter o progresso de tarefas com 3+ passos visível ao usuário; `arquivos_grep`
+para achar um texto DENTRO de arquivos; `web_ler` para ler artigos e
+documentação sem abrir o navegador.
 """
 
 METODO_COMPACTO = """## MÉTODO
@@ -151,6 +156,14 @@ def pedido_verificacao(plano: dict | None) -> str:
         if plano.get("pronto_quando"):
             partes.append(f"- Pronto quando: {plano['pronto_quando']}")
         partes.append("- Passos: " + " | ".join(plano.get("passos") or []))
+    from yvakor.ferramentas_claude import ESTADOS, checklist_atual
+    lista = checklist_atual()
+    if lista:
+        partes.append("- Checklist: " + " | ".join(
+            f"{ESTADOS[i['estado']]} {i['texto']}" for i in lista))
+        if any(i["estado"] in ("pendente", "fazendo") for i in lista):
+            partes.append("  Há itens não concluídos: faça-os agora, ou diga ao "
+                          "usuário por que não foi possível.")
     partes.append(
         "Se falta um passo que ainda dá para fazer, chame a ferramenta agora. "
         "Se está concluído (ou bloqueado), escreva a RESPOSTA FINAL ao usuário "
@@ -180,15 +193,31 @@ class Reflexao:
     para anexar à observação quando algo falha (ou falha de novo)."""
 
     LIMITE_SEGUIDAS = 3
+    # Leituras cujo resultado não muda entre um passo e outro: repetir a mesma
+    # chamada só gasta passo (o teste real listou a mesma pasta duas vezes).
+    # navegador_ver fica de fora: a página muda depois de cada ação.
+    LEITURAS_ESTAVEIS = ("arquivos_listar", "arquivos_ler", "arquivos_grep",
+                         "arquivos_buscar", "arquivos_info", "web_ler",
+                         "http_get", "cerebro_buscar", "pesquisa_web",
+                         "listar_diretorio", "ler_arquivo_local")
 
     def __init__(self) -> None:
         self.falhas: dict[str, int] = {}
+        self.sucessos: set[str] = set()
         self.seguidas = 0
 
     def registrar(self, nome: str, args, resultado) -> str:
         ok = isinstance(resultado, dict) and bool(resultado.get("ok"))
         if ok:
             self.seguidas = 0
+            if nome not in self.LEITURAS_ESTAVEIS:
+                return ""
+            chave = _assinatura(nome, args)
+            if chave in self.sucessos:
+                return ("\nREFLEXÃO: você já tinha feito esta MESMA leitura com "
+                        "sucesso; o resultado não mudou. Use o que já tem e "
+                        "avance (ou responda).")
+            self.sucessos.add(chave)
             return ""
         self.seguidas += 1
         chave = _assinatura(nome, args)
