@@ -261,6 +261,31 @@ def pedido_verificacao(plano: dict | None) -> str:
     return "\n".join(partes)
 
 
+# ------------------------------------------------- dados já dados pelo usuário
+_CEP = re.compile(r"^\s*(\d{5}-?\d{3})\s*$")
+
+
+def dados_informados(history: list[dict], maximo: int = 6) -> str:
+    """Respostas curtas que o usuário já deu nesta conversa ("2", um CEP,
+    "consulta"). O modelo perdia esses dados no meio do histórico e dizia
+    "não tenho o seu CEP" dois turnos depois de recebê-lo."""
+    curtas = []
+    for item in history[:-1]:                      # a última é o pedido atual
+        texto = item.get("content")
+        if item.get("role") != "user" or not isinstance(texto, str):
+            continue
+        texto = texto.strip()
+        if not texto or len(texto) > 30:
+            continue
+        curtas.append(f"\"{texto}\" (provável CEP)" if _CEP.match(texto)
+                      else f"\"{texto}\"")
+    if not curtas:
+        return ""
+    return ("\n\n## DADOS QUE O USUÁRIO JÁ INFORMOU NESTA CONVERSA\n"
+            "Respostas curtas dele, em ordem: " + ", ".join(curtas[-maximo:])
+            + ". Use-as na tarefa; não peça de novo nem diga que não as tem.")
+
+
 # ------------------------------------------------------------------ reflexão
 def _assinatura(nome: str, args) -> str:
     try:
@@ -305,6 +330,13 @@ class Reflexao:
         ok = isinstance(resultado, dict) and bool(resultado.get("ok"))
         self.mesma_seguidas = self.mesma_seguidas + 1 if nome == self.ultima else 1
         self.ultima = nome
+        if nome == "navegador_ver" and self.mesma_seguidas >= self.LIMITE_LEITURAS:
+            # olhar a página é normal entre ações; 3 seguidas sem agir é laço
+            # (na consulta da Nio foram 5 e a tarefa acabou sem digitar o CEP)
+            return ("\nREFLEXÃO: você olhou a página {n} vezes seguidas sem agir. "
+                    "Use as refs que já tem: digite/preencha o campo (ex.: CEP), "
+                    "clique ou role AGORA; se não houver o que fazer aqui, troque "
+                    "de fonte.").format(n=self.mesma_seguidas)
         if (nome in self.LEITURAS_DE_PAGINA
                 and self.mesma_seguidas >= self.LIMITE_LEITURAS):
             self.seguidas = 0 if ok else self.seguidas

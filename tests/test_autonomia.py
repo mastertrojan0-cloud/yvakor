@@ -97,6 +97,68 @@ def test_cobra_uma_vez_so():
     assert Router.n == 2 and saida.endswith("tabela de preços.")
 
 
+PROMETEU = ("Você tem razão, o CEP **69076472** já está aqui. Vou consultar a Nio "
+            "com ele agora.\n\nDeixa eu rodar a consulta de disponibilidade e preços.")
+
+
+def test_promessa_sem_acao_e_cobrada():
+    from yvakor.agent import prometeu_sem_fazer
+    assert "PAROU" in prometeu_sem_fazer(PROMETEU, NAV)
+    assert prometeu_sem_fazer("Vou usar esse CEP agora para consultar.", NAV)
+    assert prometeu_sem_fazer("A Nio custa R$ 99,90 no seu CEP.", NAV) is None
+    assert prometeu_sem_fazer(PROMETEU, ["arquivos_ler"]) is None
+
+
+def test_loop_nativo_nao_para_na_promessa():
+    from yvakor.config import load_settings
+    from yvakor.tools.registry import ToolRegistry
+    feitos = []
+    reg = ToolRegistry(load_settings())
+    reg.register("navegador_digitar", lambda **k: feitos.append(k) or {"ok": True},
+                 "Digita.", {"texto": "str"})
+    respostas = [{"content": PROMETEU},
+                 {"content": "", "tool_calls": [{"id": "1", "function": {
+                     "name": "navegador_digitar", "arguments": '{"texto": "69076472"}'}}]},
+                 {"content": "No seu CEP a Nio tem 500 Mbps por R$ 99,90."}]
+
+    class Router:
+        def complete_tools(self, *a, **k):
+            return "fake", respostas.pop(0)
+    saida = AgentLoop(Router(), reg, max_iterations=6, nativo=True, roteador=False,
+                      raciocinio={"verificar": False}).run(
+        "t", [{"role": "user", "content": "ja mandei o cep na conversa"}])
+    assert feitos and saida.startswith("No seu CEP")
+
+
+def test_ver_a_pagina_repetidas_vezes_manda_agir():
+    r = raciocinio.Reflexao()
+    r.registrar("navegador_ver", {}, {"ok": True})
+    assert r.registrar("navegador_ver", {}, {"ok": True}) == ""
+    assert "sem agir" in r.registrar("navegador_ver", {}, {"ok": True})
+
+
+def test_dados_curtos_do_usuario_vao_para_o_prompt():
+    hist = [{"role": "user", "content": "preciso de um plano de internet barato"},
+            {"role": "assistant", "content": "..."},
+            {"role": "user", "content": "69076472"},
+            {"role": "assistant", "content": "..."},
+            {"role": "user", "content": "continua"}]
+    bloco = raciocinio.dados_informados(hist)
+    assert '"69076472" (provável CEP)' in bloco and "continua" not in bloco
+    assert raciocinio.dados_informados(hist[:1]) == ""
+    capt = {}
+
+    class Router:
+        def complete_tools(self, task, msgs, tools, forcar=None):
+            capt["system"] = msgs[0]["content"]
+            return "fake", {"content": "ok"}
+    from yvakor.config import load_settings
+    from yvakor.tools.registry import ToolRegistry
+    AgentLoop(Router(), ToolRegistry(load_settings()), nativo=True, roteador=False,
+              raciocinio={"verificar": False}).run("t", hist)
+    assert "69076472" in capt["system"]
+
+
 def test_regras_de_autonomia_no_prompt():
     from yvakor.agent import PROTOCOLO
     assert "TERMINE O TRABALHO" in raciocinio.METODO

@@ -333,6 +333,34 @@ def cobrar_autonomia(texto: str, nomes: list[str] | None,
         "em vez de fazê-lo."))
 
 
+# "Vou usar esse CEP agora… Deixa eu tentar a consulta com ele." e fim: o
+# modelo anunciava a ação como resposta final, sem chamar ferramenta, e para o
+# usuário a tarefa simplesmente parava (2x seguidas em 28/10).
+_PROMESSA = re.compile(
+    r"(\b(vou|irei) (usar|consultar|tentar|rodar|abrir|pesquisar|buscar|"
+    r"verificar|fazer|digitar|preencher|acessar|ver|checar|procurar|levantar|"
+    r"comparar|olhar|ler|continuar|seguir|come[cç]ar)\b[^.\n]{0,80}"
+    r"\b(agora|j[aá]|em seguida|a seguir|com (ele|ela|isso|esse|essa))\b|"
+    r"\bdeixa(-me| eu)\b|\b(um momento|aguarde|j[aá] volto)\b)", re.I)
+MAX_PROMESSAS = 2
+INSISTIR_PROMESSA = (
+    "Você anunciou o que vai fazer (\"{trecho}\") e encerrou a resposta SEM "
+    "chamar nenhuma ferramenta — para o usuário a tarefa PAROU aí. Não anuncie: "
+    "chame a ferramenta agora (ex.: navegador_ver e depois digitar/clicar) e "
+    "só responda quando tiver o resultado.")
+
+
+def prometeu_sem_fazer(texto: str, nomes: list[str] | None) -> str | None:
+    """Mensagem de cobrança se a resposta final só promete uma ação."""
+    if not texto or not any(n.startswith("navegador_") or n in _FERRAMENTAS_AUTONOMIA
+                            for n in (nomes or [])):
+        return None
+    m = _PROMESSA.search(texto[-400:])
+    if not m:
+        return None
+    return INSISTIR_PROMESSA.format(trecho=m.group(0).strip())
+
+
 def desistiu_sem_tentar(texto: str, nomes: list[str] | None,
                         ferramentas_usadas: int) -> bool:
     """True se a resposta final alega não conseguir usar o navegador sem que
@@ -924,7 +952,8 @@ class AgentLoop:
             history, self.COMPACTO_MAX_FERRAMENTAS if compacto else None)
         messages = [{"role": "system",
                      "content": self.system_with_tools(base_system, nomes,
-                                                       compacto)}]
+                                                       compacto)
+                     + raciocinio.dados_informados(history)}]
         messages += history
         plano = self._planejar(messages, history, on_event, forcar_provider,
                                compacto)
@@ -969,6 +998,7 @@ class AgentLoop:
         usadas = 0
         insistiu = False
         cobrou_autonomia = False
+        promessas = 0
         correcoes = 0
         feitos: dict[str, list[bool]] = {}     # ferramenta → sucesso de cada chamada
         cobrou_prova = False
@@ -1025,6 +1055,13 @@ class AgentLoop:
                     insistiu = True
                     messages.append({"role": "assistant", "content": raw})
                     messages.append({"role": "user", "content": INSISTIR_NAVEGADOR})
+                    continue
+                promessa = (None if promessas >= MAX_PROMESSAS or compacto
+                            else prometeu_sem_fazer(texto, nomes or list(self.registry.tools)))
+                if promessa:
+                    promessas += 1
+                    messages.append({"role": "assistant", "content": raw})
+                    messages.append({"role": "user", "content": promessa})
                     continue
                 # no modelo local cada passo extra custa minutos: não cobra
                 autonomia = None if cobrou_autonomia or compacto else cobrar_autonomia(
@@ -1107,6 +1144,7 @@ class AgentLoop:
         usadas = 0
         insistiu = False
         cobrou_autonomia = False
+        promessas = 0
         vazamentos = 0
         feitos: dict[str, list[bool]] = {}
         cobrou_prova = False
@@ -1162,6 +1200,13 @@ class AgentLoop:
                     insistiu = True
                     msgs.append({"role": "assistant", "content": texto})
                     msgs.append({"role": "user", "content": INSISTIR_NAVEGADOR})
+                    continue
+                promessa = (None if promessas >= MAX_PROMESSAS
+                            else prometeu_sem_fazer(texto, nomes or list(self.registry.tools)))
+                if promessa:
+                    promessas += 1
+                    msgs.append({"role": "assistant", "content": texto})
+                    msgs.append({"role": "user", "content": promessa})
                     continue
                 autonomia = None if cobrou_autonomia else cobrar_autonomia(
                     texto, nomes or list(self.registry.tools), usadas)
