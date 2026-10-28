@@ -41,6 +41,12 @@ ferramentas abaixo. Use-as de verdade; não invente ferramentas.
   correspondente imediatamente. Não peça permissão (o sistema já trata segurança).
 - Só use resposta em texto quando a ação estiver concluída ou quando o pedido for
   realmente apenas conversa/informação.
+- NÃO OFEREÇA O QUE VOCÊ MESMO PODE FAZER. Em vez de "posso tentar de novo?",
+  "se quiser, pesquiso" ou "abra o site e digite seu CEP", faça isso agora com
+  as ferramentas. Dado do usuário que está no histórico (CEP, cidade, número,
+  escolha "2") é para USAR, não para pedir de novo.
+- Preço, cotação, disponibilidade, notícia → pesquise antes de responder; não
+  responda de memória dizendo que "não tem acesso em tempo real".
 - NÃO crie nem edite arquivos para pedidos que são apenas conversa, confirmação,
   saudação ou para lembrar/repetir algo que já está no histórico. Nesses casos
   responda direto em texto. Só mexa em arquivos quando o usuário pedir um
@@ -257,6 +263,74 @@ def alegacao_sem_prova(texto: str, resultados: dict[str, list[bool]]) -> str | N
                     "certos (alvo = ref do navegador_ver, valor = texto) ou diga "
                     "claramente o que NÃO conseguiu fazer.")
     return None
+
+
+# Autonomia (consulta de planos de internet, 28/10): o agente terminava
+# oferecendo o que ele mesmo podia fazer ("Posso tentar de novo…", "se quiser,
+# pesquiso…"), mandava o usuário abrir o site e digitar o CEP que ele já tinha
+# dado, e dizia "tentei abrir a página" sem ter chamado nenhuma ferramenta.
+_OFERTA = re.compile(
+    r"(\bposso (tentar|pesquisar|buscar|procurar|abrir|consultar|verificar|"
+    r"ver|olhar|checar|rolar|acessar|ler|levantar|comparar)|"
+    r"\bse (voc[eê] )?quiser,? (eu )?(posso |tento |pesquis|busc|procur|abr|"
+    r"consult|verific|levant|compar)|"
+    r"\bquer que eu (tente|pesquise|busque|procure|abra|consulte|verifique|"
+    r"veja|compare|levante)|"
+    r"\b(voc[eê] mesmo|por conta pr[oó]pria)\b|"
+    r"\bme (mand[ae]|envi[ae]) (um )?print|"
+    r"\b(abra|acesse|entre em) [^.\n]{0,60}\b(e )?(digite|informe|coloque) )", re.I)
+# Só o usuário pode: aí devolver a ele está certo.
+_SO_USUARIO = re.compile(
+    r"(captcha|login|senha|2fa|autentica|c[oó]digo (de verifica|sms)|"
+    r"pagamento|pagar|cart[aã]o|assinar|contratar|comprar|gosto|prefer[eê]ncia)",
+    re.I)
+_ALEGA_TENTATIVA = re.compile(
+    r"\b(tentei|pesquisei|busquei|procurei|abri|acessei|consultei|verifiquei|"
+    r"naveguei|li a p[aá]gina)\b", re.I)
+_SEM_ACESSO_ATUAL = re.compile(
+    r"n[aã]o (tenho|possuo) acesso[^.\n]{0,50}(tempo real|atualiza|internet|web|"
+    r"online|pre[cç]os?)", re.I)
+_FERRAMENTAS_AUTONOMIA = ("pesquisa_web", "web_ler", "http_get")
+COBRAR_AUTONOMIA = (
+    "AUTONOMIA: {motivo} Você tem as ferramentas para isso agora. Faça o "
+    "próximo passo seguro VOCÊ MESMO (pesquisar, abrir o site, navegador_ver, "
+    "digitar o CEP/termo no campo, clicar, rolar, trocar de fonte) e só "
+    "responda com o resultado. Devolva ao usuário apenas o que só ele pode "
+    "fazer (login, captcha, pagamento, escolha pessoal). Se já esgotou as "
+    "alternativas, diga o que tentou de fato e o bloqueio, sem oferecer.")
+
+
+def cobrar_autonomia(texto: str, nomes: list[str] | None,
+                     ferramentas_usadas: int) -> str | None:
+    """Mensagem de cobrança quando a resposta final oferece/delega um passo
+    seguro que o agente mesmo podia fazer, alega ter tentado sem ter chamado
+    ferramenta, ou diz não ter acesso a dado atual tendo pesquisa à mão."""
+    if not texto:
+        return None
+    nomes = nomes or []
+    if not any(n.startswith("navegador_") or n in _FERRAMENTAS_AUTONOMIA
+               for n in nomes):
+        return None
+    if not ferramentas_usadas and _ALEGA_TENTATIVA.search(texto):
+        return COBRAR_AUTONOMIA.format(motivo=(
+            "sua resposta diz que tentou/pesquisou/abriu, mas nesta mensagem "
+            "NENHUMA ferramenta foi chamada."))
+    if not ferramentas_usadas and _SEM_ACESSO_ATUAL.search(texto):
+        return COBRAR_AUTONOMIA.format(motivo=(
+            "você disse não ter acesso a informação atual sem pesquisar."))
+    # A oferta costuma vir no fim; olhar só o final evita pegar citações.
+    fim = texto[-500:]
+    m = _OFERTA.search(fim)
+    if not m:
+        return None
+    # contexto em volta da oferta, sem a própria oferta ("me envie um print"
+    # não é um envio arriscado)
+    trecho = fim[max(0, m.start() - 160):m.start()] + " " + fim[m.end():m.end() + 160]
+    if _SO_USUARIO.search(trecho) or raciocinio.pedido_arriscado(trecho):
+        return None
+    return COBRAR_AUTONOMIA.format(motivo=(
+        f"você terminou oferecendo/delegando um passo (\"{m.group(0).strip()}\") "
+        "em vez de fazê-lo."))
 
 
 def desistiu_sem_tentar(texto: str, nomes: list[str] | None,
@@ -894,6 +968,7 @@ class AgentLoop:
                      if compacto else {})
         usadas = 0
         insistiu = False
+        cobrou_autonomia = False
         correcoes = 0
         feitos: dict[str, list[bool]] = {}     # ferramenta → sucesso de cada chamada
         cobrou_prova = False
@@ -950,6 +1025,14 @@ class AgentLoop:
                     insistiu = True
                     messages.append({"role": "assistant", "content": raw})
                     messages.append({"role": "user", "content": INSISTIR_NAVEGADOR})
+                    continue
+                # no modelo local cada passo extra custa minutos: não cobra
+                autonomia = None if cobrou_autonomia or compacto else cobrar_autonomia(
+                    texto, nomes or list(self.registry.tools), usadas)
+                if autonomia:
+                    cobrou_autonomia = True
+                    messages.append({"role": "assistant", "content": raw})
+                    messages.append({"role": "user", "content": autonomia})
                     continue
                 cobranca = alegacao_sem_prova(texto, feitos)
                 if cobranca and not cobrou_prova:
@@ -1023,6 +1106,7 @@ class AgentLoop:
         inicio_run = time.time()
         usadas = 0
         insistiu = False
+        cobrou_autonomia = False
         vazamentos = 0
         feitos: dict[str, list[bool]] = {}
         cobrou_prova = False
@@ -1078,6 +1162,13 @@ class AgentLoop:
                     insistiu = True
                     msgs.append({"role": "assistant", "content": texto})
                     msgs.append({"role": "user", "content": INSISTIR_NAVEGADOR})
+                    continue
+                autonomia = None if cobrou_autonomia else cobrar_autonomia(
+                    texto, nomes or list(self.registry.tools), usadas)
+                if autonomia:
+                    cobrou_autonomia = True
+                    msgs.append({"role": "assistant", "content": texto})
+                    msgs.append({"role": "user", "content": autonomia})
                     continue
                 cobranca = alegacao_sem_prova(texto, feitos)
                 if cobranca and not cobrou_prova:

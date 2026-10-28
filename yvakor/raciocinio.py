@@ -39,7 +39,15 @@ METODO = """
    resultado existe (arquivo criado, página mudou, valor aparece na tela).
 7. CUIDADO com o irreversível ou externo (enviar, comprar, apagar, publicar):
    faça exatamente o que foi pedido, nada além.
-8. RESPOSTA FINAL honesta e direta: comece pelo resultado; diga o que fez, o
+8. TERMINE O TRABALHO, NÃO OFEREÇA. Se o próximo passo é seguro (pesquisar,
+   abrir, ler, rolar, digitar um CEP ou termo de busca, comparar), FAÇA antes
+   de responder — não termine com "posso tentar…?", "se quiser, eu pesquiso…"
+   nem mande o usuário fazer o que você consegue fazer. Devolva ao usuário só
+   o que é dele: login/senha, captcha, pagamento, envio/compra, gosto pessoal.
+9. MENSAGEM CURTA = CONTINUAÇÃO. "2", "sim", um CEP, um número ou "consulta"
+   respondem à sua última pergunta ou retomam a tarefa anterior: use o dado e
+   siga a tarefa, sem pedir de novo o que já foi dito.
+10. RESPOSTA FINAL honesta e direta: comece pelo resultado; diga o que fez, o
    que NÃO conseguiu e por quê, e qualquer suposição feita. Sem enrolação, sem
    repetir a pergunta, sem afirmar o que as ferramentas não confirmaram.
 Ferramentas de apoio (quando estiverem na lista): `pensar` para raciocinar
@@ -53,6 +61,7 @@ METODO_COMPACTO = """## MÉTODO
 - Descubra com ferramentas em vez de chutar; não invente resultados.
 - Um passo por vez; se falhar, mude a abordagem (não repita igual).
 - Só diga que fez o que uma observação confirmou; diga o que não conseguiu.
+- Faça o próximo passo seguro em vez de oferecer ("posso…?", "se quiser…").
 """
 
 
@@ -279,13 +288,32 @@ class Reflexao:
                          "http_get", "cerebro_buscar", "pesquisa_web",
                          "listar_diretorio", "ler_arquivo_local")
 
+    # Leituras da mesma página com argumentos levemente diferentes (seletor
+    # body/main, texto/html…): na consulta de planos da Nio foram 8 extrações
+    # seguidas de uma página que só mostra preço depois de digitar o CEP.
+    LEITURAS_DE_PAGINA = ("navegador_extrair", "web_ler", "http_get")
+    LIMITE_LEITURAS = 3
+
     def __init__(self) -> None:
         self.falhas: dict[str, int] = {}
         self.sucessos: set[str] = set()
         self.seguidas = 0
+        self.ultima = ""
+        self.mesma_seguidas = 0
 
     def registrar(self, nome: str, args, resultado) -> str:
         ok = isinstance(resultado, dict) and bool(resultado.get("ok"))
+        self.mesma_seguidas = self.mesma_seguidas + 1 if nome == self.ultima else 1
+        self.ultima = nome
+        if (nome in self.LEITURAS_DE_PAGINA
+                and self.mesma_seguidas >= self.LIMITE_LEITURAS):
+            self.seguidas = 0 if ok else self.seguidas
+            return ("\nREFLEXÃO: {n} leituras seguidas com {f}. Ler de novo não "
+                    "vai mostrar o que falta: se o dado depende de interação "
+                    "(digitar CEP/busca, clicar em 'ver planos', rolar), use "
+                    "navegador_ver para achar o campo e AJA nele; senão troque de "
+                    "fonte (outro site, pesquisa_web). Não extraia esta página de novo."
+                    ).format(n=self.mesma_seguidas, f=nome)
         if ok:
             self.seguidas = 0
             if nome not in self.LEITURAS_ESTAVEIS:

@@ -826,7 +826,8 @@ class Orchestrator:
                     "não está nele.\n"
                     "- Cite a seção/título quando ajudar a localizar a informação.\n"
                     "- Se a resposta não estiver na página, diga claramente e "
-                    "ofereça o próximo passo.\n"
+                    "faça você o próximo passo com as ferramentas (rolar, "
+                    "clicar, buscar em outra fonte) em vez de oferecê-lo.\n"
                     "- A página já foi lida automaticamente. NUNCA peça print, "
                     "screenshot ou para o usuário colar o conteúdo; analise o "
                     "contexto recebido.")
