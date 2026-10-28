@@ -203,7 +203,13 @@ class LLMRouter:
 
     @staticmethod
     def _fatal(exc: Exception) -> bool:
-        return bool(getattr(exc, "fatal", False)) or bool(_FATAL.search(str(exc)))
+        if getattr(exc, "fatal", False):
+            return True
+        # 429 por minuto traz "quota" no texto mas volta em segundos: não é
+        # fatal (o adaptador já marca fatal a cota do DIA esgotada).
+        if getattr(exc, "codigo", None) == 429:
+            return False
+        return bool(_FATAL.search(str(exc)))
 
     def _falhou(self, nome: str, exc: Exception) -> None:
         fatal = self._fatal(exc)
@@ -259,9 +265,12 @@ class LLMRouter:
             if self._em_cooldown(nome) and not forcar:
                 continue
             try:
-                self.providers[nome].chat_messages(
-                    [{"role": "user", "content": "ok"}],
-                    timeout=10, max_tokens=1)
+                p = self.providers[nome]
+                if hasattr(p, "ping"):
+                    p.ping(timeout=10)
+                else:
+                    p.chat_messages([{"role": "user", "content": "ok"}],
+                                    timeout=10, max_tokens=1)
                 self._ok(nome)
                 self._probe_ok_ate = time.time() + self.PROBE_TTL
                 return True
@@ -314,9 +323,19 @@ class LLMRouter:
         ultimo = None
         plano = None
         ordem = self._ordem(task_type, forcar)
+        # Loop de ferramentas: o 3B em CPU leva ~110 s por passo com o prompt
+        # completo e estoura o timeout de 50 s — cair nele no meio da tarefa
+        # só atrasava o erro. Com nuvem na fila, falha rápido e o agente segue
+        # o próprio fallback (protocolo compacto) se nada rodou ainda.
+        nuvem = [p for p in ordem if p.name != "ollama"]
+        ordem = nuvem or ordem
         if self.otim is not None and self.otim.ativo:
             try:
-                plano = self.otim.planejar(task_type, messages, ordem, self.modo, forcar)
+                # Ferramentas seguem a prioridade declarada (fallback_order /
+                # modo): trocar de nuvem por custo a cada passo esbarrava no
+                # limite por minuto do Gemini grátis no meio da tarefa.
+                plano = self.otim.planejar(task_type, messages, ordem, self.modo, forcar,
+                                           ranquear=False)
                 ordem = plano.ordem
             except Exception as exc:
                 _log.warning("otimizador (tools) falhou: %s", exc)

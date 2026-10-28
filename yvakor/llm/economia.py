@@ -718,7 +718,7 @@ class Otimizador:
 
     # ---------------- planejamento ----------------
     def planejar(self, tarefa: str, mensagens: list[dict], ordem_base: list, modo: str = "auto",
-                 forcar: str | None = None) -> Plano:
+                 forcar: str | None = None, ranquear: bool = True) -> Plano:
         dif = complexidade(mensagens, tarefa)
         faixa = self.faixa(dif)
         zona = self.zona()
@@ -739,8 +739,10 @@ class Otimizador:
             motivo.append("orçamento crítico: local primeiro, nuvem de reserva")
         elif modo == "auto" and not forcar and locais and nuvens:
             ordem = self._decidir(locais, nuvens, tarefa, dif, faixa, zona, mensagens, motivo)
-        # várias nuvens conectadas: a de menor custo esperado por sucesso vem antes
-        if not forcar and len(nuvens) > 1:
+        # várias nuvens conectadas: a de menor custo esperado por sucesso vem
+        # antes — só no modo Automático. Nos modos DeepSeek/Gemini o usuário
+        # escolheu quem vem primeiro (antes o ranque passava por cima disso).
+        if ranquear and modo == "auto" and not forcar and len(nuvens) > 1:
             ranque = iter(sorted(nuvens, key=self._custo_por_sucesso(faixa)))
             ordem = [next(ranque) if not self.eh_local(p.name) else p for p in ordem]
 

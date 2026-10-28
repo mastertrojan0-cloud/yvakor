@@ -55,9 +55,14 @@ llm:
     gemini:
       base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
       model: "gemini-flash-latest"
+      # Sobrecarga (503) ou modelo desativado (404): tenta estes, nesta ordem,
+      # antes de o roteador passar para o próximo provedor. Em 28/10 quase
+      # todos os Flash davam 503; os "lite" respondiam (~12 s por chamada).
+      modelos_reserva: ["gemini-3.5-flash", "gemini-flash-lite-latest"]
       api_key_env: "GEMINI_API_KEY"
       temperature: 1.0             # o Google recomenda 1.0 nos Gemini 3 (abaixo disso pode entrar em laço)
       max_tokens: 8192             # o "pensamento" conta dentro deste teto
+      timeout_s: 45                # sobrecarregado ele trava (120 s no teste): melhor cair para o próximo
       extra:
         reasoning_effort: "low"    # pensa pouco: mais rápido e não come a saída
     # Ollama local — fallback e tarefas simples (sem custo de API).
@@ -91,8 +96,10 @@ llm:
     # Preços em USD por 1 milhão de tokens — CONFIRA na página de preços da API.
     precos_usd_por_milhao:
       deepseek: {entrada: 0.28, cache: 0.028, saida: 0.42}
-      # gemini: sem preço aqui = o plano grátis do AI Studio não entra no
-      # orçamento em US$. Se ativar cobrança, preencha com a tabela do Google.
+      # Plano grátis do AI Studio = custo zero (sem esta linha o otimizador
+      # cobraria o Gemini com o preço do DeepSeek). Se ativar cobrança no
+      # Google, troque pelos valores da tabela de preços dele.
+      gemini: {entrada: 0.0, cache: 0.0, saida: 0.0}
     orcamento_prompt_tokens: {local: 1800, nuvem: 7000}
 
   # Roteador: LOCAL primeiro, DeepSeek para tarefas mais profundas.

@@ -30,7 +30,8 @@ class LLMProvider:
                  temperature: float = 0.3, max_tokens: int = 4096,
                  timeout: float = 120, num_thread: int | None = None,
                  keep_alive: str = "5m", num_ctx: int | None = None,
-                 extra: dict | None = None, precisa_chave: bool = False):
+                 extra: dict | None = None, precisa_chave: bool = False,
+                 modelos_reserva: list[str] | None = None):
         self.name = name
         # Campos a mais no corpo da requisição, específicos do provedor (ex.:
         # Gemini: reasoning_effort, para o "pensamento" não comer o teto de saída).
@@ -38,6 +39,8 @@ class LLMProvider:
         # Provedor de nuvem que só funciona com chave: sem ela fica fora da
         # rota (senão cada tarefa levava um 401 e 30 min de cooldown).
         self.precisa_chave = precisa_chave
+        self.modelos_reserva: list[str] = list(modelos_reserva or [])
+        self.modelo_usado = model
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
@@ -96,21 +99,30 @@ class LLMProvider:
             with urllib.request.urlopen(req, timeout=timeout or self.timeout) as resp:
                 bruto = resp.read().decode("utf-8", "replace")
         except urllib.error.HTTPError as exc:
-            corpo = ""
+            inteiro = ""
             try:
-                corpo = exc.read().decode("utf-8", "replace")[:300]
+                inteiro = exc.read().decode("utf-8", "replace")
             except Exception:
                 pass
+            corpo = inteiro[:300]
             espera = None
             try:
                 ra = exc.headers.get("Retry-After") if exc.headers else None
                 espera = float(ra) if ra else None
             except (TypeError, ValueError):
                 espera = None
+            fatal = exc.code in (401, 402, 403)
+            if exc.code == 429:
+                # Gemini (plano grátis): limite por minuto vem com "retryDelay"
+                # no corpo, depois dos 300 primeiros caracteres; a cota do DIA
+                # esgotada ("PerDay") não volta em segundos.
+                m = re.search(r'"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"', inteiro)
+                if m and espera is None:
+                    espera = float(m.group(1))
+                fatal = "PerDay" in inteiro
             raise ProviderErro(
                 f"{self.name} HTTP {exc.code}: {corpo or exc.reason}",
-                codigo=exc.code, fatal=exc.code in (401, 402, 403),
-                espera_s=espera) from exc
+                codigo=exc.code, fatal=fatal, espera_s=espera) from exc
         except urllib.error.URLError as exc:
             raise ProviderErro(f"{self.name} indisponível: {exc.reason}") from exc
         except TimeoutError as exc:
@@ -131,9 +143,59 @@ class LLMProvider:
                     str(msg), re.I)))
         return data
 
+    # O Gemini 3 devolve cada chamada de ferramenta com uma "thought_signature"
+    # (em extra_content.google) e exige que ela volte no histórico. Quando a
+    # tarefa começou em outro provedor (fallback DeepSeek → Gemini no meio),
+    # as chamadas antigas não têm assinatura: o Google aceita este valor
+    # neutro para histórico vindo de outro modelo.
+    ASSINATURA_NEUTRA = "skip_thought_signature_validator"
+
+    def _eh_google(self) -> bool:
+        return "googleapis.com" in self.base_url
+
+    def _mensagens_para_o_provedor(self, messages: list[dict]) -> list[dict]:
+        """Ajusta as chamadas de ferramenta do histórico para este provedor:
+        no Gemini, completa a assinatura que falta; nos outros, tira o campo
+        extra_content que só o Google entende."""
+        google = self._eh_google()
+        saida = []
+        for m in messages:
+            chamadas = m.get("tool_calls") if isinstance(m, dict) else None
+            if not chamadas:
+                saida.append(m)
+                continue
+            novas = []
+            for tc in chamadas:
+                if not isinstance(tc, dict):
+                    novas.append(tc)
+                elif google and not ((tc.get("extra_content") or {}).get("google") or {}).get(
+                        "thought_signature"):
+                    novas.append({**tc, "extra_content": {"google": {
+                        "thought_signature": self.ASSINATURA_NEUTRA}}})
+                elif not google and "extra_content" in tc:
+                    novas.append({k: v for k, v in tc.items() if k != "extra_content"})
+                else:
+                    novas.append(tc)
+            saida.append({**m, "tool_calls": novas})
+        return saida
+
     def _post(self, payload: dict, timeout: float | None = None) -> dict:
-        """Endpoint OpenAI-compatível (DeepSeek e Ollama /v1)."""
-        data = self._post_bruto(self._url(), payload, timeout)
+        """Endpoint OpenAI-compatível (DeepSeek, Gemini e Ollama /v1).
+        Com `modelos_reserva`, um modelo sobrecarregado (503) ou desativado
+        (404) cede a vez ao próximo do MESMO provedor (no Gemini, em 28/10,
+        quase todos os Flash davam 503 e só os "lite" respondiam)."""
+        if isinstance(payload.get("messages"), list):
+            payload = {**payload, "messages": self._mensagens_para_o_provedor(payload["messages"])}
+        modelos = [payload.get("model") or self.model] + [
+            m for m in self.modelos_reserva if m != payload.get("model")]
+        for i, modelo in enumerate(modelos):
+            try:
+                data = self._post_bruto(self._url(), {**payload, "model": modelo}, timeout)
+                break
+            except ProviderErro as exc:
+                if exc.codigo not in (404, 503) or i == len(modelos) - 1:
+                    raise
+        self.modelo_usado = modelo
         if not (data.get("choices")):
             raise ProviderErro(f"{self.name}: resposta sem 'choices'")
         self._anotar_uso(data)
@@ -178,6 +240,18 @@ class LLMProvider:
         # custa segundos) e refazer travaria a máquina.
         local = bool(self.num_thread) or "ollama" in self.name or "11434" in self.base_url
         return not local and (self.ultimo_uso or {}).get("finish") in ("length", "max_tokens")
+
+    def ping(self, timeout: float = 10) -> None:
+        """Teste barato de que o provedor responde (chave, saldo, rede).
+        Não passa pela guarda de resposta cortada nem exige conteúdo: com
+        max_tokens=1 a resposta é sempre "cortada" (e o Gemini, que pensa
+        antes, devolve texto vazio) — antes isso refazia o teste com o teto
+        cheio ou punha o provedor em cooldown por "resposta vazia"."""
+        if self.num_thread:
+            self._chat_ollama_nativo([{"role": "user", "content": "ok"}], timeout, 1)
+            return
+        self._post({**self.extra, "model": self.model, "max_tokens": 1,
+                    "messages": [{"role": "user", "content": "ok"}]}, timeout=timeout)
 
     def _acumular(self, antes: dict | None) -> None:
         """Soma o uso das chamadas extras ao da primeira (custo real)."""
@@ -269,6 +343,7 @@ def build_provider(name: str, cfg: dict) -> LLMProvider:
         num_ctx=(int(cfg["num_ctx"]) if cfg.get("num_ctx") else None),
         extra=cfg.get("extra") if isinstance(cfg.get("extra"), dict) else None,
         precisa_chave="api_key_env" in cfg,
+        modelos_reserva=[str(m) for m in cfg.get("modelos_reserva") or []],
     )
 
 
