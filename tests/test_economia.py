@@ -257,7 +257,12 @@ def test_max_tokens_comeca_pelo_padrao_da_tarefa_e_adapta_ao_p90_real():
     for n in [200] * 20:
         r.otim.livro.registrar(provedor="deepseek", tarefa="resposta_simples", origem="api",
                                tok_out=n, ok=1, tok_in=50)
-    assert 64 <= r.otim.max_saida("deepseek", "resposta_simples", 4096) <= 300  # ≈ p90 (200)×1.3 + 32
+    # histórico curto não derruba o teto abaixo do padrão (cortava respostas longas)
+    assert r.otim.max_saida("deepseek", "resposta_simples", 4096) == E.TETO_SAIDA_PADRAO["resposta_simples"]
+    for n in [800] * 20:
+        r.otim.livro.registrar(provedor="deepseek", tarefa="resposta_simples", origem="api",
+                               tok_out=n, ok=1, tok_in=50)
+    assert r.otim.max_saida("deepseek", "resposta_simples", 4096) == 800 * 13 // 10 + 32  # sobe pelo p90
 
 
 def test_custo_usa_tokens_reais_e_o_desconto_de_cache_de_prefixo():

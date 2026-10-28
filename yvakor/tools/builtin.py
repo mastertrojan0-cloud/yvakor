@@ -85,10 +85,26 @@ def _validar_cnpj(n: str) -> dict:
 # ----------------------------------------------------------------------- #
 # Web — GET de leitura (pesquisa, enriquecimento de lead)
 # ----------------------------------------------------------------------- #
+_DOMINIO = re.compile(r"^(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(:\d+)?([/?#].*)?$", re.I)
+
+
+def normalizar_url(url) -> str | None:
+    """"sefaz.am.gov.br/x" → "https://sefaz.am.gov.br/x". None se não parece
+    um endereço web (o modelo às vezes manda o nome do site ou nada)."""
+    u = str(url or "").strip().strip("<>\"'")
+    if u.lower().startswith(("http://", "https://")):
+        return u
+    if u.startswith("//"):
+        u = u[2:]
+    return "https://" + u if _DOMINIO.match(u) else None
+
+
 def http_get(url: str, max_chars: int = 8000) -> dict:
     """GET simples; devolve texto truncado. Apenas leitura (sem POST)."""
-    if not url.lower().startswith(("http://", "https://")):
-        return {"ok": False, "erro": "url deve começar com http(s)://"}
+    url = normalizar_url(url)
+    if not url:
+        return {"ok": False, "erro": "url inválida: passe o endereço completo, "
+                                     "ex.: https://site.com.br/pagina"}
     req = urllib.request.Request(url, headers={"User-Agent": "YVAKOR/1.0"})
     with urllib.request.urlopen(req, timeout=30) as resp:
         raw = resp.read(max_chars * 4).decode("utf-8", errors="replace")

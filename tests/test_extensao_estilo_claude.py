@@ -107,7 +107,7 @@ def test_process_entrega_should_stop_que_enxerga_o_parar_e_limpa_ao_fim():
 def test_endpoint_cancelar_exige_token_e_chama_o_agente():
     import yvakor.server as S
     chamado = []
-    agente = SimpleNamespace(cancelar=lambda sid=None: chamado.append(sid) or ["S1"])
+    agente = SimpleNamespace(cancelar=lambda sid=None, origem="": chamado.append(sid) or ["S1"])
     original = S.get_agent
     S.get_agent = lambda: agente
     srv = ThreadingHTTPServer(("127.0.0.1", 0), S.Handler)

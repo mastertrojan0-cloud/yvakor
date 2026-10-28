@@ -644,13 +644,18 @@ class Otimizador:
 
     # ---------------- teto de saída ----------------
     def max_saida(self, nome: str, tarefa: str, teto_provedor: int) -> int:
+        # O teto é só um LIMITE (paga-se o que é gerado), então o aprendido
+        # nunca desce abaixo do padrão da tarefa: o histórico do agente é quase
+        # todo chamada curta de ferramenta e o p90 caía para ~350 tokens,
+        # cortando a resposta final no meio da frase.
+        piso = TETO_SAIDA_PADRAO.get(tarefa, 900)
         hist = self.livro.historico_saida(nome, tarefa)
         if len(hist) >= 8:
             hist = sorted(hist)
             p90 = hist[min(len(hist) - 1, int(len(hist) * 0.9))]
-            alvo = int(p90 * 1.3) + 32
+            alvo = max(piso, int(p90 * 1.3) + 32)
         else:
-            alvo = TETO_SAIDA_PADRAO.get(tarefa, 900)
+            alvo = piso
         return max(64, min(int(teto_provedor or 4096), alvo))
 
     # ---------------- cache ----------------

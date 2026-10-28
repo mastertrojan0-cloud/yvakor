@@ -868,19 +868,35 @@ try {
 consumirPedidoExterno();
 // Parar: cancela a execução no núcleo (o agente confere entre os passos; uma
 // confirmação pendente é negada e um comando esperando o navegador aborta).
-async function pararTarefa() {
+async function pararTarefa(origem) {
   enviar.textContent = "…";
   procStatus.textContent = "parando…";
   try {
-    await api("/api/chat/cancelar", { method: "POST", body: { session: sessao }, timeout: 5000 });
+    await api("/api/chat/cancelar", { method: "POST",
+      body: { session: sessao, origem: origem || "botão ■ do painel" }, timeout: 5000 });
   } catch (e) {
     add("agente", "Não consegui parar a tarefa: " + e.message);
   }
   try { chrome.runtime.sendMessage({ tipo: "fim_tarefa" }); } catch (e) {}
 }
 enviar.addEventListener("click", () => (ocupado ? pararTarefa() : enviarMensagem()));
+// Esc só para com DOIS toques seguidos: um Esc solto (fechar menu, desistir
+// de digitar) interrompia a tarefa sem o usuário perceber.
+const ESC_JANELA_MS = 1500;
+let escArmado = 0;
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && ocupado && $("confirmacao").classList.contains("oculto")) pararTarefa();
+  if (e.key !== "Escape" || !ocupado || !$("confirmacao").classList.contains("oculto")) return;
+  if (Date.now() - escArmado < ESC_JANELA_MS) {
+    escArmado = 0;
+    pararTarefa("tecla Esc (2x)");
+    return;
+  }
+  escArmado = Date.now();
+  const antes = procStatus.textContent;
+  procStatus.textContent = "Esc de novo para parar";
+  setTimeout(() => {
+    if (procStatus.textContent === "Esc de novo para parar") procStatus.textContent = antes;
+  }, ESC_JANELA_MS);
 });
 $("nova").addEventListener("click", limparConversa);
 $("ajustes").addEventListener("click", () => {

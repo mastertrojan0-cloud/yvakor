@@ -228,6 +228,13 @@ _ALEGACOES = (
 )
 
 
+# Resposta quando o usuário aperta Parar: diz o que houve e como retomar
+# (antes era só "interrompida a pedido do usuário", e quem apertou sem
+# querer não entendia por que a tarefa sumiu).
+MSG_INTERROMPIDA = ("⏹ Tarefa interrompida: recebi o comando Parar (botão Parar da "
+                    "página, ■ do painel ou Esc). O que já foi feito ficou no histórico; "
+                    "diga \"continue\" para eu retomar de onde parei.")
+
 AVISO_SEM_PROVA = ("⚠️ Atenção: as ferramentas NÃO confirmaram a ação descrita "
                    "abaixo (as tentativas falharam). Confira na página antes de "
                    "confiar nesta resposta.\n\n")
@@ -304,6 +311,8 @@ _ALIAS_FERRAMENTA = {
 # "aba"): o coagir descartava e a ferramenta falhava por falta de argumento.
 _ALIAS_ARGS = {"query": "termo", "q": "termo", "busca": "termo", "texto_busca": "termo",
                "tab_id": "aba", "tab": "aba", "tabId": "aba", "link": "url",
+               "endereco": "url", "endereço": "url", "site": "url", "href": "url",
+               "address": "url", "pagina": "url", "página": "url", "uri": "url",
                # alvo de clique/preenchimento (o modelo usa a ref do navegador_ver)
                "ref": "alvo", "seletor": "alvo", "selector": "alvo", "elemento": "alvo",
                "element": "alvo", "target": "alvo", "campo": "alvo", "botao": "alvo",
@@ -892,7 +901,7 @@ class AgentLoop:
         verificou = False
         for _ in range(max_passos):
             if should_stop is not None and should_stop():
-                return "⏹ Tarefa interrompida a pedido do usuário."
+                return MSG_INTERROMPIDA
             if time.time() - inicio_run > limite_s:
                 aviso = (f"⏹ Interrompi a tarefa: excedi o limite de "
                          f"{limite_s}s. O que já foi feito está no histórico.")
@@ -1021,7 +1030,7 @@ class AgentLoop:
         verificou = False
         for _ in range(self.max_iterations):
             if should_stop is not None and should_stop():
-                return "⏹ Tarefa interrompida a pedido do usuário."
+                return MSG_INTERROMPIDA
             if time.time() - inicio_run > self.timeout_s:
                 return (f"⏹ Interrompi a tarefa: excedi o limite de "
                         f"{self.timeout_s}s. O que já foi feito está no histórico.")
@@ -1095,7 +1104,16 @@ class AgentLoop:
                 try:
                     args = json.loads(fn.get("arguments") or "{}")
                 except Exception:
-                    args = {}
+                    # Argumentos ilegíveis (ex.: cortados pelo limite de saída):
+                    # executar com {} rodava a ferramenta sem o alvo (web_ler
+                    # sem url). Não executa e pede a chamada de novo.
+                    msgs.append({"role": "tool", "tool_call_id": tc.get("id", "yvakor"),
+                                 "content": json.dumps({
+                                     "ok": False, "error": "argumentos da chamada vieram "
+                                     "incompletos/ilegíveis; NADA foi executado. Refaça a "
+                                     "chamada com os argumentos completos."},
+                                     ensure_ascii=False)})
+                    continue
                 args = _alias_args(self.registry, nome, args if isinstance(args, dict) else {})
                 if "campos" not in args:            # o run expande "campos" (vários)
                     args = self.registry.coagir(nome, args)

@@ -366,8 +366,11 @@ class _Leitor(HTMLParser):
 def web_ler(url: str = "", inicio: int = 0, max_chars: int = 12000,
             links: bool = True) -> dict:
     """Baixa a página e devolve o texto legível em markdown, paginável."""
-    if not str(url).lower().startswith(("http://", "https://")):
-        return {"ok": False, "error": "url deve começar com http(s)://"}
+    from yvakor.tools.builtin import normalizar_url
+    url = normalizar_url(url)
+    if not url:
+        return {"ok": False, "error": "url inválida: passe o endereço completo, "
+                                      "ex.: https://site.com.br/pagina"}
     req = urllib.request.Request(url, headers={
         "User-Agent": "YVAKOR/1.0", "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.6"})
     try:

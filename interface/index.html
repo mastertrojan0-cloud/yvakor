@@ -1326,7 +1326,7 @@ async function pararTarefa(){
   enviar.textContent = '…';
   try{
     await fetch('/api/chat/cancelar', {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({session: conversaAtiva})});
+      body: JSON.stringify({session: conversaAtiva, origem: 'botão Parar da web'})});
   }catch(e){ add('sistema', null, 'Não consegui parar: ' + e.message); }
 }
 

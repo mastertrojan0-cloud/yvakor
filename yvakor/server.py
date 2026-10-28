@@ -1560,7 +1560,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, {"ok": True, "mcp": _mcp_snapshot(ag)})
 
             if self.path == "/api/chat/cancelar":
-                alvos = ag.cancelar(str(data.get("session") or "") or None)
+                alvos = ag.cancelar(str(data.get("session") or "") or None,
+                                    origem=str(data.get("origem") or "")[:40])
                 return self._json(200, {"ok": True, "cancelados": alvos})
 
             # Escolha do modelo: {"modo": local|auto|deepseek, "local": "<nome>"}

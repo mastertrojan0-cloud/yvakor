@@ -99,19 +99,25 @@ class ToolRegistry:
         return {k: v for k, v in kwargs.items() if k in spec}
 
     def _obrigatorios_faltando(self, name: str, kwargs: dict) -> list[str]:
-        """Só para funções que aceitam **kwargs (as ferramentas da extensão):
-        nelas a falta de um argumento NÃO gera TypeError — a chamada ia sem o
-        alvo, voltava "ok" e o modelo afirmava ter preenchido/clicado."""
+        """Argumento obrigatório (na especificação) ausente ou vazio, quando a
+        falta NÃO geraria TypeError: funções com **kwargs (ferramentas da
+        extensão) ou com padrão vazio (ex.: web_ler(url="")). Antes a chamada
+        ia sem o alvo e o modelo seguia como se tivesse funcionado."""
         import inspect
         try:
-            params = inspect.signature(self.tools[name]).parameters.values()
+            params = inspect.signature(self.tools[name]).parameters
         except (TypeError, ValueError):
             return []
-        if not any(p.kind == p.VAR_KEYWORD for p in params):
-            return []
+        livre = any(p.kind == p.VAR_KEYWORD for p in params.values())
         spec = (self.specs.get(name) or {}).get("args") or {}
+
+        def silencioso(k: str) -> bool:
+            p = params.get(k)
+            return livre if p is None else p.default in ("", None)
+
         return [k for k, t in spec.items()
-                if not str(t).endswith("?") and kwargs.get(k) in (None, "")]
+                if not str(t).endswith("?") and kwargs.get(k) in (None, "")
+                and silencioso(k)]
 
     def _varios_campos(self, name: str, kwargs: dict) -> dict | None:
         """{"campos": [{"seletor"/"alvo": …, "valor": …}, …]} — formato que o

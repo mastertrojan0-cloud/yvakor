@@ -359,7 +359,8 @@ chrome.runtime.onMessage.addListener((msg, _remetente, responder) => {
   if (!msg) return;
   if (msg.tipo === "parar") {
     (async () => {
-      try { await postNucleo("/api/chat/cancelar", {}); } catch (e) { /* núcleo fora */ }
+      try { await postNucleo("/api/chat/cancelar", { origem: "botão Parar da página" }); }
+      catch (e) { /* núcleo fora */ }
       await indicadorDesligar();
       responder({ ok: true });
     })();

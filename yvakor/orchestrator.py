@@ -1047,16 +1047,25 @@ class Orchestrator:
             except Exception:
                 pass
 
-    def cancelar(self, sid: str | None = None) -> list[str]:
+    def cancelar(self, sid: str | None = None, origem: str = "") -> list[str]:
         """Botão Parar. Sem `sid`, interrompe TODA execução em andamento.
 
         Além de marcar a sessão (o agente confere entre os passos), destrava o
         que a deixaria parada: uma confirmação pendente (nega) e comandos
-        esperando a extensão do navegador (abortam na hora).
+        esperando a extensão do navegador (abortam na hora). `origem` (botão
+        da página, ■ do painel, Esc…) vai para o log e para o progresso: um
+        Parar acidental deixa de ser um mistério.
         """
         with self._prog_lock:
             alvos = ([s for s, p in self.progress.items() if p.get("running")]
                      if sid is None else [sid])
+        rotulo = f"⏹ Parar recebido ({origem or 'interface'})"
+        print(f"  {rotulo}", flush=True)
+        for s in alvos:
+            try:
+                self._prog_step(s, rotulo)
+            except Exception:
+                pass
         with self._cancel_lock:
             self._cancelados.update(alvos)
         for s in alvos:

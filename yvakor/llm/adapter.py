@@ -155,14 +155,74 @@ class LLMProvider:
             {"role": "user", "content": user},
         ])
 
+    # ------------------------------------------------------------------ #
+    # Guarda contra resposta cortada (finish_reason "length"): o usuário via
+    # a resposta parar no meio da frase e chamadas de ferramenta chegavam com
+    # os argumentos truncados. 1) refaz com o teto do provedor; 2) se ainda
+    # assim cortar, pede a continuação e emenda (no máximo MAX_CONTINUACOES).
+    # ------------------------------------------------------------------ #
+    MAX_CONTINUACOES = 2
+    PEDIDO_CONTINUAR = ("Sua resposta anterior foi cortada pelo limite de tamanho. "
+                        "Continue EXATAMENTE de onde parou (mesmo no meio da "
+                        "palavra), sem repetir nada e sem introdução.")
+
+    def _cortada(self) -> bool:
+        # Só na nuvem: no modelo local o teto curto é proposital (cada token
+        # custa segundos) e refazer travaria a máquina.
+        local = bool(self.num_thread) or "ollama" in self.name or "11434" in self.base_url
+        return not local and (self.ultimo_uso or {}).get("finish") in ("length", "max_tokens")
+
+    def _acumular(self, antes: dict | None) -> None:
+        """Soma o uso das chamadas extras ao da primeira (custo real)."""
+        agora = self._tl.uso or {}
+        if antes:
+            self._tl.uso = {**agora, **{k: int(antes.get(k) or 0) + int(agora.get(k) or 0)
+                                        for k in ("prompt", "saida", "cache")}}
+
+    def _gerar(self, messages: list[dict], timeout: float | None,
+               max_tokens: int | None) -> str:
+        if self.num_thread:
+            return self._chat_ollama_nativo(messages, timeout, max_tokens)
+        data = self._post({
+            "model": self.model,
+            "temperature": self.temperature,
+            "max_tokens": max_tokens or self.max_tokens,
+            "messages": messages,
+        }, timeout=timeout)
+        return (data["choices"][0].get("message") or {}).get("content") or ""
+
+    def _continuar(self, messages: list[dict], parcial: str,
+                   timeout: float | None) -> str:
+        texto = parcial
+        for _ in range(self.MAX_CONTINUACOES):
+            if not self._cortada():
+                break
+            antes = self._tl.uso
+            resto = self._gerar(messages + [
+                {"role": "assistant", "content": texto},
+                {"role": "user", "content": self.PEDIDO_CONTINUAR}], timeout, self.max_tokens)
+            self._acumular(antes)
+            if not resto.strip():
+                break
+            texto += resto
+        return texto
+
     def chat_tools(self, messages: list[dict], tools: list[dict],
                    tool_choice: str = "auto", max_tokens: int | None = None) -> dict:
         """Chamada com function calling nativo; devolve a mensagem do modelo."""
         self._tl.uso = None
-        data = self._post({"model": self.model, "temperature": self.temperature,
-                           "max_tokens": max_tokens or self.max_tokens, "messages": messages,
-                           "tools": tools, "tool_choice": tool_choice})
-        return data["choices"][0]["message"]
+        payload = {"model": self.model, "temperature": self.temperature,
+                   "max_tokens": max_tokens or self.max_tokens, "messages": messages,
+                   "tools": tools, "tool_choice": tool_choice}
+        data = self._post(payload)
+        if self._cortada() and payload["max_tokens"] < self.max_tokens:
+            antes = self._tl.uso
+            data = self._post({**payload, "max_tokens": self.max_tokens})
+            self._acumular(antes)
+        msg = data["choices"][0]["message"]
+        if self._cortada() and not msg.get("tool_calls") and (msg.get("content") or "").strip():
+            msg = {**msg, "content": self._continuar(messages, msg["content"], None)}
+        return msg
 
     def chat_messages(self, messages: list[dict], timeout: float | None = None,
                       max_tokens: int | None = None) -> str:
@@ -170,16 +230,13 @@ class LLMProvider:
         `timeout`/`max_tokens` sobrescrevem o padrão do provider só nesta chamada
         (ex.: o agente local precisa de muito mais tempo que a resposta rápida)."""
         self._tl.uso = None
-        if self.num_thread:
-            conteudo = self._chat_ollama_nativo(messages, timeout, max_tokens)
-        else:
-            data = self._post({
-                "model": self.model,
-                "temperature": self.temperature,
-                "max_tokens": max_tokens or self.max_tokens,
-                "messages": messages,
-            }, timeout=timeout)
-            conteudo = (data["choices"][0].get("message") or {}).get("content")
+        conteudo = self._gerar(messages, timeout, max_tokens)
+        if self._cortada() and max_tokens and max_tokens < self.max_tokens:
+            antes = self._tl.uso
+            conteudo = self._gerar(messages, timeout, self.max_tokens)
+            self._acumular(antes)
+        if self._cortada() and conteudo.strip():
+            conteudo = self._continuar(messages, conteudo, timeout)
         if not (conteudo and conteudo.strip()):
             # Resposta vazia conta como falha → o roteador tenta o próximo
             # provider (o local), em vez de devolver "" ao agente.
