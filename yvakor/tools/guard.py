@@ -1,6 +1,7 @@
 """Confirmation Guard — nenhuma ação perigosa sem confirmação explícita.
 Padrão já validado no Gestor Master / Assistente Master."""
 from __future__ import annotations
+import re
 import sys
 import threading
 
@@ -9,6 +10,44 @@ import threading
 # interface (popup no navegador). Cada requisição /api/chat roda em sua própria
 # thread, então o thread-local isola uma conversa da outra.
 _local = threading.local()
+
+# Modo "Agir sem pedir" (extensao_modo = "autonomo" em data/preferencias.json):
+# rodar código deixa de abrir popup — cada passo de gráfico/cálculo parava a
+# tarefa esperando um clique que o usuário sempre dava. Continua pedindo o que
+# apaga, desliga, mexe no registro/processos/usuários ou envia dados para fora.
+LIBERADAS_AUTONOMO = {"executar_python", "executar_shell", "cap_executar_codigo"}
+_DESTRUTIVO_SHELL = re.compile(
+    r"\b(del|erase|rd|rmdir|rm|format|shutdown|restart-computer|stop-computer|"
+    r"taskkill|stop-process|kill|remove-item|move-item|rename-item|diskpart|"
+    r"bcdedit|takeown|icacls|cipher|schtasks|vssadmin|wmic|set-executionpolicy|"
+    r"reg\s+(add|delete|import)|net\s+(user|localgroup|share)|sc\s+(delete|stop|config)|"
+    r"invoke-webrequest|iwr|invoke-restmethod|irm|curl|wget|start-process|"
+    r"pip\s+uninstall)\b"
+    # gravar por redirecionamento (> arquivo), menos 2>NUL / >NUL / 2>&1
+    r"|(?<![\d&])>{1,2}\s*(?!nul\b)(?!&)[\w\"'%$\\/.:]", re.I)
+_DESTRUTIVO_PY = re.compile(
+    r"os\.(remove|unlink|rmdir|removedirs|rename|replace|system|popen|kill|chmod)\b"
+    r"|shutil\.(rmtree|move|chown)|\.unlink\(|\.rmdir\(|\bsubprocess\b|\bwinreg\b"
+    r"|\bctypes\b|\bsmtplib\b|requests\.(post|put|delete|patch)|\bsocket\b"
+    r"|__import__|\beval\(|\bexec\(", re.I)
+
+
+def destrutivo(action: str, texto: str) -> bool:
+    texto = texto or ""
+    if action == "executar_shell":
+        # "python -c ..." no shell também é código Python
+        return bool(_DESTRUTIVO_SHELL.search(texto) or _DESTRUTIVO_PY.search(texto))
+    return bool(_DESTRUTIVO_PY.search(texto))
+
+
+def modo_autonomo() -> bool:
+    try:
+        from yvakor import seguro
+        from yvakor.config import ROOT
+        prefs = seguro.ler_json(ROOT / "data" / "preferencias.json", {})
+        return isinstance(prefs, dict) and prefs.get("extensao_modo") == "autonomo"
+    except Exception:
+        return False
 
 
 def set_thread_confirmer(fn) -> None:
@@ -53,7 +92,17 @@ class ConfirmationGuard:
         # ação destrutiva em guarded_actions, ela continua protegida.
         return action in self.guarded or action in self.always_confirm
 
-    def confirm(self, action: str, detail: str) -> bool:
+    def confirm(self, action: str, detail: str, completo: str | None = None) -> bool:
+        """`completo` = argumentos inteiros (o `detail` vem cortado em 200
+        caracteres para o popup e não serve para julgar o código todo)."""
+        if (action in LIBERADAS_AUTONOMO and modo_autonomo()
+                and not destrutivo(action, completo if completo is not None else detail)):
+            try:
+                from yvakor.arquivos import _auditar
+                _auditar("acao_autonoma", action, {"detalhe": detail[:200]})
+            except Exception:
+                pass
+            return True
         # Ações externas/destrutivas (always_confirm) SEMPRE exigem um humano,
         # mesmo com privilégios "total" ou auto_approve ligados. É a última
         # linha de defesa contra prompt-injection e contra requisições

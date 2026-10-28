@@ -32,8 +32,10 @@ MODOS = {
                      "(comprar, enviar, apagar…) sempre pedem confirmação."},
     "autonomo": {
         "rotulo": "Agir sem pedir permissão",
-        "descricao": "Não pergunta por site. Ações sensíveis e sites de banco/"
-                     "pagamento ainda pedem confirmação."},
+        "descricao": "Não pergunta por site, roda Python/shell e preenche CPF/"
+                     "documento em site permitido sem pedir. Ainda pedem: comandos "
+                     "que apagam/desligam, senha/cartão/PIX, enviar/comprar/aceitar "
+                     "e sites de banco/pagamento."},
 }
 MODO_PADRAO = "perguntar"
 

@@ -715,6 +715,9 @@
     "transferir|autorizar|aprovar|aceitar|buy|purchase|pay|checkout|place order|" +
     "submit|send|post|publish|delete|remove|subscribe|transfer|authorize)\\b", "i");
   const SENSIVEL_CAMPO = /(card|cart[aã]o|cvv|cvc|cpf|ssn|senha|password|passwd|otp|iban|pix)/i;
+  // Documento (não segredo): no modo autônomo, em site já permitido, não pergunta.
+  const CAMPO_DOCUMENTO = /(cpf|cnpj|ssn|rg\b|nascimento|birth)/i;
+  const CAMPO_SEGREDO = /(card|cart[aã]o|cvv|cvc|senha|password|passwd|otp|iban|pix)/i;
 
   // Nome que o USUÁRIO reconhece. Campos de formulário são nomeados por rótulo/
   // placeholder/nome — NUNCA pelo valor atual (viraria "Digitar X em «z»") nem
@@ -760,7 +763,7 @@
     const form = el.form || el.closest("form");
     const formTemSenha = !!(form && form.querySelector(
       "input[type='password'],input[autocomplete^='cc-']"));
-    let descricao = "", sensivel = false, motivo = "";
+    let descricao = "", sensivel = false, motivo = "", documento = false;
 
     if (acao === "clicar") {
       descricao = "Clicar em «" + nome + "»";
@@ -773,6 +776,9 @@
       descricao = oculto ? "Digitar um valor (oculto) em «" + nome + "»"
                          : "Digitar «" + curto(val, 40) + "» em «" + nome + "»";
       if (oculto) { sensivel = true; motivo = "campo de senha, cartão ou documento"; }
+      if (oculto && tipo !== "password" && !CAMPO_SEGREDO.test(atrib) && CAMPO_DOCUMENTO.test(atrib)) {
+        motivo = "campo de documento"; documento = true;
+      }
       if (enviar) {
         descricao += " e enviar";
         if (formTemSenha && !sensivel) { sensivel = true; motivo = "envia um formulário com senha/cartão"; }
@@ -789,7 +795,8 @@
     } else {
       descricao = acao + " em «" + nome + "»";
     }
-    return { ok: true, descricao, sensivel, motivo, host: location.hostname };
+    return { ok: true, descricao, sensivel, motivo, host: location.hostname,
+             documento: documento && motivo === "campo de documento" };
   }
 
   window.__yvakorAcoes = { snapshot, extrair, clicar, escrever, pressionar,

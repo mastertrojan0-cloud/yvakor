@@ -13,6 +13,7 @@ const trecho = src.slice(ini, fim);
 
 let urlAba = "https://loja.com/produto";
 let sensivel = false;
+let documento = false;
 const acoesExecutadas = [];
 const PAGINA_PROTEGIDA = /^(chrome|edge|about|chrome-extension|devtools|view-source|chrome-search):/;
 const ctrlOrActiveBG = async () => ({ id: 7, url: urlAba });
@@ -23,7 +24,7 @@ const chrome = { scripting: { executeScript: async (o) => {
   if (o.files) return [];
   const [nome] = o.args;
   if (nome === "descrever_acao") {
-    return [{ result: { ok: true, descricao: "Clicar em «Comprar agora»", sensivel, motivo: sensivel ? "ação irreversível ou com custo" : "" } }];
+    return [{ result: { ok: true, descricao: "Clicar em «Comprar agora»", sensivel, documento, motivo: sensivel ? "ação irreversível ou com custo" : "" } }];
   }
   acoesExecutadas.push(nome);
   return [{ result: { ok: true, executou: nome } }];
@@ -33,6 +34,7 @@ eval(trecho + ";globalThis.acaoPagina = acaoPagina;");
 
 async function caso(nome, url, pol, args, esp) {
   urlAba = url; sensivel = !!args._sensivel; delete args._sensivel;
+  documento = !!args._documento; delete args._documento;
   acoesExecutadas.length = 0;
   const r = (await globalThis.acaoPagina("clicar", Object.assign({ alvo: "e1", politica: pol }, args))).resultado;
   return { nome, esperado: esp, ok: esp(r), agiu: acoesExecutadas.length > 0, tipo: (r.precisa_confirmar || {}).tipo || null };
@@ -59,6 +61,16 @@ async function caso(nome, url, pol, args, esp) {
     (r) => r.precisa_confirmar && r.precisa_confirmar.tipo === "acao" && /Comprar/.test(r.precisa_confirmar.descricao)));
   casos.push(await caso("ação SENSÍVEL pede confirmação também no modo autônomo",
     "https://blog.com/x", AUTO, { _sensivel: true }, (r) => r.precisa_confirmar && r.precisa_confirmar.tipo === "acao"));
+  const GOV = { permitidos: ["gov.br"], bloqueados: [] };
+  casos.push(await caso("modo autônomo: digitar CPF em site permitido age sem pedir",
+    "https://servicos.receita.fazenda.gov.br/x", Object.assign({ modo: "autonomo" }, GOV),
+    { _sensivel: true, _documento: true }, (r) => r.ok && r.executou === "clicar"));
+  casos.push(await caso("modo perguntar: digitar CPF ainda pede confirmação",
+    "https://servicos.receita.fazenda.gov.br/x", Object.assign({ modo: "perguntar" }, GOV),
+    { _sensivel: true, _documento: true }, (r) => r.precisa_confirmar && r.precisa_confirmar.tipo === "acao"));
+  casos.push(await caso("modo autônomo: CPF em site NÃO permitido ainda pede",
+    "https://blog.com/x", AUTO, { _sensivel: true, _documento: true },
+    (r) => r.precisa_confirmar && r.precisa_confirmar.tipo === "acao"));
   casos.push(await caso("confirmado_site pula só a pergunta do site",
     "https://loja.com/x", PERG, { confirmado_site: true }, (r) => r.ok && r.executou === "clicar"));
   casos.push(await caso("confirmado_acao libera a ação sensível",

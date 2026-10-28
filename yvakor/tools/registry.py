@@ -147,7 +147,7 @@ class ToolRegistry:
         if name not in self.tools:
             return {"ok": False, "error": f"ferramenta desconhecida: {name}"}
         if self.guard.requires_confirmation(name):
-            if not self.guard.confirm(name, str(kwargs)[:200]):
+            if not self.guard.confirm(name, str(kwargs)[:200], completo=str(kwargs)):
                 return {"ok": False, "error": "cancelado pelo usuário"}
         varios = self._varios_campos(name, kwargs)
         if varios is not None:

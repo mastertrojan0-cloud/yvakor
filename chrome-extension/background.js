@@ -256,8 +256,10 @@ async function verificarPolitica(t, nome, args, pol, okSite, okAcao) {
   }
   if (!okAcao) {
     const d = await executarNaPagina(t, "descrever_acao", Object.assign({ acao: nome }, args));
-    // ação sensível pede confirmação nos DOIS modos
-    if (d && d.sensivel) {
+    // ação sensível pede confirmação nos DOIS modos — exceto digitar num
+    // campo de documento (CPF, nascimento) no modo autônomo em site permitido
+    const documentoLiberado = d && d.documento && modo === "autonomo" && (permitido || okSite);
+    if (d && d.sensivel && !documentoLiberado) {
       return { ok: false, host, precisa_confirmar: {
         tipo: "acao", host, descricao: d.descricao || nome, sensivel: true, motivo: d.motivo || "" } };
     }
