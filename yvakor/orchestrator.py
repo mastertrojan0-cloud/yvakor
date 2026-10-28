@@ -339,6 +339,11 @@ class Orchestrator:
         # que a interface nem sempre mostra.)
         self.confirm_broker = ConfirmationBroker(timeout=float(
             (self.settings.get("tools") or {}).get("confirm_timeout_s", 90)))
+        # Modo autônomo: um modelo revisa o código antes de rodar sem popup.
+        from yvakor import revisor
+        from yvakor.tools.guard import definir_revisor
+        definir_revisor(revisor.criar(
+            self.router, lambda: getattr(self._tl, "msg_atual", "") or ""))
         self.telemetria = Telemetria()
 
     # ------------------------------------------------------------------ #
@@ -454,7 +459,7 @@ class Orchestrator:
                 return False
             return True
 
-        acoes_com_efeito = {"click", "fill", "type", "press", "select", "upload"}
+        acoes_com_efeito = {"click", "fill", "type", "press", "select", "upload", "js"}
 
         def chamar(tipo: str, _orig, **kw) -> dict:
             pol = getattr(self, "politica_sites", None)
@@ -623,6 +628,24 @@ class Orchestrator:
                 "history", ("acao",),
                 "Voltar, avançar ou recarregar a aba: acao=voltar|avancar|recarregar.",
                 {"acao": "str", "navegador": "str?"}, None),
+            # Como o read_network_requests do Claude no Chrome: o dado que a
+            # tela só mostra depois de uma ação (preço por CEP) vem de uma API.
+            "navegador_rede": (
+                "network", ("filtro", "limpar", "max"),
+                "Lê as respostas de API (fetch/XHR) que a página recebe: liga a "
+                "escuta na 1ª chamada; faça a ação na página e chame de novo. "
+                "filtro = trecho da URL ou do conteúdo (ex.: 'preco', 'cep', "
+                "'api'). Corpos inteiros ficam num arquivo .json (campo arquivo).",
+                {"filtro": "str?", "limpar": "bool?", "max": "int?",
+                 "navegador": "str?"}, None),
+            # Como o javascript_tool do Claude no Chrome.
+            "navegador_js": (
+                "js", ("codigo",),
+                "Avalia uma expressão JavaScript na página e devolve o valor "
+                "(ex.: document.querySelector('.preco').innerText, "
+                "[...document.querySelectorAll('tr')].map(r=>r.innerText)). "
+                "Código que clica, envia, navega ou lê cookies pede confirmação.",
+                {"codigo": "str", "navegador": "str?"}, None),
         }
         for nome, (tipo, campos, desc, args, fallback) in novas.items():
             campos = tuple(campos) + ("aba",)
@@ -644,6 +667,40 @@ class Orchestrator:
             self.tools.register(nome, wrapper_nova,
                                 desc + " Usa a janela do Chrome da extensão.",
                                 args)
+
+        # As respostas da API podem ter centenas de KB e a observação do agente
+        # é cortada em 4000 caracteres: o inteiro vai para um arquivo (que o
+        # agente lê com arquivos_ler ou executar_python) e a observação leva um
+        # trecho de cada.
+        rede_ext = self.tools.tools.get("navegador_rede")
+        if rede_ext is not None:
+            spec_rede = self.tools.specs.get("navegador_rede", {})
+
+            def navegador_rede(_orig=rede_ext, **kw) -> dict:
+                r = _orig(**kw)
+                capt = r.get("capturadas") if isinstance(r, dict) else None
+                if not capt:
+                    return r
+                pasta = ROOT / "data" / "rede"
+                pasta.mkdir(parents=True, exist_ok=True)
+                arq = pasta / f"rede_{time.strftime('%Y%m%d_%H%M%S')}.json"
+                arq.write_text(json.dumps(capt, ensure_ascii=False, indent=1),
+                               encoding="utf-8")
+                trecho = 3200 // max(1, min(len(capt), 6))
+                # arquivo primeiro: a observação é cortada pelo fim
+                return {"ok": r.get("ok", True), "arquivo": str(arq),
+                        "total_capturadas": len(capt),
+                        "capturadas": [{"url": x.get("url", "")[:200],
+                                        "metodo": x.get("metodo"),
+                                        "status": x.get("status"),
+                                        "tamanho": len(x.get("corpo") or ""),
+                                        "corpo": (x.get("corpo") or "")[:trecho]}
+                                       for x in capt[-6:]],
+                        "recursos_anteriores": (r.get("recursos_anteriores") or [])[-10:],
+                        "url": r.get("url", ""), "tab_id": r.get("tab_id")}
+
+            self.tools.register("navegador_rede", navegador_rede,
+                                spec_rede.get("desc", ""), spec_rede.get("args", {}))
 
         # Captcha: o agente NUNCA resolve. Traz a aba para a frente, destaca o
         # captcha, avisa o usuário e espera ELE resolver; aí devolve o controle

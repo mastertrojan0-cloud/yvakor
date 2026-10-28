@@ -267,6 +267,105 @@ async function verificarPolitica(t, nome, args, pol, okSite, okAcao) {
   return null;
 }
 
+// navegador_js: as mesmas regras de site de verificarPolitica; o código que
+// age na página (clicar, enviar, digitar), sai dela (fetch, beacon, navegar) ou
+// lê segredos (cookie, storage) pede confirmação nos dois modos.
+const JS_SENSIVEL = /\.(click|submit|requestSubmit|dispatchEvent)\s*\(|\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|\.value\s*=|innerHTML\s*=|outerHTML\s*=|document\.cookie|localStorage|sessionStorage|indexedDB|location(\.href)?\s*=|location\.(assign|replace)|window\.open|\.remove\s*\(|postMessage|eval\s*\(|Function\s*\(/;
+function politicaJs(t, codigo, pol, okSite, okAcao) {
+  const host = hostDe(t.url);
+  const modo = pol.modo === "autonomo" ? "autonomo" : "perguntar";
+  if ((pol.bloqueados || []).some((r) => hostCombina(host, r))) {
+    return { ok: false, bloqueado: true, host, erro: "O usuário bloqueou o YVAKOR em " + host + "." };
+  }
+  const permitido = (pol.permitidos || []).some((r) => hostCombina(host, r));
+  const hostSensivel = HOST_SENSIVEL.test(host);
+  if (!okSite && !permitido && (modo === "perguntar" || hostSensivel)) {
+    return { ok: false, host, precisa_confirmar: { tipo: "site", host, host_sensivel: hostSensivel } };
+  }
+  if (!okAcao && JS_SENSIVEL.test(codigo)) {
+    return { ok: false, host, precisa_confirmar: {
+      tipo: "acao", host, sensivel: true, motivo: "o código age na página ou lê dados guardados",
+      descricao: "Executar JavaScript: " + codigo.replace(/\s+/g, " ").slice(0, 160) } };
+  }
+  return null;
+}
+
+// Roda no MUNDO DA PÁGINA (world: "MAIN"). Instala uma escuta em fetch/XHR na
+// 1ª chamada e devolve as respostas capturadas desde então — o preço que só
+// aparece depois de digitar o CEP vem de uma API assim. Autossuficiente: o
+// Chrome serializa só o corpo da função.
+function redeNaPagina(o) {
+  const w = window, LIM = 20000, PULAR = /image|font|video|audio|octet-stream|css/i;
+  if (!w.__yvakorRede) {
+    w.__yvakorRede = [];
+    const guardar = (x) => { w.__yvakorRede.push(x); if (w.__yvakorRede.length > 80) w.__yvakorRede.shift(); };
+    const ofetch = w.fetch;
+    w.fetch = async function (...args) {
+      const resp = await ofetch.apply(this, args);
+      try {
+        const req = args[0];
+        const url = typeof req === "string" ? req : (req && req.url) || String(req);
+        const metodo = String((args[1] && args[1].method) || (req && req.method) || "GET").toUpperCase();
+        const tipo = resp.headers.get("content-type") || "";
+        if (!PULAR.test(tipo)) {
+          resp.clone().text().then((txt) => guardar({ url: new URL(url, location.href).href, metodo,
+            status: resp.status, tipo, corpo: txt.slice(0, LIM), ts: Date.now() })).catch(() => {});
+        }
+      } catch (e) {}
+      return resp;
+    };
+    const P = XMLHttpRequest.prototype, oopen = P.open, osend = P.send;
+    P.open = function (m, u, ...r) { this.__yv = { metodo: String(m).toUpperCase(), url: String(u) }; return oopen.call(this, m, u, ...r); };
+    P.send = function (...r) {
+      this.addEventListener("load", () => {
+        try {
+          const tipo = this.getResponseHeader("content-type") || "";
+          if (PULAR.test(tipo)) return;
+          let corpo = "";
+          if (this.responseType === "" || this.responseType === "text") corpo = this.responseText;
+          else if (this.responseType === "json") corpo = JSON.stringify(this.response);
+          guardar({ url: new URL((this.__yv || {}).url || "", location.href).href,
+                    metodo: (this.__yv || {}).metodo || "GET", status: this.status, tipo,
+                    corpo: String(corpo).slice(0, LIM), ts: Date.now() });
+        } catch (e) {}
+      });
+      return osend.apply(this, r);
+    };
+    var instalou = true;
+  }
+  if (o.limpar) w.__yvakorRede.length = 0;
+  const f = String(o.filtro || "").toLowerCase();
+  const casaUrl = (u) => !f || String(u).toLowerCase().includes(f);
+  const recursos = performance.getEntriesByType("resource")
+    .filter((e) => /fetch|xmlhttprequest/.test(e.initiatorType) && casaUrl(e.name))
+    .slice(-40).map((e) => e.name);
+  const capturadas = w.__yvakorRede
+    .filter((x) => casaUrl(x.url) || (f && String(x.corpo).toLowerCase().includes(f)))
+    .slice(-(o.max || 15));
+  return { ok: true, escutando_desde_agora: !!instalou, capturadas,
+           recursos_anteriores: recursos,
+           dica: capturadas.length ? "" : "nenhuma resposta capturada ainda: a escuta está ligada. " +
+             "Faça a ação na página (digitar CEP, clicar, rolar) e chame navegador_rede de novo. " +
+             "recursos_anteriores = APIs que a página já chamou (leia com http_get)." };
+}
+
+// Roda no mundo da página: avalia a expressão e devolve o valor em JSON.
+async function jsNaPagina(codigo) {
+  try {
+    let v = (0, eval)(codigo);
+    if (v && typeof v.then === "function") v = await v;
+    let txt;
+    try { txt = JSON.stringify(v, (k, x) => (x instanceof Node ? (x.outerHTML || String(x)).slice(0, 500) : x)); }
+    catch (e) { txt = String(v); }
+    return { ok: true, resultado: txt === undefined ? "undefined" : String(txt).slice(0, 8000) };
+  } catch (e) {
+    const msg = String((e && e.message) || e);
+    return { ok: false, erro: /unsafe-eval|Content Security Policy|EvalError/i.test(msg)
+      ? "este site bloqueia JavaScript externo (CSP); use navegador_extrair ou navegador_rede"
+      : msg };
+  }
+}
+
 // Se a ação iniciou uma navegação (clicar num link, enviar um formulário),
 // espera a página nova carregar antes de devolver o controle ao agente.
 async function aposAcaoBG(tab) {
@@ -575,6 +674,28 @@ async function executarBGInterno(c) {
     await aguardarCarregarBG(t.id, 8000);
     const n = await chrome.tabs.get(t.id);
     return { tab_id: t.id, url: n.url || "", titulo: n.title || "" };
+  }
+  if (c.tipo === "network") {
+    const t = await ctrlOrActiveBG();
+    if (PAGINA_PROTEGIDA.test(t.url || "")) throw new Error("esta página do navegador não aceita automação");
+    const r = await chrome.scripting.executeScript({
+      target: { tabId: t.id }, world: "MAIN", func: redeNaPagina,
+      args: [{ filtro: String(a.filtro || ""), limpar: !!a.limpar, max: Number(a.max) || 15 }] });
+    return Object.assign({ tab_id: t.id, url: t.url || "" },
+                         (r && r[0] && r[0].result) || { ok: false, erro: "a página não respondeu" });
+  }
+  if (c.tipo === "js") {
+    const t = await ctrlOrActiveBG();
+    if (PAGINA_PROTEGIDA.test(t.url || "")) throw new Error("esta página do navegador não aceita automação");
+    const veto = politicaJs(t, String(a.codigo || ""), a.politica || {},
+                            !!a.confirmado_site, !!a.confirmado_acao);
+    if (veto) return veto;
+    const r = await Promise.race([
+      chrome.scripting.executeScript({ target: { tabId: t.id }, world: "MAIN",
+                                       func: jsNaPagina, args: [String(a.codigo || "")] }),
+      dormirBG(15000).then(() => null)]);
+    return Object.assign({ tab_id: t.id, url: t.url || "" },
+                         (r && r[0] && r[0].result) || { ok: false, erro: "o código não terminou em 15s" });
   }
   if (c.tipo === "screenshot") {
     // captureVisibleTab só captura a aba VISÍVEL da janela: ativa a de controle.

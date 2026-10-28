@@ -48,10 +48,15 @@ GRUPOS = {
                        "navegador_digitar", "navegador_pressionar",
                        "navegador_selecionar", "navegador_enviar_arquivo",
                        "navegador_esperar",
-                       "navegador_extrair", "navegador_rolar",
+                       "navegador_extrair", "navegador_rede", "navegador_rolar",
                        "navegador_abrir", "navegador_historico",
                        "navegador_passar_mouse", "navegador_captura",
-                       "navegador_aguardar_captcha", "web_ler"),
+                       "navegador_aguardar_captcha", "navegador_js", "web_ler"),
+    },
+    "tela": {
+        # tela do Windows (fora do navegador)
+        "prefixos": ("tela_",),
+        "palavras": ("tela", "monitor", "screen", "janela", "desktop"),
     },
     "web": {
         # leitura de páginas/documentação sem abrir o navegador
@@ -138,7 +143,7 @@ NUCLEO = ("executar_shell", "arquivos_listar", "arquivos_ler",
 # vazias ("o que esta na tela" → rede_telefone_tela, voz_falar…).
 GERAL = ("navegador_ver", "navegador_ir", "navegador_pesquisar", "navegador_clicar",
          "navegador_preencher", "navegador_extrair", "navegador_captura",
-         "pesquisa_web", "web_ler", "executar_python", "cap_grafico",
+         "tela_ver", "pesquisa_web", "web_ler", "executar_python", "cap_grafico",
          "entregar_relatorio", "arquivos_escrever")
 
 # Palavras que não dizem nada sobre a ferramenta (o ranking casava "que",
@@ -146,7 +151,7 @@ GERAL = ("navegador_ver", "navegador_ir", "navegador_pesquisar", "navegador_clic
 _VAZIAS = set("""que esta este essa esse isso isto para pra por com sem mim meu minha
 voce vc faz faca fazer favor agora sempre tem ter tudo mais muito como onde quando
 qual quais uma uns umas dos das nos nas aqui ali ela ele eles elas sua seu suas seus
-foi ser sim nao ja tambem preciso quero queria pode poderia vamos tela mostra mostre
+foi ser sim nao ja tambem preciso quero queria pode poderia vamos mostra mostre
 mostrar ver veja verifica verificar novamente continua continue resolva resolve""".split())
 
 

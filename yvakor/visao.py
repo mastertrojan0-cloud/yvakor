@@ -110,6 +110,52 @@ def analisar(caminho: str | Path, pergunta: str = "") -> dict:
             "visao": visao.get("texto", ""), "ocr": ocr[:8000]}
 
 
+TELAS_GIRO = 20      # data/telas/tela_00..19.png, reescritas em rodízio
+_tela_n = 0
+
+
+def capturar_tela(largura_max: int = 1920) -> Path:
+    """Print do(s) monitor(es) do Windows num PNG em data/telas."""
+    global _tela_n
+    from PIL import ImageGrab
+    from yvakor.config import ROOT
+    img = ImageGrab.grab(all_screens=True)
+    if img.width > largura_max:
+        img = img.resize((largura_max, int(img.height * largura_max / img.width)))
+    pasta = ROOT / "data" / "telas"
+    pasta.mkdir(parents=True, exist_ok=True)
+    arq = pasta / f"tela_{_tela_n % TELAS_GIRO:02d}.png"
+    _tela_n += 1
+    img.save(arq)
+    return arq
+
+
+def ver_tela(pergunta: str = "", visual: bool = False) -> dict:
+    """Como o screenshot do computer use: o agente "olha" o monitor. Antes ele
+    tentava scrot/import pelo shell (comandos de Linux) e pedia print."""
+    try:
+        arq = capturar_tela()
+    except Exception as exc:
+        return {"ok": False, "erro": f"não consegui capturar a tela: {exc}"}
+    r = {"ok": True, "arquivo": str(arq)}
+    try:
+        from yvakor.documentos import ocr_imagem
+        ocr = ocr_imagem(arq)
+        r["texto"] = (ocr.get("texto") or "")[:6000] if ocr.get("ok") else ""
+        if not ocr.get("ok"):
+            r["aviso_ocr"] = ocr.get("erro", "")[:200]
+    except Exception as exc:
+        r["texto"], r["aviso_ocr"] = "", str(exc)[:200]
+    if visual or (pergunta and len(r["texto"]) < 40):
+        d = descrever(arq, pergunta or "Descreva o que aparece nesta tela.")
+        if d.get("ok"):
+            r["descricao_visual"] = d.get("texto", "")[:2000]
+    r["dica"] = ("texto = o que está escrito na tela (OCR). Para detalhes visuais "
+                 "use visual=true; se for uma página do Chrome, navegador_ver "
+                 "devolve o conteúdo com refs para agir.")
+    return r
+
+
 def registrar_ferramentas(tools):
     def ver(caminho: str, pergunta: str = "Descreva a imagem") -> dict:
         return analisar(caminho, pergunta)
@@ -118,3 +164,9 @@ def registrar_ferramentas(tools):
                    "Analisa imagem/tela com visão local: descreve cena, layout, "
                    "texto e dados; usa OCR como complemento.",
                    {"caminho": "str", "pergunta": "str?"})
+    tools.register("tela_ver", ver_tela,
+                   "Captura a tela do Windows (todos os monitores) e lê o texto "
+                   "dela (OCR). Use quando o usuário pergunta o que está na tela "
+                   "ou quer que você veja um programa fora do navegador. "
+                   "visual=true descreve também a imagem (mais lento).",
+                   {"pergunta": "str?", "visual": "bool?"})

@@ -108,6 +108,8 @@ def test_modo_autonomo_roda_codigo_sem_popup_mas_nao_o_destrutivo(monkeypatch):
     from yvakor.tools import guard as g
     pedidos = []
     g.set_thread_confirmer(lambda acao, det: pedidos.append(acao) or False)
+    monkeypatch.setattr(g, "_revisor", None)        # sem chamar modelo de verdade
+    g.limpar_externo()
     try:
         guarda = g.ConfirmationGuard([], always_confirm=["executar_python",
                                                          "executar_shell", "arquivos_apagar"])
