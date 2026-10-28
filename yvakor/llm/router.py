@@ -405,6 +405,9 @@ class LLMRouter:
             return melhor[1]
         dica = (" — recarregue o saldo do provedor externo (HTTP 402) ou "
                 "confira a chave" if fatais else "")
+        if getattr(plano, "zona", "") == "bloqueado":
+            dica += (" — o orçamento de nuvem do dia/mês foi atingido; aumente em "
+                     "Ajustes → Consumo ou abra o Ollama para usar o modelo local")
         raise RuntimeError("Todos os provedores de IA falharam — "
                            + " | ".join(erros) + dica)
 

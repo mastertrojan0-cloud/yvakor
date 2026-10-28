@@ -263,7 +263,11 @@ _ALIAS_FERRAMENTA = {
 # Argumentos com nome trocado ("query" em vez de "termo", "tab_id" em vez de
 # "aba"): o coagir descartava e a ferramenta falhava por falta de argumento.
 _ALIAS_ARGS = {"query": "termo", "q": "termo", "busca": "termo", "texto_busca": "termo",
-               "tab_id": "aba", "tab": "aba", "tabId": "aba", "link": "url"}
+               "tab_id": "aba", "tab": "aba", "tabId": "aba", "link": "url",
+               # alvo de clique/preenchimento (o modelo usa a ref do navegador_ver)
+               "ref": "alvo", "seletor": "alvo", "selector": "alvo", "elemento": "alvo",
+               "element": "alvo", "target": "alvo", "campo": "alvo", "botao": "alvo",
+               "value": "valor", "text": "texto", "key": "tecla"}
 
 
 _CHAVES_PROTOCOLO = {"acao", "ferramenta", "tool", "name", "motivo", "args",
@@ -363,6 +367,12 @@ def _parse_acoes(raw: str, registry=None) -> list[dict]:
         args = {}
         for p in _DSML_PARAM.finditer(m.group(2)):
             args[p.group(1).strip()] = p.group(2).strip()
+        if registry is not None:
+            nome = nome if nome in getattr(registry, "tools", {}) else \
+                _ALIAS_FERRAMENTA.get(nome, nome)
+            # traduz nomes ANTES do coagir: ele descartava "ref"/"seletor" e o
+            # clique ia sem alvo ("elemento não encontrado")
+            args = _alias_args(registry, nome, args)
         if registry is not None and hasattr(registry, "coagir"):
             args = registry.coagir(nome, args)
         norm = _parse_acao(json.dumps({"acao": "usar_ferramenta",

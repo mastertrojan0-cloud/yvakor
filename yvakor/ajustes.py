@@ -254,7 +254,7 @@ SECOES = {
             "efeito": (_escolha("assinatura", "nenhum"), "assinatura")},
     "memoria": {"aprender_local": (_bool, False), "reter_operacionais_dias": (_numero(1, 365, True), 30)},
     "consumo": {"diario_usd": (_numero(0, 10000), 0.5), "mensal_usd": (_numero(0, 100000), 8.0),
-                "diario_tokens": (_numero(0, 1e9, True), 600000)},
+                "diario_tokens": (_numero(0, 1e9, True), 0)},
 }
 
 

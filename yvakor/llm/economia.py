@@ -135,21 +135,32 @@ def _meio(texto: str, alvo_chars: int, cabeca: float = 0.6) -> str:
     return f"{texto[:h].rstrip()}\n[… {omit} caracteres omitidos …]\n{texto[len(texto) - t:].lstrip()}"
 
 
-def _resumo_extrativo(msgs: list[dict], limite_chars: int = 700) -> str:
+def _resumo_extrativo(msgs: list[dict], limite_chars: int = 1400) -> str:
+    """Resumo do histórico antigo. O que o USUÁRIO escreveu vale mais (CPF, datas,
+    nomes que ele já informou: antes eram cortados em 130 caracteres e o modelo
+    pedia de novo), e as mensagens mais recentes têm prioridade sobre as velhas."""
     itens = []
     for m in msgs:
         t = _enxugar(_texto(m))
         if not t:
             continue
-        primeira = re.split(r"(?<=[.!?])\s|\n", t, maxsplit=1)[0][:130]
-        itens.append(f"{'U' if m.get('role') == 'user' else 'A'}: {primeira}")
-    out, usado = [], 0
-    for i in itens[-12:]:
-        if usado + len(i) > limite_chars:
-            break
-        out.append(i)
-        usado += len(i) + 1
-    return "\n".join(out)
+        if m.get("role") == "user":
+            if t.lstrip().startswith(("OBSERVA", "(")):
+                t = re.split(r"(?<=[.!?])\s|\n", t, maxsplit=1)[0][:130]
+            itens.append(("U", t[:320]))
+        else:
+            itens.append(("A", re.split(r"(?<=[.!?])\s|\n", t, maxsplit=1)[0][:130]))
+    escolhidos, usado = set(), 0
+    for papel in ("U", "A"):                       # usuário primeiro, do mais novo ao mais velho
+        for i in range(len(itens) - 1, -1, -1):
+            if itens[i][0] != papel or i in escolhidos:
+                continue
+            custo = len(itens[i][1]) + 4
+            if usado + custo > limite_chars:
+                continue
+            escolhidos.add(i)
+            usado += custo
+    return "\n".join(f"{p}: {t}" for i, (p, t) in enumerate(itens) if i in escolhidos)
 
 
 _NOTAS_AGENTE = ("OBSERVA", "(", "Você respondeu sem", "Chamada de ferramenta",
@@ -710,13 +721,18 @@ class Otimizador:
         nuvens = [p for p in ordem_base if not self.eh_local(p.name)]
         motivo = []
 
-        # nuvem bloqueada/crítica: só local (a menos que o chamador force e a zona não seja "bloqueado")
-        if locais and (zona == "bloqueado" or (zona == "critico" and not forcar)):
+        # bloqueado (100%): só local. Crítico (≥90%): local PRIMEIRO, nuvem como reserva —
+        # antes a nuvem saía da fila e, com o Ollama fechado, a tarefa morria no meio
+        # ("Todos os provedores falharam — ollama") mesmo com orçamento sobrando.
+        if locais and zona == "bloqueado":
             nuvens = []
-            motivo.append(f"orçamento {zona}: só local")
+            motivo.append("orçamento bloqueado: só local")
         permitidos = {p.name for p in locais + nuvens}
         ordem = [p for p in ordem_base if p.name in permitidos]
-        if modo == "auto" and not forcar and locais and nuvens:
+        if locais and zona == "critico" and not forcar:
+            ordem = locais + nuvens
+            motivo.append("orçamento crítico: local primeiro, nuvem de reserva")
+        elif modo == "auto" and not forcar and locais and nuvens:
             ordem = self._decidir(locais, nuvens, tarefa, dif, faixa, zona, mensagens, motivo)
         # várias nuvens conectadas: a de menor custo esperado por sucesso vem antes
         if not forcar and len(nuvens) > 1:

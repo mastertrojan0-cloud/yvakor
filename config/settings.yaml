@@ -62,7 +62,10 @@ llm:
     orcamento:                       # 0 = sem limite. Zonas: 70% econômico · 90% crítico · 100% bloqueado
       diario_usd: 0.50
       mensal_usd: 8.0
-      diario_tokens: 600000
+      # 0: sem teto de tokens — o gasto real já é limitado em US$ acima. Com
+      # 600000, tarefas de navegador (≈4k tokens por passo) batiam 90% com só
+      # US$ 0,09 gastos, a nuvem saía e a tarefa morria no Ollama fechado.
+      diario_tokens: 0
     # Preços em USD por 1 milhão de tokens — CONFIRA na página de preços da API.
     precos_usd_por_milhao:
       deepseek: {entrada: 0.28, cache: 0.028, saida: 0.42}

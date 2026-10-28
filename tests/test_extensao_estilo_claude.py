@@ -921,6 +921,54 @@ def test_compressor_preserva_o_pedido_atual_e_nao_o_mais_antigo():
     assert not any(t.startswith("verifica email bloqueados") for t in textos)
 
 
+def test_clique_em_dsml_com_ref_nao_perde_o_alvo():
+    """2ª via do CPF: navegador_clicar {} → 'elemento não encontrado' 5 vezes;
+    o DSML trazia 'ref'/'seletor' e o coagir descartava antes da tradução."""
+    from yvakor.agent import _parse_acoes
+    from yvakor.config import load_settings
+    from yvakor.tools.registry import ToolRegistry
+    reg = ToolRegistry(load_settings())
+    reg.register("navegador_clicar", lambda **k: {"ok": True}, "Clica.",
+                 {"alvo": "str", "aba": "int?"})
+    reg.register("navegador_preencher", lambda **k: {"ok": True}, "Preenche.",
+                 {"alvo": "str", "valor": "str"})
+    d = ('<｜DSML｜invoke name="navegador_clicar"><｜DSML｜parameter name="ref" string="true">'
+         'e7</｜DSML｜parameter></｜DSML｜invoke>'
+         '<｜DSML｜invoke name="navegador_preencher"><｜DSML｜parameter name="seletor" string="true">'
+         '#txtCPF</｜DSML｜parameter><｜DSML｜parameter name="value" string="true">70847608220'
+         '</｜DSML｜parameter></｜DSML｜invoke>')
+    a = _parse_acoes(d, reg)
+    assert a[0]["args"] == {"alvo": "e7"}
+    assert a[1]["args"] == {"alvo": "#txtCPF", "valor": "70847608220"}
+
+
+def test_orcamento_critico_mantem_a_nuvem_como_reserva(tmp_path, monkeypatch):
+    """'Todos os provedores falharam — ollama': com 90% do teto de tokens a nuvem
+    saía da fila e, com o Ollama fechado, a tarefa morria."""
+    from types import SimpleNamespace as NS
+    from yvakor.llm import economia
+    o = economia.Otimizador({"ativo": True}, {}, caminho_db=tmp_path / "c.db")
+    local, nuvem = NS(name="ollama"), NS(name="deepseek")
+    monkeypatch.setattr(o, "zona", lambda: "critico")
+    p = o.planejar("analise_complexa", [{"role": "user", "content": "oi"}], [nuvem, local])
+    assert [x.name for x in p.ordem] == ["ollama", "deepseek"]
+    monkeypatch.setattr(o, "zona", lambda: "bloqueado")
+    p = o.planejar("analise_complexa", [{"role": "user", "content": "oi"}], [nuvem, local])
+    assert [x.name for x in p.ordem] == ["ollama"]
+
+
+def test_resumo_do_historico_guarda_os_dados_que_o_usuario_informou():
+    from yvakor.llm.economia import _resumo_extrativo
+    msgs = [{"role": "user", "content": "preciso tirar a segunda via do meu cpf 70847608220 "
+                                        "data de nacimento 17/12/1984"}]
+    for i in range(10):
+        msgs += [{"role": "assistant", "content": f"Resposta longa {i}. " + "texto " * 200},
+                 {"role": "user", "content": f"continua {i}"}]
+    msgs.append({"role": "user", "content": "nome da minha mae Omaira Josefina Martinez Cordero"})
+    r = _resumo_extrativo(msgs)
+    assert "70847608220" in r and "17/12/1984" in r and "Omaira Josefina" in r
+
+
 def test_loop_json_nao_aborta_a_tarefa_por_chamada_invalida():
     """'Não consegui executar: vieram chamadas de ferramenta em formato inválido'
     depois de 11 ferramentas certas: agora pede a chamada de novo."""
