@@ -942,6 +942,71 @@ def test_clique_em_dsml_com_ref_nao_perde_o_alvo():
     assert a[1]["args"] == {"alvo": "#txtCPF", "valor": "70847608220"}
 
 
+def _registro_extensao(feitos):
+    """Ferramentas como as da extensão: aceitam **kwargs (sem TypeError)."""
+    from yvakor.config import load_settings
+    from yvakor.tools.registry import ToolRegistry
+    reg = ToolRegistry(load_settings())
+
+    def preencher(**kw):
+        feitos.append(kw)
+        return {"ok": True, "tab_id": 1}
+    reg.register("navegador_preencher", preencher, "Preenche.",
+                 {"alvo": "str", "valor": "str", "aba": "int?"})
+    reg.register("navegador_ver", lambda **kw: {"ok": True, "elementos": []}, "Vê.",
+                 {"aba": "int?"})
+    return reg
+
+
+def test_ferramenta_da_extensao_sem_alvo_falha_em_vez_de_voltar_ok():
+    """A conversa da Receita: navegador_preencher {} voltava ok e nada era preenchido."""
+    feitos = []
+    reg = _registro_extensao(feitos)
+    r = reg.run("navegador_preencher")
+    assert r["ok"] is False and "alvo" in r["error"] and "NADA foi feito" in r["error"]
+    assert feitos == []
+    assert reg.run("navegador_ver")["ok"] is True          # opcionais seguem livres
+
+
+def test_preencher_varios_campos_de_uma_vez():
+    feitos = []
+    reg = _registro_extensao(feitos)
+    r = reg.run("navegador_preencher", campos=[
+        {"seletor": "input[name='txtCPF']", "valor": "70847608220"},
+        {"seletor": "input[name='txtDataNascimento']", "valor": "17/12/1984"}])
+    assert r["ok"] and len(r["campos"]) == 2
+    assert feitos == [{"alvo": "input[name='txtCPF']", "valor": "70847608220"},
+                      {"alvo": "input[name='txtDataNascimento']", "valor": "17/12/1984"}]
+
+
+def test_resposta_que_alega_preenchimento_sem_prova_e_corrigida():
+    """'Preenchi o formulário da Receita…' depois de 5 preenchimentos que falharam."""
+    from yvakor.agent import AVISO_SEM_PROVA, AgentLoop, alegacao_sem_prova
+    feitos = []
+    reg = _registro_extensao(feitos)
+    roteiro = [
+        '{"acao":"usar_ferramenta","ferramenta":"navegador_preencher","args":{}}',
+        "Preenchi o formulário com seus dados.",
+        "Não consegui preencher: a ferramenta recusou a chamada sem o campo alvo.",
+    ]
+
+    class Router:
+        vistos = []
+
+        def complete_messages(self, task, msgs, **k):
+            Router.vistos.append(msgs[-1]["content"])
+            return roteiro.pop(0)
+
+    saida = AgentLoop(Router(), reg, max_iterations=6).run(
+        "t", [{"role": "user", "content": "preenche tudo para mim"}])
+    assert saida.startswith("Não consegui preencher")
+    assert "nenhuma chamada" in Router.vistos[2] and feitos == []
+    # se insistir na mentira, a resposta sai marcada
+    assert alegacao_sem_prova("Preenchi tudo.", {"navegador_preencher": [False]})
+    assert not alegacao_sem_prova("Preenchi tudo.", {"navegador_preencher": [False, True]})
+    assert AVISO_SEM_PROVA.startswith("⚠️")
+
+
 def test_orcamento_critico_mantem_a_nuvem_como_reserva(tmp_path, monkeypatch):
     """'Todos os provedores falharam — ollama': com 90% do teto de tokens a nuvem
     saía da fila e, com o Ollama fechado, a tarefa morria."""

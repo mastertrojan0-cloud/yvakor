@@ -212,6 +212,42 @@ INSISTIR_NAVEGADOR = (
     "da observação.")
 
 
+# "Preenchi o formulário…" sem nenhum preenchimento ter dado certo: a resposta
+# afirma uma ação que as ferramentas não confirmaram.
+_ALEGACOES = (
+    (re.compile(r"\b(preenchi|preenchid[oa]s?|digitei|inseri)\b", re.I),
+     ("navegador_preencher", "navegador_digitar"), "preencheu"),
+    (re.compile(r"\b(cliquei|clicado|apertei)\b", re.I), ("navegador_clicar",), "clicou"),
+    (re.compile(r"\b(selecionei)\b", re.I), ("navegador_selecionar",), "selecionou"),
+    (re.compile(r"\b(enviei o formul|submeti)", re.I),
+     ("navegador_clicar", "navegador_preencher", "navegador_pressionar"), "enviou"),
+)
+
+
+AVISO_SEM_PROVA = ("⚠️ Atenção: as ferramentas NÃO confirmaram a ação descrita "
+                   "abaixo (as tentativas falharam). Confira na página antes de "
+                   "confiar nesta resposta.\n\n")
+
+
+def alegacao_sem_prova(texto: str, resultados: dict[str, list[bool]]) -> str | None:
+    """Mensagem de correção se o texto final alega uma ação de navegador sem
+    NENHUMA execução bem-sucedida da ferramenta correspondente nesta tarefa."""
+    if not texto:
+        return None
+    for padrao, ferramentas, verbo in _ALEGACOES:
+        if not padrao.search(texto):
+            continue
+        tentou = [ok for f in ferramentas for ok in resultados.get(f, [])]
+        if not any(tentou):
+            return (f"Sua resposta diz que {verbo}, mas nenhuma chamada de "
+                    f"{' / '.join(ferramentas)} teve sucesso nesta tarefa "
+                    f"({'todas falharam' if tentou else 'nenhuma foi feita'}). Não "
+                    "afirme o que não aconteceu: tente de novo com os argumentos "
+                    "certos (alvo = ref do navegador_ver, valor = texto) ou diga "
+                    "claramente o que NÃO conseguiu fazer.")
+    return None
+
+
 def desistiu_sem_tentar(texto: str, nomes: list[str] | None,
                         ferramentas_usadas: int) -> bool:
     """True se a resposta final alega não conseguir usar o navegador sem que
@@ -373,7 +409,13 @@ def _parse_acoes(raw: str, registry=None) -> list[dict]:
             # traduz nomes ANTES do coagir: ele descartava "ref"/"seletor" e o
             # clique ia sem alvo ("elemento não encontrado")
             args = _alias_args(registry, nome, args)
-        if registry is not None and hasattr(registry, "coagir"):
+        if isinstance(args.get("campos"), str):          # vários campos (lista JSON)
+            try:
+                args["campos"] = json.loads(args["campos"])
+            except Exception:
+                pass
+        if registry is not None and hasattr(registry, "coagir") and \
+                not isinstance(args.get("campos"), list):
             args = registry.coagir(nome, args)
         norm = _parse_acao(json.dumps({"acao": "usar_ferramenta",
                                        "ferramenta": nome, "args": args},
@@ -693,6 +735,8 @@ class AgentLoop:
         usadas = 0
         insistiu = False
         correcoes = 0
+        feitos: dict[str, list[bool]] = {}     # ferramenta → sucesso de cada chamada
+        cobrou_prova = False
         for _ in range(max_passos):
             if should_stop is not None and should_stop():
                 return "⏹ Tarefa interrompida a pedido do usuário."
@@ -745,6 +789,14 @@ class AgentLoop:
                     messages.append({"role": "assistant", "content": raw})
                     messages.append({"role": "user", "content": INSISTIR_NAVEGADOR})
                     continue
+                cobranca = alegacao_sem_prova(texto, feitos)
+                if cobranca and not cobrou_prova:
+                    cobrou_prova = True
+                    messages.append({"role": "assistant", "content": raw})
+                    messages.append({"role": "user", "content": cobranca})
+                    continue
+                if cobranca:
+                    texto = AVISO_SEM_PROVA + texto
                 return texto or "(sem resposta do modelo)"
 
             messages.append({"role": "assistant", "content": raw})
@@ -759,6 +811,8 @@ class AgentLoop:
                     if isinstance(args, dict) else \
                     {"ok": False, "error": "args inválidos"}
                 self._coletar(resultado)
+                feitos.setdefault(nome, []).append(
+                    bool(isinstance(resultado, dict) and resultado.get("ok")))
                 if on_event:
                     on_event("observacao", {"nome": nome, "resultado": resultado})
                 obs = json.dumps(resultado, ensure_ascii=False)[:2000]
@@ -772,8 +826,10 @@ class AgentLoop:
         final = (self.router.complete_messages(
             "analise_complexa", self._janela(messages, base),
             forcar=forcar_provider, **kw_modelo) or "").strip()
-        return _extrair_resposta_final(final) or \
-            "Concluí os passos possíveis, mas não obtive resposta final."
+        final = _extrair_resposta_final(final)
+        if final and alegacao_sem_prova(final, feitos):
+            final = AVISO_SEM_PROVA + final
+        return final or "Concluí os passos possíveis, mas não obtive resposta final."
 
     # ------------------------------------------------------------------ #
     # Function calling nativo
@@ -787,6 +843,8 @@ class AgentLoop:
         usadas = 0
         insistiu = False
         vazamentos = 0
+        feitos: dict[str, list[bool]] = {}
+        cobrou_prova = False
         for _ in range(self.max_iterations):
             if should_stop is not None and should_stop():
                 return "⏹ Tarefa interrompida a pedido do usuário."
@@ -825,6 +883,7 @@ class AgentLoop:
                             if isinstance(args, dict) else \
                             {"ok": False, "error": "args inválidos"}
                         self._coletar(resultado)
+                        feitos.setdefault(nome, []).append(bool(resultado.get("ok")))
                         if on_event:
                             on_event("observacao", {"nome": nome, "resultado": resultado})
                         msgs.append({"role": "user", "content": (
@@ -836,8 +895,15 @@ class AgentLoop:
                     msgs.append({"role": "assistant", "content": texto})
                     msgs.append({"role": "user", "content": INSISTIR_NAVEGADOR})
                     continue
+                cobranca = alegacao_sem_prova(texto, feitos)
+                if cobranca and not cobrou_prova:
+                    cobrou_prova = True
+                    msgs.append({"role": "assistant", "content": texto})
+                    msgs.append({"role": "user", "content": cobranca})
+                    continue
                 if texto:
-                    return _extrair_resposta_final(texto)
+                    return (AVISO_SEM_PROVA if cobranca else "") + \
+                        _extrair_resposta_final(texto)
                 return "(sem resposta do modelo)"
             msgs.append({"role": "assistant",
                          "content": msg.get("content") or "",
@@ -849,7 +915,9 @@ class AgentLoop:
                     args = json.loads(fn.get("arguments") or "{}")
                 except Exception:
                     args = {}
-                args = self.registry.coagir(nome, args if isinstance(args, dict) else {})
+                args = _alias_args(self.registry, nome, args if isinstance(args, dict) else {})
+                if "campos" not in args:            # o run expande "campos" (vários)
+                    args = self.registry.coagir(nome, args)
                 if on_event:
                     on_event("ferramenta", {"nome": nome, "args": args})
                 if estado is not None:
@@ -857,6 +925,7 @@ class AgentLoop:
                 usadas += 1
                 resultado = self.registry.run(nome, **args)
                 self._coletar(resultado)
+                feitos.setdefault(nome, []).append(bool(resultado.get("ok")))
                 if on_event:
                     on_event("observacao", {"nome": nome, "resultado": resultado})
                 msgs.append({"role": "tool",

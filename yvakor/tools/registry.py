@@ -98,13 +98,61 @@ class ToolRegistry:
             return dict(zip(spec, kwargs.values()))
         return {k: v for k, v in kwargs.items() if k in spec}
 
+    def _obrigatorios_faltando(self, name: str, kwargs: dict) -> list[str]:
+        """Só para funções que aceitam **kwargs (as ferramentas da extensão):
+        nelas a falta de um argumento NÃO gera TypeError — a chamada ia sem o
+        alvo, voltava "ok" e o modelo afirmava ter preenchido/clicado."""
+        import inspect
+        try:
+            params = inspect.signature(self.tools[name]).parameters.values()
+        except (TypeError, ValueError):
+            return []
+        if not any(p.kind == p.VAR_KEYWORD for p in params):
+            return []
+        spec = (self.specs.get(name) or {}).get("args") or {}
+        return [k for k, t in spec.items()
+                if not str(t).endswith("?") and kwargs.get(k) in (None, "")]
+
+    def _varios_campos(self, name: str, kwargs: dict) -> dict | None:
+        """{"campos": [{"seletor"/"alvo": …, "valor": …}, …]} — formato que o
+        modelo usa para preencher vários campos de uma vez: um por um."""
+        campos = kwargs.get("campos")
+        spec = (self.specs.get(name) or {}).get("args") or {}
+        if not isinstance(campos, list) or "campos" in spec or not {"alvo", "valor"} <= set(spec):
+            return None
+        extras = {k: v for k, v in kwargs.items() if k != "campos" and k in spec}
+        resultados = []
+        for c in campos[:20]:
+            if not isinstance(c, dict):
+                continue
+            alvo = next((c[k] for k in ("alvo", "seletor", "selector", "ref", "campo")
+                         if c.get(k)), "")
+            valor = next((c[k] for k in ("valor", "value", "texto") if k in c), "")
+            r = self.run(name, **{**extras, "alvo": alvo, "valor": valor})
+            resultados.append({"alvo": alvo, "ok": bool(r.get("ok")),
+                               "erro": r.get("error") or r.get("erro") or ""})
+        ok = bool(resultados) and all(r["ok"] for r in resultados)
+        return {"ok": ok, "campos": resultados,
+                **({} if ok else {"error": "nem todos os campos foram preenchidos: "
+                                  + "; ".join(f"{r['alvo']}: {r['erro'] or 'falhou'}"
+                                              for r in resultados if not r["ok"])})}
+
     def run(self, name: str, **kwargs) -> dict:
         if name not in self.tools:
             return {"ok": False, "error": f"ferramenta desconhecida: {name}"}
         if self.guard.requires_confirmation(name):
             if not self.guard.confirm(name, str(kwargs)[:200]):
                 return {"ok": False, "error": "cancelado pelo usuário"}
+        varios = self._varios_campos(name, kwargs)
+        if varios is not None:
+            return varios
         kwargs = self._reconciliar_args(name, kwargs)
+        faltando = self._obrigatorios_faltando(name, kwargs)
+        if faltando:
+            esperado = ", ".join((self.specs.get(name) or {}).get("args") or {})
+            return {"ok": False, "error": (
+                f"faltou o argumento obrigatório {', '.join(faltando)} — NADA foi "
+                f"feito. Argumentos esperados: {esperado}")}
         try:
             valor = self.tools[name](**kwargs)
         except TypeError as e:
