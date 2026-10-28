@@ -132,6 +132,23 @@ GRUPOS = {
 NUCLEO = ("executar_shell", "arquivos_listar", "arquivos_ler",
           "cerebro_buscar", "pensar", "tarefas_checklist", "perguntar_usuario")
 
+# Quando nenhum grupo casa: um conjunto geral e estável (navegar, pesquisar,
+# rodar Python, gerar gráfico/relatório). Antes eram TODAS as 146 ferramentas
+# ("2", "ja", "resolva") ou o ranking por descrição, que casava palavras
+# vazias ("o que esta na tela" → rede_telefone_tela, voz_falar…).
+GERAL = ("navegador_ver", "navegador_ir", "navegador_pesquisar", "navegador_clicar",
+         "navegador_preencher", "navegador_extrair", "navegador_captura",
+         "pesquisa_web", "web_ler", "executar_python", "cap_grafico",
+         "entregar_relatorio", "arquivos_escrever")
+
+# Palavras que não dizem nada sobre a ferramenta (o ranking casava "que",
+# "esta", "para" com descrições quaisquer).
+_VAZIAS = set("""que esta este essa esse isso isto para pra por com sem mim meu minha
+voce vc faz faca fazer favor agora sempre tem ter tudo mais muito como onde quando
+qual quais uma uns umas dos das nos nas aqui ali ela ele eles elas sua seu suas seus
+foi ser sim nao ja tambem preciso quero queria pode poderia vamos tela mostra mostre
+mostrar ver veja verifica verificar novamente continua continue resolva resolve""".split())
+
 
 def _palavras(texto: str) -> set[str]:
     return {p for p in re.findall(r"\w+", normalizar(texto)) if len(p) >= 3}
@@ -168,19 +185,25 @@ def selecionar(registry, mensagem: str, max_tools: int = 14) -> list[str]:
             adicionar(do_grupo)
 
     if not casou_grupo:
-        # ranking por nome/descrição quando não há grupo claro
+        # conjunto geral primeiro; o ranking por nome/descrição só completa
+        adicionar([n for n in GERAL if n in disponiveis])
         pontuados = []
+        uteis = alvo - _VAZIAS
         for nome in disponiveis:
             if nome in escolhidos:
                 continue
             texto = normalizar(nome + " " +
                                str((registry.specs.get(nome) or {}).get("desc", "")))
-            pontos = sum(1 for p in alvo if p in texto)
+            pontos = sum(1 for p in uteis if p in texto)
             if pontos:
                 pontuados.append((pontos, nome))
         pontuados.sort(reverse=True)
         adicionar([n for _, n in pontuados])
         if len(escolhidos) <= len(NUCLEO):
-            return disponiveis          # nada casou: mantém tudo
+            return disponiveis          # registro sem as ferramentas gerais
+    else:
+        # vagas que sobram: o conjunto geral ("análise do BTC" + "mostra na
+        # tela" casava só mercado_* e ficava sem Python/gráfico/navegador)
+        adicionar([n for n in GERAL if n in disponiveis])
 
     return escolhidos[:max(3, int(max_tools))]

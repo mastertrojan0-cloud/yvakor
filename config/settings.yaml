@@ -14,7 +14,7 @@ agent:
   aprender_local: false
   ferramentas_nativas: false # opt-in: o provedor atual trava com tools; JSON é o padrão
   router_ferramentas: true   # envia somente as ferramentas relevantes
-  max_ferramentas: 14        # teto por mensagem
+  max_ferramentas: 22        # teto por mensagem (as demais vão só pelo nome no prompt)
   # Método de raciocínio (yvakor/raciocinio.py): entender → planejar → agir
   # passo a passo → diagnosticar erros → verificar → responder com honestidade.
   raciocinio:

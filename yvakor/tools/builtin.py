@@ -145,14 +145,18 @@ def escrever_arquivo(nome: str, conteudo: str) -> dict:
 # ----------------------------------------------------------------------- #
 # Execução de Python no sandbox (timeout) — GUARDED
 # ----------------------------------------------------------------------- #
-def executar_python(codigo: str, timeout: int = 15) -> dict:
+def executar_python(codigo: str, timeout: int = 60) -> dict:
     """Roda código Python isolado em data/sandbox com timeout. GUARDED."""
     SANDBOX.mkdir(parents=True, exist_ok=True)
     script = SANDBOX / "_run.py"
     script.write_text(codigo, encoding="utf-8")
     try:
-        p = _ywproc.run([sys.executable, str(script)], cwd=str(SANDBOX),
-                           capture_output=True, text=True, timeout=timeout)
+        import os
+        p = _ywproc.run([_python_do_projeto(), str(script)], cwd=str(SANDBOX),
+                        capture_output=True, text=True, timeout=timeout,
+                        encoding="utf-8", errors="replace",
+                        env={**os.environ, "PYTHONIOENCODING": "utf-8",
+                             "MPLBACKEND": "Agg"})
         return {"ok": p.returncode == 0, "stdout": p.stdout[-6000:],
                 "stderr": p.stderr[-3000:], "returncode": p.returncode}
     except subprocess.TimeoutExpired:
@@ -208,6 +212,38 @@ def editar_arquivo_local(caminho: str, busca: str, troca: str) -> dict:
     return {"ok": True, "caminho": str(p)}
 
 
+def _python_do_projeto() -> str:
+    """python.exe do venv do YVAKOR (o app roda em pythonw, que não tem saída)."""
+    exe = Path(sys.executable)
+    console = exe.with_name("python.exe")
+    return str(console if console.exists() else exe)
+
+
+# Nome do comando no início de cada trecho (início, depois de && | ; ou "(").
+_CMD_PYTHON = re.compile(r"(^|[&|;(]\s*)(?:python3?|py)(?:\.exe)?(?=\s|$)", re.I)
+_CMD_PIP = re.compile(r"(^|[&|;(]\s*)pip3?(?:\.exe)?(?=\s|$)", re.I)
+# Coisas de Linux que o modelo escreve por hábito; no cmd.exe falham com
+# "não é reconhecido" e o agente concluía que "a máquina não tem" o recurso.
+_LINUX = re.compile(r"(/dev/null|/tmp/|(^|[|&;]\s*)(tail|head|grep|sed|awk|cat|which|"
+                    r"wc|scrot|gnome-screenshot|import -window|xwd|apt|apt-get|sudo)\b)")
+
+
+def _comando_windows(comando: str) -> str:
+    """python/python3/pip → o Python do projeto. No PATH, `python3` é o atalho
+    da Microsoft Store e `python` era o venv de outro programa: o gráfico do
+    BTC falhou com "matplotlib não instalado" embora o venv do YVAKOR o tenha."""
+    py = f'"{_python_do_projeto()}"'
+    comando = _CMD_PYTHON.sub(lambda m: m.group(1) + py, comando)
+    return _CMD_PIP.sub(lambda m: m.group(1) + py + " -m pip", comando)
+
+
+DICA_WINDOWS = ("Este PC é WINDOWS (cmd.exe): não há tail/head/grep/sed/cat, /tmp "
+                "nem /dev/null. Use PowerShell (powershell -Command \"...\"), "
+                "findstr/type/dir, %TEMP% e NUL; para script Python use "
+                "executar_python; para ver a página use navegador_ver/"
+                "navegador_captura.")
+
+
 def executar_shell(comando: str, timeout: int = 25, cwd: str | None = None) -> dict:
     """Executa um comando no shell do sistema com timeout. GUARDED."""
     try:
@@ -221,11 +257,16 @@ def executar_shell(comando: str, timeout: int = 25, cwd: str | None = None) -> d
                     "abrir na janela da extensão."}
     except Exception:
         pass
+    if sys.platform == "win32":
+        comando = _comando_windows(comando or "")
     try:
         p = _ywproc.run(comando, shell=True, capture_output=True, text=True,
                            timeout=timeout, cwd=cwd)
-        return {"ok": p.returncode == 0, "stdout": p.stdout[-8000:],
-                "stderr": p.stderr[-4000:], "returncode": p.returncode}
+        saida = {"ok": p.returncode == 0, "stdout": p.stdout[-8000:],
+                 "stderr": p.stderr[-4000:], "returncode": p.returncode}
+        if p.returncode != 0 and sys.platform == "win32" and _LINUX.search(comando):
+            saida["dica"] = DICA_WINDOWS
+        return saida
     except subprocess.TimeoutExpired:
         return {"ok": False, "erro": f"timeout após {timeout}s"}
 

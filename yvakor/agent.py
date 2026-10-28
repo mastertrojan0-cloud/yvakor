@@ -408,14 +408,6 @@ def desistiu_sem_tentar(texto: str, nomes: list[str] | None,
     return bool(_DESISTENCIA.search(texto))
 
 
-def _extensao_conectada() -> bool:
-    try:
-        from yvakor.extensao_bridge import PONTE
-        return bool(PONTE.disponivel())
-    except Exception:
-        return False
-
-
 def _extrair_resposta_final(raw: str) -> str:
     """Se o modelo respondeu no formato JSON {"acao":"responder", ...} em vez
     de texto puro (acontece com alguns modelos), extrai só o texto. Caso
@@ -454,7 +446,9 @@ _ALIAS_ARGS = {"query": "termo", "q": "termo", "busca": "termo", "texto_busca": 
                # alvo de clique/preenchimento (o modelo usa a ref do navegador_ver)
                "ref": "alvo", "seletor": "alvo", "selector": "alvo", "elemento": "alvo",
                "element": "alvo", "target": "alvo", "campo": "alvo", "botao": "alvo",
-               "value": "valor", "text": "texto", "key": "tecla"}
+               "value": "valor", "text": "texto", "key": "tecla",
+               # executar_shell {"cmd": …} falhava com "faltou comando"
+               "cmd": "comando", "command": "comando", "code": "codigo"}
 
 
 _CHAVES_PROTOCOLO = {"acao", "ferramenta", "tool", "name", "motivo", "args",
@@ -498,7 +492,12 @@ def _parse_acao(raw: str, registry=None) -> dict | None:
             try:
                 args = json.loads(args)
             except Exception:
-                args = None
+                # "args": "https://…" → 1º argumento da ferramenta. Antes
+                # virava {} e navegador_ir rodava 3x sem url ("faltou url").
+                nome_args = obj.get("ferramenta") or obj.get("tool") or obj.get("name") or acao
+                spec = ((getattr(registry, "specs", {}) or {}).get(
+                    _ALIAS_FERRAMENTA.get(nome_args, nome_args)) or {}).get("args") or {}
+                args = {next(iter(spec)): args} if spec and args.strip() else None
         if args is None and (ferramenta or acao not in ("", "responder")):
             # argumentos "soltos" no objeto: {"ferramenta":"http_get","url":"…"}.
             # Antes viravam args=None e a ferramenta rodava VAZIA (http_get {}).
@@ -549,12 +548,14 @@ def _valor_dsml(valor: str) -> str:
 
 
 _MARCACAO_FERRAMENTA = re.compile(
-    r"DSML|\"usar_ferramenta\"|\"(ferramenta|tool)\"\s*:\s*\"|<tool_\w+>")
+    r"DSML|\"usar_ferramenta\"|\"(ferramenta|tool)\"\s*:\s*\"|<tool_\w+>|"
+    r"<(navegador|arquivos|executar|pesquisa|cap|web)_\w+>")
 
 # Formato XML que o DeepSeek às vezes usa:
 # <tool_browser_navigate><url>https://…</url></tool_browser_navigate>
 _TOOL_XML = re.compile(r"<tool_(\w+)>(.*?)</tool_\1>", re.S)
 _TOOL_XML_ARG = re.compile(r"<(\w+)>(.*?)</\1>", re.S)
+_XML_NOME_REAL = re.compile(r"<([a-z]+_\w+)>(.*?)</\1>", re.S)
 _ALIAS_XML = {
     "browser_navigate": "navegador_ir", "browser_open": "navegador_abrir",
     "browser_click": "navegador_clicar", "browser_type": "navegador_digitar",
@@ -623,6 +624,20 @@ def _parse_acoes_brutas(raw: str, registry=None) -> list[dict]:
             acoes.append(norm)
     if acoes:
         return acoes
+    # 1c) <navegador_ir><url>…</url></navegador_ir> — nome real como tag
+    if registry is not None:
+        for m in _XML_NOME_REAL.finditer(raw):
+            if m.group(1) not in registry.tools:
+                continue
+            args = {a.group(1): a.group(2).strip()
+                    for a in _TOOL_XML_ARG.finditer(m.group(2))}
+            norm = _parse_acao(json.dumps({"acao": "usar_ferramenta",
+                                           "ferramenta": m.group(1), "args": args},
+                                          ensure_ascii=False), registry)
+            if norm:
+                acoes.append(norm)
+        if acoes:
+            return acoes
     # 2) JSON no meio de prosa
     while True:
         j = raw.find("{", i)
@@ -697,11 +712,16 @@ class AgentLoop:
                     limite: int | None = None) -> list[str] | None:
         if not self.roteador and limite is None:
             return None
-        mensagem = ""
-        for item in reversed(history):
-            if item.get("role") == "user":
-                mensagem = item.get("content") or ""
-                break
+        # A tarefa é a conversa, não só a última frase: "sim", "2", "resolva",
+        # "o que esta na tela" sozinhos recebiam 8 ferramentas sem navegador
+        # ou as 146. As 3 últimas mensagens do usuário dão o assunto.
+        pedidos = [item.get("content") for item in reversed(history)
+                   if item.get("role") == "user" and isinstance(item.get("content"), str)
+                   and not item["content"].startswith("OBSERVAÇÃO")][:3]
+        # O modelo local (compacto) só ganha ferramenta de risco pelo pedido
+        # ATUAL — palavra de risco de uma mensagem antiga não vale.
+        mensagem = pedidos[0] if limite is not None and pedidos else \
+            "\n".join(reversed(pedidos))
         from yvakor.tools.router import selecionar
         if limite is not None and self._INTENCAO_NAVEGADOR.search(mensagem or ""):
             # Tarefa de navegador precisa de mais ferramentas juntas (ver +
@@ -712,9 +732,10 @@ class AgentLoop:
         if limite is not None:           # modo compacto (modelo local)
             self.ultima_selecao = self._limitar_compacto(
                 self.ultima_selecao, mensagem, limite)
-        elif self._conversa_de_navegador(history) and _extensao_conectada():
+        elif self._conversa_de_navegador(history):
             # Continuação de uma conversa sobre o navegador ("analisa a
             # página", "e o spam?"): sem isto o modelo ficava sem navegador_*.
+            # Não exige a extensão: Edge/Chrome próprios também atendem.
             nucleo = [n for n in self.NUCLEO_NAVEGADOR
                       if n in self.registry.tools and n not in self.ultima_selecao]
             self.ultima_selecao = nucleo + list(self.ultima_selecao)
@@ -826,11 +847,26 @@ class AgentLoop:
                           "navegador_procurar acha só o elemento descrito.\n")
             return base_system + "\n\n" + texto + raciocinio.METODO_COMPACTO
         texto = PROTOCOLO.format(manifesto=self.registry.manifest(nomes))
+        texto += self._catalogo_restante(nomes)
         if nativo:
             texto = self._SECAO_JSON.sub(lambda _: self.PROTOCOLO_NATIVO, texto, count=1)
             texto = texto.replace(
                 "- Quando for chamar ferramenta, o JSON deve ser a ÚNICA coisa na mensagem.\n", "")
         return base_system + "\n\n" + texto + raciocinio.METODO
+
+    def _catalogo_restante(self, nomes: list[str] | None) -> str:
+        """Nomes das ferramentas fora da seleção. Sem isto o agente dizia
+        "não tenho navegador_ver / ferramenta de gráfico nesta conversa" e
+        devolvia a tarefa — o executor roda qualquer ferramenta registrada."""
+        if not nomes:
+            return ""
+        resto = [n for n in self.registry.tools if n not in nomes]
+        if not resto:
+            return ""
+        return ("\n## OUTRAS FERRAMENTAS DISPONÍVEIS (chame pelo nome exato; os "
+                "argumentos seguem o nome, ex.: navegador_ir → url)\n"
+                + ", ".join(resto) + "\nNunca diga que não tem uma ferramenta "
+                "sem conferir esta lista.\n")
 
     @staticmethod
     def _pedido_atual(history: list[dict]) -> str:

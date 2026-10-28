@@ -779,12 +779,11 @@ def _registro_navegador_fake(chamadas):
     return reg
 
 
-def test_modelo_que_desiste_sem_tentar_e_obrigado_a_usar_o_navegador(monkeypatch):
+def test_modelo_que_desiste_sem_tentar_e_obrigado_a_usar_o_navegador():
     """Os prints: 'a extensão não está respondendo' com 0 ferramentas chamadas —
     o modelo só repetia falhas antigas do histórico."""
     from yvakor import agent as ag
     from yvakor.agent import AgentLoop, desistiu_sem_tentar
-    monkeypatch.setattr(ag, "_extensao_conectada", lambda: True)
     chamadas = []
 
     class Router:
@@ -1162,10 +1161,8 @@ def test_gmail_email_e_voo_recebem_ferramentas_de_navegador():
         assert "navegador_ver" in selecionar(reg, frase), frase
 
 
-def test_continuacao_de_conversa_de_navegador_mantem_as_ferramentas(monkeypatch):
-    from yvakor import agent as ag
+def test_continuacao_de_conversa_de_navegador_mantem_as_ferramentas():
     from yvakor.agent import AgentLoop
-    monkeypatch.setattr(ag, "_extensao_conectada", lambda: True)
     reg = _registro_navegador_fake([])
     reg.register("cap_resumir", lambda **k: {"ok": True}, "Resume texto.", {"t": "str"})
     loop = AgentLoop(None, reg, roteador=True)
@@ -1173,7 +1170,6 @@ def test_continuacao_de_conversa_de_navegador_mantem_as_ferramentas(monkeypatch)
             {"role": "assistant", "content": "Abri o Gmail."},
             {"role": "user", "content": "resume isso"}]
     assert "navegador_ver" in loop._selecionar(hist)
-    monkeypatch.setattr(ag, "_extensao_conectada", lambda: False)
     assert loop._selecionar([{"role": "user", "content": "resume isso"}]) is not None
 
 

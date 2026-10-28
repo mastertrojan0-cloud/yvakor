@@ -76,6 +76,36 @@ def _checar_arquivo_envio(caminho: str) -> str:
     return ""
 
 
+RASTROS = ROOT / "data" / "rastros.jsonl"
+RASTROS_MAX_BYTES = 2 * 1024 * 1024
+
+
+def _mascarar(texto: str) -> str:
+    """Números de documento, datas e CEP viram ### no rastro."""
+    return _re.sub(r"\d[\d./-]{4,}\d", "###", texto or "")
+
+
+def _gravar_rastro(sid, pedido: str, resposta: str, passos: list[dict],
+                   duracao: float, forcar) -> None:
+    """Uma linha por tarefa em data/rastros.jsonl: quais ferramentas rodaram,
+    quais falharam e com que erro. Antes só o NOME da ferramenta ficava no
+    histórico, e "por que a tarefa não terminou" era adivinhação."""
+    try:
+        if RASTROS.exists() and RASTROS.stat().st_size > RASTROS_MAX_BYTES:
+            RASTROS.replace(RASTROS.with_suffix(".jsonl.1"))
+        linha = {"ts": datetime.now().isoformat(timespec="seconds"),
+                 "sessao": str(sid or "")[-8:], "local": bool(forcar),
+                 "pedido": _mascarar(pedido)[:160],
+                 "passos": passos[:60], "falhas": sum(not p["ok"] for p in passos),
+                 "segundos": round(duracao, 1),
+                 "resposta": _mascarar(resposta)[:240]}
+        RASTROS.parent.mkdir(parents=True, exist_ok=True)
+        with RASTROS.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(linha, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
 class ConfirmationBroker:
     """Handshake de confirmação servidor↔navegador, por conversa (sid).
 
@@ -1113,7 +1143,7 @@ class Orchestrator:
         _ponte.permitir_outro = bool(_re.search(
             r"\b(edge|firefox|outro navegador|outra janela|playwright)\b",
             user_message or "", _re.I))
-        passos = {"n": 0, "nomes": []}
+        passos = {"n": 0, "nomes": [], "rastro": []}
         self.ultimos_artefatos = []
         if not private:
             self._aprender_com_feedback(sid, user_message)
@@ -1395,7 +1425,12 @@ class Orchestrator:
                 self._prog_step(sid, "📋 esperando você aprovar o plano")
             elif tipo == "observacao" and isinstance(dado, dict):
                 res = dado.get("resultado", {})
-                if isinstance(res, dict) and not res.get("ok", True):
+                ok = not (isinstance(res, dict) and not res.get("ok", True))
+                passos["rastro"].append({
+                    "nome": str(dado.get("nome", "")), "ok": ok,
+                    **({} if ok else {"erro": _mascarar(str(
+                        res.get("error") or res.get("erro") or "falha"))[:200]})})
+                if not ok:
                     try:
                         print(f"    ⚠ {res.get('error', res.get('erro', 'falha'))[:120]}",
                               flush=True)
@@ -1453,6 +1488,9 @@ class Orchestrator:
             self._prog_done(sid)
 
         self.episodic.log("conversa", user_message, answer, session_id=sid)
+        if not private:
+            _gravar_rastro(sid, user_message, answer, passos["rastro"],
+                           time.time() - inicio, forcar)
         # Título automático só na conversa do usuário (sessões de tarefa têm
         # nome próprio e não devem ser renomeadas).
         # (app e extensão podem estar em conversas diferentes: vale o sid da mensagem)
