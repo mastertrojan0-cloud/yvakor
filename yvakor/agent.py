@@ -532,12 +532,20 @@ def _parse_acao(raw: str, registry=None) -> dict | None:
     return None
 
 
+# Tags podem vir quebradas por linha ("</\n｜｜DSML｜｜parameter>"): com
+# [^>\n] o fechamento não casava e o valor de "aba" engolia o parâmetro
+# seguinte ("valor"), e o preenchimento ia sem valor (28/10, 2ª via do CPF).
 _DSML_INVOKE = re.compile(
     r"<[^>\n]*DSML[^>\n]*invoke\s+name=[\"']([^\"']+)[\"'][^>]*>(.*?)"
-    r"</[^>\n]*DSML[^>\n]*invoke>", re.S | re.I)
+    r"</[^>]*?DSML[^>]*?invoke\s*>", re.S | re.I)
 _DSML_PARAM = re.compile(
     r"<[^>\n]*DSML[^>\n]*parameter\s+name=[\"']([^\"']+)[\"'][^>]*>(.*?)"
-    r"</[^>\n]*DSML[^>\n]*parameter>", re.S | re.I)
+    r"</[^>]*?DSML[^>]*?parameter\s*>", re.S | re.I)
+def _valor_dsml(valor: str) -> str:
+    """Corta restos de marcação que ainda vierem grudados no valor."""
+    if "DSML" in valor or valor.rstrip().endswith("</"):
+        valor = re.split(r"</?[^>]*DSML|</\s*$", valor, maxsplit=1)[0]
+    return valor.strip()
 
 
 _MARCACAO_FERRAMENTA = re.compile(
@@ -580,7 +588,7 @@ def _parse_acoes_brutas(raw: str, registry=None) -> list[dict]:
         nome = m.group(1).strip()
         args = {}
         for p in _DSML_PARAM.finditer(m.group(2)):
-            args[p.group(1).strip()] = p.group(2).strip()
+            args[p.group(1).strip()] = _valor_dsml(p.group(2))
         if registry is not None:
             nome = nome if nome in getattr(registry, "tools", {}) else \
                 _ALIAS_FERRAMENTA.get(nome, nome)
@@ -774,9 +782,21 @@ class AgentLoop:
                 nomes.append(n)
         return nomes[:limite]
 
+    # No modo nativo o protocolo JSON no prompt brigava com a API de tool
+    # calls: o DeepSeek obedecia o texto, escrevia o JSON como resposta e, no
+    # 3º "vazamento", o loop devolvia o JSON cru ao usuário (28/10).
+    _SECAO_JSON = re.compile(r"## PROTOCOLO DE RESPOSTA \(OBRIGATÓRIO\).*?(?=\nRegras:)", re.S)
+    PROTOCOLO_NATIVO = (
+        "## COMO USAR AS FERRAMENTAS (OBRIGATÓRIO)\n"
+        "Chame as ferramentas SOMENTE pela chamada de função nativa da API (tool "
+        "calls) — nunca escreva JSON, DSML ou o nome da ferramenta no texto. "
+        "Ferramentas independentes podem ser chamadas juntas, na mesma vez. "
+        "Quando terminar, responda ao usuário em TEXTO NORMAL (português, "
+        "markdown livre).\n")
+
     def system_with_tools(self, base_system: str,
                           nomes: list[str] | None = None,
-                          compacto: bool = False) -> str:
+                          compacto: bool = False, nativo: bool = False) -> str:
         if compacto:
             # Manifesto enxuto: 1 linha curta por ferramenta (o texto completo
             # de ~14 ferramentas é o que mais pesa no prompt do modelo local).
@@ -805,8 +825,12 @@ class AgentLoop:
                           "navegador_ver de novo. Em página grande, "
                           "navegador_procurar acha só o elemento descrito.\n")
             return base_system + "\n\n" + texto + raciocinio.METODO_COMPACTO
-        return base_system + "\n\n" + PROTOCOLO.format(
-            manifesto=self.registry.manifest(nomes)) + raciocinio.METODO
+        texto = PROTOCOLO.format(manifesto=self.registry.manifest(nomes))
+        if nativo:
+            texto = self._SECAO_JSON.sub(lambda _: self.PROTOCOLO_NATIVO, texto, count=1)
+            texto = texto.replace(
+                "- Quando for chamar ferramenta, o JSON deve ser a ÚNICA coisa na mensagem.\n", "")
+        return base_system + "\n\n" + texto + raciocinio.METODO
 
     @staticmethod
     def _pedido_atual(history: list[dict]) -> str:
@@ -976,7 +1000,8 @@ class AgentLoop:
 
     def run(self, base_system: str, history: list[dict], on_event=None,
             should_stop=None, forcar_provider=None,
-            compacto: bool = False) -> str:
+            compacto: bool = False,
+            dados_usuario: list[str] | None = None) -> str:
         """history = lista de {"role":"user"|"assistant","content":...}.
         on_event(tipo, dado) opcional p/ logar passos (ferramenta, observação).
         should_stop() opcional: retorna True para interromper (cancelamento de
@@ -987,10 +1012,11 @@ class AgentLoop:
         limpar_checklist()    # checklist (tarefas_checklist) é por execução
         nomes = self._selecionar(
             history, self.COMPACTO_MAX_FERRAMENTAS if compacto else None)
+        usar_nativo = self.nativo and forcar_provider != "ollama" and not compacto
+        dados = raciocinio.dados_informados(history, mensagens_sessao=dados_usuario)
         messages = [{"role": "system",
-                     "content": self.system_with_tools(base_system, nomes,
-                                                       compacto)
-                     + raciocinio.dados_informados(history)}]
+                     "content": self.system_with_tools(base_system, nomes, compacto,
+                                                       nativo=usar_nativo) + dados}]
         messages += history
         plano = self._planejar(messages, history, on_event, forcar_provider,
                                compacto)
@@ -1008,7 +1034,7 @@ class AgentLoop:
         # nenhuma ferramenta já tiver rodado, para não re-executar ações com
         # efeito colateral (ex.: enviar e-mail duas vezes). A exceção é logada,
         # não engolida em silêncio (A4).
-        if self.nativo and forcar_provider != "ollama" and not compacto:
+        if usar_nativo:
             estado = {"ferramentas": 0}
             try:
                 return self._run_nativo(messages, on_event, should_stop,
@@ -1024,6 +1050,9 @@ class AgentLoop:
                             "nativo após já executar ferramentas; não repeti "
                             "as ações para evitar efeitos duplicados. "
                             f"Detalhe: {str(exc)[:200]}")
+                # o protocolo JSON precisa das instruções JSON no system
+                messages[0] = {"role": "system", "content": self.system_with_tools(
+                    base_system, nomes, compacto) + dados}
 
         inicio_run = time.time()
         max_passos = (min(self.max_iterations, self.COMPACTO_MAX_PASSOS)
@@ -1141,7 +1170,9 @@ class AgentLoop:
                     bool(isinstance(resultado, dict) and resultado.get("ok")))
                 if on_event:
                     on_event("observacao", {"nome": nome, "resultado": resultado})
-                obs = (json.dumps(resultado, ensure_ascii=False, default=str)[:2000]
+                # 4000 como no nativo: com 2000 o settings.yaml era cortado antes
+                # da seção do Gemini e o agente respondia "não aparece no trecho"
+                obs = (json.dumps(resultado, ensure_ascii=False, default=str)[:4000]
                        + reflexao.registrar(nome, args, resultado))
                 messages.append({"role": "user",
                                  "content": f"OBSERVAÇÃO ({nome}): {obs}"})
@@ -1203,8 +1234,11 @@ class AgentLoop:
                     # Chamada escrita como TEXTO (DSML/JSON) em vez de
                     # tool_calls: antes virava a "resposta final" com a
                     # marcação crua. Executa se for válida; senão pede de novo.
-                    vazamentos += 1
+                    # Só chamada ILEGÍVEL conta para o limite: uma válida escrita
+                    # como texto é executada sempre (antes, na 3ª, o JSON cru
+                    # virava a resposta final).
                     acoes = _parse_acoes(texto, self.registry)
+                    vazamentos += 0 if acoes else 1
                     msgs.append({"role": "assistant", "content": texto})
                     if not acoes:
                         msgs.append({"role": "user", "content": (

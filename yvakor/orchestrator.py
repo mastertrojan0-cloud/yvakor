@@ -809,6 +809,13 @@ class Orchestrator:
                 parts.append(bloco_perfil())
         except Exception:
             pass
+        try:
+            from yvakor import licoes
+            bloco = licoes.padrao().bloco(user_message)
+            if bloco:
+                parts.append(bloco)
+        except Exception:
+            pass
         if relevant_skills:
             parts.append("## SKILLS RELEVANTES (siga estes procedimentos)\n"
                          + "\n---\n".join(s[:1200] for s in relevant_skills))
@@ -1106,8 +1113,10 @@ class Orchestrator:
         _ponte.permitir_outro = bool(_re.search(
             r"\b(edge|firefox|outro navegador|outra janela|playwright)\b",
             user_message or "", _re.I))
-        passos = {"n": 0}
+        passos = {"n": 0, "nomes": []}
         self.ultimos_artefatos = []
+        if not private:
+            self._aprender_com_feedback(sid, user_message)
 
         # Chamada pelo nome: responde na hora; com pedido junto, remove o nome.
         from yvakor.nome import separar as _separar_nome
@@ -1369,6 +1378,7 @@ class Orchestrator:
                     pass
             if tipo == "ferramenta":
                 passos["n"] += 1
+                passos["nomes"].append(str(dado.get("nome", "")))
                 label = self._rotulo_passo(dado)
                 self._prog_step(sid, label)
                 self.episodic.log("ferramenta", dado.get("nome", ""),
@@ -1427,7 +1437,8 @@ class Orchestrator:
             answer = self.agent.run(system, history=history, on_event=_trace,
                                     should_stop=should_stop,
                                     forcar_provider=forcar,
-                                    compacto=modo_local)
+                                    compacto=modo_local,
+                                    dados_usuario=self._mensagens_usuario(sid))
             # Lista local desta resposta (agent.artefatos é thread-local, lido
             # na MESMA thread) — garante que os entregáveis anexados são os
             # desta execução, não os de outra tarefa concorrente.
@@ -1453,14 +1464,18 @@ class Orchestrator:
         # vez de ser apenas gravada em avaliacoes.jsonl).
         if self.settings["agent"]["reflection_enabled"] and not private:
             threading.Thread(target=self._aprender_fundo,
-                             args=(user_message, answer, task_type),
+                             args=(user_message, answer, task_type,
+                                   self._contexto_avaliacao(history),
+                                   list(passos["nomes"])),
                              daemon=True, name="yvakor-aprender").start()
         elif (self.settings["agent"].get("avaliar_auto") and not private
               and (not self.router.sem_externos()
                    or self.settings["agent"].get("aprender_local", False))):
             # Reflexão desligada: ainda avaliamos (telemetria de qualidade).
             threading.Thread(target=self._avaliar_fundo,
-                             args=(user_message, answer),
+                             args=(user_message, answer,
+                                   self._contexto_avaliacao(history),
+                                   list(passos["nomes"])),
                              daemon=True, name="yvakor-avaliar").start()
 
         if self.cerebro is not None:
@@ -1479,6 +1494,18 @@ class Orchestrator:
         # Obsidian quase em tempo real: sincroniza no máximo a cada 2 min.
         self._sincronizar_cerebro_async()
         return answer
+
+    def _mensagens_usuario(self, sid: str | None, limite: int = 80) -> list[str] | None:
+        """Todas as mensagens do usuário nesta conversa (as mais recentes até
+        `limite`), para o agente não perder dados ditos lá atrás — o histórico
+        do modelo só tem os últimos turnos."""
+        try:
+            rows = self.episodic.conn.execute(
+                "SELECT input FROM episodes WHERE kind='conversa' AND session_id=? "
+                "ORDER BY id DESC LIMIT ?", (sid or self.episodic.active_id, limite)).fetchall()
+            return [r[0] for r in reversed(rows) if r[0]]
+        except Exception:
+            return None
 
     def _eh_chat(self, sid: str | None) -> bool:
         """Conversa do usuário (não sessão de tarefa cowork, que tem nome próprio)."""
@@ -1696,35 +1723,87 @@ class Orchestrator:
         return ((texto or "").rstrip() +
                 "\n\n**Entregáveis gerados:**\n" + "\n".join(linhas))
 
-    def _avaliar_fundo(self, pergunta: str, resposta: str) -> int | None:
+    @staticmethod
+    def _contexto_avaliacao(history: list[dict] | None, turnos: int = 6) -> str:
+        """Últimos turnos ANTES da pergunta atual, para o avaliador entender
+        "2", "sim", um CEP… como continuação (sem isso ele pedia
+        "esclarecimento" — o oposto do que o usuário quer)."""
+        linhas = []
+        for item in (history or [])[:-1][-turnos:]:
+            texto = item.get("content")
+            if isinstance(texto, str) and texto.strip():
+                quem = "USUÁRIO" if item.get("role") == "user" else "AGENTE"
+                linhas.append(f"{quem}: {' '.join(texto.split())[:400]}")
+        return "\n".join(linhas)
+
+    # Nota até aqui = a lição sugerida pelo avaliador vira memória de erro.
+    NOTA_MAX_LICAO = 3
+
+    def _avaliar_fundo(self, pergunta: str, resposta: str, contexto: str = "",
+                       ferramentas: list[str] | None = None) -> int | None:
         """Avalia a resposta (1-5), grava em avaliacoes.jsonl e devolve a nota
-        (ou None se a avaliação falhar), para o aprendizado poder usá-la."""
+        (ou None se a avaliação falhar), para o aprendizado poder usá-la.
+        Nota baixa com "licao" geral → data/licoes.json (yvakor/licoes.py)."""
         try:
             from yvakor.colaboracao import avaliar_resposta
-            r = avaliar_resposta(self.router, pergunta, resposta)
+            r = avaliar_resposta(self.router, pergunta, resposta, contexto,
+                                 sorted(set(ferramentas or [])))
             if not r.get("ok"):
                 return None
             r.update({"ts": datetime.now().isoformat(timespec="seconds"),
                       "pergunta": (pergunta or "")[:600],
-                      "resposta": (resposta or "")[:1200]})
+                      "resposta": (resposta or "")[:1200],
+                      "ferramentas": len(ferramentas or [])})
             arq = ROOT / "data" / "avaliacoes.jsonl"
             arq.parent.mkdir(parents=True, exist_ok=True)
             with self._avaliacao_lock:
                 with arq.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(r, ensure_ascii=False) + "\n")
             try:
-                return int(r.get("nota"))
+                nota = int(r.get("nota"))
             except (TypeError, ValueError):
                 return None
+            if nota <= self.NOTA_MAX_LICAO and str(r.get("licao") or "").strip():
+                try:
+                    from yvakor import licoes
+                    licoes.padrao().registrar(r["licao"], "erro", exemplo=pergunta)
+                except Exception:
+                    pass
+            return nota
         except Exception:
             return None
+
+    def _aprender_com_feedback(self, sid: str, mensagem: str) -> None:
+        """Correção ("já mandei o CEP", "não era isso") ou instrução permanente
+        ("tem que mostrar sempre na tela") → lição, em segundo plano. A lição
+        vale da próxima tarefa em diante; a de agora já tem a mensagem."""
+        try:
+            from yvakor import licoes
+            tipo = licoes.tipo_feedback(mensagem)
+            if not tipo or self.router.sem_externos():
+                return
+            row = self.episodic.conn.execute(
+                "SELECT input, output FROM episodes WHERE kind='conversa' AND "
+                "session_id=? ORDER BY id DESC LIMIT 1", (sid,)).fetchone()
+        except Exception:
+            return
+        if not row and tipo == "correcao":
+            return                                   # corrigir o quê?
+        pedido, resposta = (row or ("", ""))
+
+        def _rodar():
+            texto = licoes.destilar_feedback(self.router, tipo, pedido, resposta, mensagem)
+            if texto:
+                licoes.padrao().registrar(texto, tipo, exemplo=pedido or mensagem)
+        threading.Thread(target=_rodar, daemon=True, name="yvakor-licao").start()
 
     # Nota mínima (1-5) para a resposta "ensinar" a memória. Respostas ruins
     # não contaminam fatos/skills (antes a nota era write-only em jsonl).
     NOTA_MIN_APRENDER = 4
 
     def _aprender_fundo(self, pergunta: str, resposta: str,
-                        task_type: str) -> None:
+                        task_type: str, contexto: str = "",
+                        ferramentas: list[str] | None = None) -> None:
         """Avalia e SÓ absorve/destila se a resposta foi boa. Antes absorção e
         avaliação eram threads independentes: a nota não influenciava nada."""
         # Sem provedor externo só sobra o 3B local (CPU): avaliar/extrair fatos
@@ -1737,7 +1816,7 @@ class Orchestrator:
             pass
         nota = None
         if self.settings["agent"].get("avaliar_auto"):
-            nota = self._avaliar_fundo(pergunta, resposta)
+            nota = self._avaliar_fundo(pergunta, resposta, contexto, ferramentas)
             if nota is not None and nota < self.NOTA_MIN_APRENDER:
                 return  # resposta fraca: não vira fato nem skill
         if not self._abs_lock.acquire(blocking=False):

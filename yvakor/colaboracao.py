@@ -49,13 +49,32 @@ def subagentes(router, tarefas: str, contexto: str = "",
     return {"ok": True, "subagentes": respostas}
 
 
-def avaliar_resposta(router, pergunta: str, resposta: str) -> dict:
+def avaliar_resposta(router, pergunta: str, resposta: str, contexto: str = "",
+                     ferramentas: list[str] | None = None) -> dict:
+    """Nota 1-5 + problemas + uma LIÇÃO geral (o aprendizado usa a lição).
+    Antes o avaliador via só pergunta e resposta: "2", "sim" ou um CEP viravam
+    "pergunta ambígua — peça esclarecimento", o oposto do que o usuário quer,
+    e ele não sabia se a resposta tinha usado alguma ferramenta."""
+    usadas = ", ".join(ferramentas or []) or "NENHUMA"
     prompt = (
-        "Avalie a resposta abaixo de 1 a 5 nos critérios: correção, "
-        "utilidade, aderência à pergunta e clareza. Responda SOMENTE JSON:\n"
+        "Você avalia o YVAKOR, um agente pessoal que EXECUTA tarefas com "
+        "ferramentas (navegador, pesquisa, arquivos). O dono quer autonomia: "
+        "mensagens curtas (\"2\", \"sim\", um CEP, \"continua\") são continuação "
+        "da conversa e devem ser atendidas usando o contexto, sem pedir "
+        "esclarecimento; dados já ditos na conversa não devem ser pedidos de "
+        "novo; fato concreto (preço, endereço, telefone) sem ferramenta usada "
+        "é provavelmente inventado; oferecer em vez de fazer é falha.\n"
+        "Avalie de 1 a 5: correção, utilidade, aderência e clareza. Responda "
+        "SOMENTE JSON:\n"
         '{"nota": 1-5, "correcao": 1-5, "utilidade": 1-5, "aderencia": 1-5, '
-        '"clareza": 1-5, "problemas": ["..."], "melhoria": "..."}\n\n'
-        f"PERGUNTA: {pergunta}\n\nRESPOSTA: {resposta[:6000]}")
+        '"clareza": 1-5, "problemas": ["..."], "melhoria": "...", '
+        '"licao": "regra GERAL e curta para o agente não repetir o erro em '
+        'tarefas parecidas (ex.: \\"Quando o site só mostra preço após o CEP, '
+        'digite o CEP no campo em vez de extrair a página de novo\\"), ou \\"\\" '
+        'se a resposta foi boa ou o erro não se generaliza"}\n\n'
+        + (f"CONVERSA ANTERIOR (resumo):\n{contexto[-2500:]}\n\n" if contexto else "")
+        + f"FERRAMENTAS USADAS NESTA RESPOSTA: {usadas}\n\n"
+        f"PERGUNTA ATUAL: {pergunta}\n\nRESPOSTA: {resposta[:6000]}")
     try:
         mensagens = [{"role": "system", "content": "Responda apenas JSON válido."},
                      {"role": "user", "content": prompt}]

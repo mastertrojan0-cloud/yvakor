@@ -262,28 +262,48 @@ def pedido_verificacao(plano: dict | None) -> str:
 
 
 # ------------------------------------------------- dados já dados pelo usuário
-_CEP = re.compile(r"^\s*(\d{5}-?\d{3})\s*$")
+_TIPOS_DADO = (
+    (re.compile(r"^\s*\d{5}-?\d{3}\s*$"), "provável CEP"),
+    (re.compile(r"^\s*\d{3}\.?\d{3}\.?\d{3}-?\d{2}\s*$"), "provável CPF"),
+    (re.compile(r"^\s*\d{1,2}/\d{1,2}/\d{2,4}\s*$"), "data"),
+)
+# Mensagem com cara de dado (número, e-mail, nome, endereço…) mesmo que longa:
+# "Fulano, nome da mãe Beltrana" tinha 70+ caracteres e ficava de fora.
+_TEM_DADO = re.compile(
+    r"(\d{3,}|@|\bnome\b|\bm[aã]e\b|endere[cç]o|\brua\b|\bcep\b|\bcpf\b|"
+    r"nascimento|telefone|whats)", re.I)
 
 
-def dados_informados(history: list[dict], maximo: int = 6) -> str:
-    """Respostas curtas que o usuário já deu nesta conversa ("2", um CEP,
-    "consulta"). O modelo perdia esses dados no meio do histórico e dizia
-    "não tenho o seu CEP" dois turnos depois de recebê-lo."""
-    curtas = []
-    for item in history[:-1]:                      # a última é o pedido atual
-        texto = item.get("content")
-        if item.get("role") != "user" or not isinstance(texto, str):
+def dados_informados(history: list[dict], maximo: int = 10,
+                     mensagens_sessao: list[str] | None = None) -> str:
+    """Dados e respostas curtas que o usuário já deu nesta conversa ("2", um
+    CEP, nome, data…). O modelo perdia esses dados — só vê os últimos turnos,
+    cortados — e dizia "não tenho o seu CEP" ou "o resumo cortou os valores"
+    (o usuário teve de responder "já está na conversa, aprenda").
+    `mensagens_sessao`: todas as mensagens do usuário na conversa (o
+    orquestrador passa); sem ela, usa as do histórico."""
+    if mensagens_sessao is None:
+        textos = [h.get("content") for h in history[:-1]     # a última é o pedido atual
+                  if h.get("role") == "user"]
+    else:
+        textos = list(mensagens_sessao)
+    itens, vistos = [], set()
+    for texto in textos:
+        if not isinstance(texto, str):
             continue
-        texto = texto.strip()
-        if not texto or len(texto) > 30:
+        texto = " ".join(texto.split())
+        if (not texto or len(texto) > 300 or texto in vistos
+                or (len(texto) > 30 and not _TEM_DADO.search(texto))):
             continue
-        curtas.append(f"\"{texto}\" (provável CEP)" if _CEP.match(texto)
-                      else f"\"{texto}\"")
-    if not curtas:
+        vistos.add(texto)
+        tipo = next((t for rx, t in _TIPOS_DADO if rx.match(texto)), "")
+        itens.append(f"\"{texto}\"" + (f" ({tipo})" if tipo else ""))
+    if not itens:
         return ""
     return ("\n\n## DADOS QUE O USUÁRIO JÁ INFORMOU NESTA CONVERSA\n"
-            "Respostas curtas dele, em ordem: " + ", ".join(curtas[-maximo:])
-            + ". Use-as na tarefa; não peça de novo nem diga que não as tem.")
+            "Mensagens dele com dados ou respostas curtas, em ordem: "
+            + "; ".join(itens[-maximo:])
+            + ". Use-os na tarefa; não peça de novo nem diga que não os tem.")
 
 
 # ------------------------------------------------------------------ reflexão
