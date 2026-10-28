@@ -159,6 +159,61 @@ def test_dados_curtos_do_usuario_vao_para_o_prompt():
     assert "69076472" in capt["system"]
 
 
+ABA_INVENTADO = (
+    "Para encontrar instituições de terapia ABA perto do Conjunto Nova República "
+    "em Manaus, fiz uma busca considerando a região.\n\n1. **Clínica Integrar**\n"
+    "   - **Endereço de referência:** Próximo à Av. Ephigênio Salles / Zona Centro-Sul.")
+BTC_CODIGO = ("```python\nimport matplotlib.pyplot as plt\n# Dados simulados/atuais "
+              "do BTC para o painel visual\nprecos = [67200, 66800]\n```")
+PAINEL_DOIS_PONTOS = ("Posso gerar uma imagem/gráfico detalhado.\n\nPara abrir agora "
+                      "um painel limpo com os dados atuais direto na sua tela:")
+
+
+def test_resposta_inventada_sem_pesquisa_e_cobrada():
+    """Respostas reais de 28/10, todas sem nenhuma ferramenta."""
+    assert "NENHUMA ferramenta" in cobrar_autonomia(ABA_INVENTADO, NAV, 0)
+    assert "endereços" in cobrar_autonomia(
+        "1. **Clínica X** — Av. Ephigênio Salles, 100. Tel. (92) 98403-8940.", NAV, 0)
+    assert "simulados" in cobrar_autonomia(BTC_CODIGO, ["mercado_analisar"], 0)
+    assert "bloco de código" in cobrar_autonomia(
+        "```python\nprint(1)\n```", ["executar_python"], 0, "sim")
+    # pediu código: entregar o código está certo
+    assert cobrar_autonomia("```python\nprint(1)\n```", ["executar_python"], 0,
+                            "me escreve um script python") is None
+    # com pesquisa feita, endereço na resposta é normal
+    assert cobrar_autonomia("Clínica X — Av. Ephigênio Salles, 100.", NAV, 6) is None
+
+
+def test_anunciar_com_dois_pontos_e_parar_e_promessa():
+    from yvakor.agent import prometeu_sem_fazer
+    assert prometeu_sem_fazer(PAINEL_DOIS_PONTOS, NAV)
+    assert prometeu_sem_fazer("Os planos são: A e B.", NAV) is None
+
+
+def test_passo_do_agente_nao_e_reordenado_pelo_custo(tmp_path):
+    """Protocolo JSON (padrão): o Gemini grátis ia primeiro em cada passo."""
+    from yvakor.llm import economia
+
+    class P:
+        def __init__(self, name):
+            self.name, self.max_tokens = name, 4096
+    provs = {n: P(n) for n in ("deepseek", "gemini", "ollama")}
+    o = economia.Otimizador({"precos_usd_por_milhao": {
+        "deepseek": {"entrada": 0.28, "cache": 0.028, "saida": 0.42},
+        "gemini": {"entrada": 0.0, "cache": 0.0, "saida": 0.0}}},
+        provs, caminho_db=tmp_path / "c.db")
+    ordem = [provs["deepseek"], provs["gemini"], provs["ollama"]]
+    passo = [{"role": "system", "content": 'responda {"acao":"usar_ferramenta", ...}'},
+             {"role": "user", "content": "x"}]
+    nuvens = [p.name for p in o.planejar("analise_complexa", passo, ordem, "auto").ordem
+              if p.name != "ollama"]
+    assert nuvens == ["deepseek", "gemini"]
+    conversa = [{"role": "user", "content": "x"}]
+    nuvens = [p.name for p in o.planejar("analise_complexa", conversa, ordem, "auto").ordem
+              if p.name != "ollama"]
+    assert nuvens == ["gemini", "deepseek"]          # fora do agente o grátis vem antes
+
+
 def test_regras_de_autonomia_no_prompt():
     from yvakor.agent import PROTOCOLO
     assert "TERMINE O TRABALHO" in raciocinio.METODO

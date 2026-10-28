@@ -742,7 +742,11 @@ class Otimizador:
         # várias nuvens conectadas: a de menor custo esperado por sucesso vem
         # antes — só no modo Automático. Nos modos DeepSeek/Gemini o usuário
         # escolheu quem vem primeiro (antes o ranque passava por cima disso).
-        if ranquear and modo == "auto" and not forcar and len(nuvens) > 1:
+        # Passo do agente (protocolo JSON, o padrão) também não ranqueia: em
+        # 28/10 o Gemini grátis ia primeiro em cada passo — 28 s em média
+        # contra 1,8 s do DeepSeek, com timeouts e respostas sem ferramenta.
+        agente = any(x in _texto(m) for m in mensagens for x in _MARCAS_AGENTE)
+        if ranquear and not agente and modo == "auto" and not forcar and len(nuvens) > 1:
             ranque = iter(sorted(nuvens, key=self._custo_por_sucesso(faixa)))
             ordem = [next(ranque) if not self.eh_local(p.name) else p for p in ordem]
 

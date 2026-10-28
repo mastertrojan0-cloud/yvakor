@@ -275,7 +275,8 @@ _OFERTA = re.compile(
     r"\bse (voc[eê] )?quiser,? (eu )?(posso |tento |pesquis|busc|procur|abr|"
     r"consult|verific|levant|compar)|"
     r"\bquer que eu (tente|pesquise|busque|procure|abra|consulte|verifique|"
-    r"veja|compare|levante)|"
+    r"veja|compare|levante|gere|crie|monte|mostre)|"
+    r"\bposso (gerar|criar|montar|mostrar|exibir)|"
     r"\b(voc[eê] mesmo|por conta pr[oó]pria)\b|"
     r"\bme (mand[ae]|envi[ae]) (um )?print|"
     r"\b(abra|acesse|entre em) [^.\n]{0,60}\b(e )?(digite|informe|coloque) )", re.I)
@@ -286,7 +287,15 @@ _SO_USUARIO = re.compile(
     re.I)
 _ALEGA_TENTATIVA = re.compile(
     r"\b(tentei|pesquisei|busquei|procurei|abri|acessei|consultei|verifiquei|"
-    r"naveguei|li a p[aá]gina)\b", re.I)
+    r"naveguei|li a p[aá]gina|encontrei|localizei|"
+    r"fiz (uma )?(busca|pesquisa|consulta|levantamento))\b", re.I)
+# Endereço, telefone ou preço concretos numa resposta sem nenhuma ferramenta:
+# na busca de clínicas ABA (28/10) vieram nomes e avenidas inventados.
+_DADO_CONCRETO = re.compile(
+    r"(\(\d{2}\)\s?9?\d{4}-?\d{4}|\b(R\.|Rua|Av\.|Avenida|Travessa|Estrada)\s+"
+    r"[A-ZÁÉÍÓÚÂÊÔ]|R\$\s?\d)")
+_DADO_INVENTADO = re.compile(
+    r"\bdados?\s+(simulad|fict[ií]ci|de exemplo|hipot[eé]tic|ilustrativ)", re.I)
 _SEM_ACESSO_ATUAL = re.compile(
     r"n[aã]o (tenho|possuo) acesso[^.\n]{0,50}(tempo real|atualiza|internet|web|"
     r"online|pre[cç]os?)", re.I)
@@ -300,13 +309,31 @@ COBRAR_AUTONOMIA = (
     "alternativas, diga o que tentou de fato e o bloqueio, sem oferecer.")
 
 
+_PEDIU_CODIGO = re.compile(
+    r"(c[oó]digo|script|python|javascript|fun[cç][aã]o|programa|snippet|exemplo de)",
+    re.I)
+
+
 def cobrar_autonomia(texto: str, nomes: list[str] | None,
-                     ferramentas_usadas: int) -> str | None:
+                     ferramentas_usadas: int, pedido: str = "") -> str | None:
     """Mensagem de cobrança quando a resposta final oferece/delega um passo
     seguro que o agente mesmo podia fazer, alega ter tentado sem ter chamado
     ferramenta, ou diz não ter acesso a dado atual tendo pesquisa à mão."""
     if not texto:
         return None
+    # Valem com qualquer conjunto de ferramentas (no "sim" da análise de BTC
+    # veio um script matplotlib com preços simulados em vez do gráfico real).
+    if _DADO_INVENTADO.search(texto):
+        return COBRAR_AUTONOMIA.format(motivo=(
+            "sua resposta usa dados simulados/de exemplo. Busque os dados reais "
+            "com a ferramenta certa (ex.: mercado_analisar para cripto/ações, que "
+            "já gera o gráfico) e não invente números."))
+    if (not ferramentas_usadas and texto.lstrip().startswith("```")
+            and not _PEDIU_CODIGO.search(pedido or "")):
+        return COBRAR_AUTONOMIA.format(motivo=(
+            "você respondeu com um bloco de código em vez de executar a ação. "
+            "Rode pela ferramenta (ou use a ferramenta pronta para isso) e "
+            "entregue o resultado, não o código."))
     nomes = nomes or []
     if not any(n.startswith("navegador_") or n in _FERRAMENTAS_AUTONOMIA
                for n in nomes):
@@ -318,6 +345,11 @@ def cobrar_autonomia(texto: str, nomes: list[str] | None,
     if not ferramentas_usadas and _SEM_ACESSO_ATUAL.search(texto):
         return COBRAR_AUTONOMIA.format(motivo=(
             "você disse não ter acesso a informação atual sem pesquisar."))
+    if not ferramentas_usadas and _DADO_CONCRETO.search(texto):
+        return COBRAR_AUTONOMIA.format(motivo=(
+            "sua resposta traz endereços/telefones/preços concretos sem nenhuma "
+            "pesquisa nesta tarefa — podem estar inventados. Confirme com "
+            "pesquisa_web/navegador e só cite o que a fonte mostrar."))
     # A oferta costuma vir no fim; olhar só o final evita pegar citações.
     fim = texto[-500:]
     m = _OFERTA.search(fim)
@@ -356,9 +388,13 @@ def prometeu_sem_fazer(texto: str, nomes: list[str] | None) -> str | None:
                             for n in (nomes or [])):
         return None
     m = _PROMESSA.search(texto[-400:])
-    if not m:
-        return None
-    return INSISTIR_PROMESSA.format(trecho=m.group(0).strip())
+    if m:
+        return INSISTIR_PROMESSA.format(trecho=m.group(0).strip())
+    # "Para abrir agora um painel com os dados atuais direto na sua tela:" e
+    # fim — anunciou o que vinha a seguir e parou.
+    if texto.rstrip().endswith(":"):
+        return INSISTIR_PROMESSA.format(trecho=texto.rstrip().splitlines()[-1][-120:])
+    return None
 
 
 def desistiu_sem_tentar(texto: str, nomes: list[str] | None,
@@ -946,6 +982,7 @@ class AgentLoop:
         should_stop() opcional: retorna True para interromper (cancelamento de
         tarefa em segundo plano) entre um passo e outro."""
         self.artefatos = []   # zera a lista desta thread (ver properties acima)
+        self._tl.pedido = self._pedido_atual(history)
         from yvakor.ferramentas_claude import limpar_checklist
         limpar_checklist()    # checklist (tarefas_checklist) é por execução
         nomes = self._selecionar(
@@ -1065,7 +1102,8 @@ class AgentLoop:
                     continue
                 # no modelo local cada passo extra custa minutos: não cobra
                 autonomia = None if cobrou_autonomia or compacto else cobrar_autonomia(
-                    texto, nomes or list(self.registry.tools), usadas)
+                    texto, nomes or list(self.registry.tools), usadas,
+                    getattr(self._tl, "pedido", ""))
                 if autonomia:
                     cobrou_autonomia = True
                     messages.append({"role": "assistant", "content": raw})
@@ -1209,7 +1247,8 @@ class AgentLoop:
                     msgs.append({"role": "user", "content": promessa})
                     continue
                 autonomia = None if cobrou_autonomia else cobrar_autonomia(
-                    texto, nomes or list(self.registry.tools), usadas)
+                    texto, nomes or list(self.registry.tools), usadas,
+                    getattr(self._tl, "pedido", ""))
                 if autonomia:
                     cobrou_autonomia = True
                     msgs.append({"role": "assistant", "content": texto})
