@@ -325,6 +325,7 @@ class Orchestrator:
             "navegador_ver": "👁️ vendo página", "navegador_clicar": "🖱️ clicando",
             "navegador_preencher": "⌨️ preenchendo", "navegador_pesquisar": "🔍 buscando",
             "navegador_extrair": "📑 extraindo", "navegador_captura": "📸 capturando",
+            "navegador_aguardar_captcha": "🧩 esperando você resolver o captcha",
             "navegador_rolar": "🖱️ rolando", "navegador_esperar": "⏱️ esperando",
             "navegador_abas": "🗂️ abas", "navegador_nova_aba": "🗂️ nova aba",
             "navegador_trocar_aba": "🗂️ trocando aba",
@@ -566,6 +567,62 @@ class Orchestrator:
                                 desc + " Usa a janela do Chrome da extensão.",
                                 args)
 
+        # Captcha: o agente NUNCA resolve. Traz a aba para a frente, destaca o
+        # captcha, avisa o usuário e espera ELE resolver; aí devolve o controle
+        # para o agente clicar em enviar (sem recarregar — isso invalida o captcha).
+        def aguardar_captcha(segundos=180, aba=None, navegador: str = "") -> dict:
+            if not alvo_ext(navegador):
+                return {"ok": False, "error": "aguardar captcha só funciona pela "
+                        "extensão do Chrome."}
+            try:
+                segundos = max(20, min(int(segundos or 180), 600))
+            except (TypeError, ValueError):
+                segundos = 180
+            extra = {"aba": aba} if aba not in (None, "") else {}
+            r = PONTE.comando("captcha", {"focar": True, **extra})
+            if not r.get("ok", True) and not r.get("presente"):
+                return r
+            if not r.get("presente"):
+                return {"ok": True, "presente": False,
+                        "dica": "não há captcha nesta página; siga com o envio."}
+            if r.get("resolvido"):
+                return {"ok": True, "presente": True, "resolvido": True,
+                        "dica": "captcha já resolvido: clique no botão de envio agora, "
+                                "sem recarregar nem preencher de novo."}
+            aviso = "Resolva o captcha na aba destacada do Chrome — eu continuo sozinho."
+            try:
+                from yvakor.notificacoes import emitir
+                emitir(aviso, "tarefa", 2)
+            except Exception:
+                pass
+            with self._prog_lock:                # aparece no painel de processo
+                rodando = [s for s, p in self.progress.items() if p.get("running")]
+            for s in rodando:
+                self._prog_step(s, "🧩 " + aviso)
+            fim = time.time() + segundos
+            while time.time() < fim:
+                time.sleep(2.0)
+                r = PONTE.comando("captcha", extra, espera=20.0)
+                if r.get("resolvido"):
+                    return {"ok": True, "presente": True, "resolvido": True,
+                            "dica": "o usuário resolveu o captcha: clique AGORA no botão "
+                                    "de envio (não recarregue, não preencha de novo)."}
+                if r.get("ok") and not r.get("presente"):
+                    return {"ok": True, "presente": False, "url": r.get("url", ""),
+                            "dica": "o captcha sumiu da página (talvez já enviado); "
+                                    "use navegador_ver."}
+            return {"ok": False, "presente": True, "resolvido": False,
+                    "error": f"o captcha não foi resolvido em {segundos}s; peça ao "
+                             "usuário para resolver e dizer 'continua'."}
+
+        self.tools.register(
+            "navegador_aguardar_captcha", aguardar_captcha,
+            "Quando a página tem captcha: traz a aba para a frente, avisa o usuário "
+            "e ESPERA ele resolver (você nunca resolve captcha). Chame depois de "
+            "preencher os campos; quando voltar resolvido, clique no botão de envio "
+            "sem recarregar a página.",
+            {"segundos": "int?", "aba": "int?", "navegador": "str?"})
+
         # Anexar arquivo do computador num <input type=file>. O núcleo lê o arquivo
         # (a página não tem acesso ao disco) e manda em base64; a extensão pergunta
         # SEMPRE ao usuário antes de anexar (ação sensível, nos dois modos).
@@ -726,7 +783,8 @@ class Orchestrator:
                     "screenshot ou para o usuário colar o conteúdo; analise o "
                     "contexto recebido.")
         if _re.search(r"\b(abre|abra|navegue|acesse|clique|preencha|pesquise|"
-                      r"digite|site|p[aá]gina|navegador|chrome|youtube)\b",
+                      r"digite|site|p[aá]gina|navegador|chrome|youtube|preench\w*|"
+                      r"consult\w*|captcha|formul[aá]rio)\b",
                       user_message or "", _re.I):
             parts.append(
                 "## MODO NAVEGADOR\n"
@@ -740,7 +798,11 @@ class Orchestrator:
                 "navegador_abrir. O padrão é a janela da extensão; só use Edge "
                 "se o usuário pedir.\n"
                 "- Só finalize quando o objetivo estiver confirmado; se um "
-                "caminho falhar, tente outro sozinho.")
+                "caminho falhar, tente outro sozinho.\n"
+                "- CAPTCHA: você nunca resolve. Preencha os campos, chame "
+                "navegador_aguardar_captcha e, quando voltar resolvido, clique no "
+                "botão de envio. Depois de resolvido NÃO recarregue nem preencha de "
+                "novo (isso invalida o captcha).")
         try:
             from yvakor.extensao_bridge import PONTE as _ponte_st
             if _ponte_st.disponivel():

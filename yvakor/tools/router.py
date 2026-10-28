@@ -23,7 +23,8 @@ GRUPOS = {
         "palavras": ("site", "pagina", "página", "url", "navegar", "navegue",
                      "clique", "login", "web", "http", "pesquis", "baixar",
                      "download", "formulario", "formulário", "link", "aba",
-                     "voo", "voos", "preco", "precos", "caixa"),
+                     "voo", "voos", "preco", "precos", "caixa", "captcha",
+                     "consulta", "consultar", "receita", "cpf"),
         # Radicais: casam por INÍCIO da palavra. A lista acima só casava a
         # palavra inteira ("pesquis" nunca casava "pesquise"), então "pesquise
         # gatos no google" e "escreva olá no campo" não recebiam NENHUMA
@@ -49,7 +50,8 @@ GRUPOS = {
                        "navegador_esperar",
                        "navegador_extrair", "navegador_rolar",
                        "navegador_abrir", "navegador_historico",
-                       "navegador_passar_mouse", "navegador_captura"),
+                       "navegador_passar_mouse", "navegador_captura",
+                       "navegador_aguardar_captcha"),
     },
     "mercado": {
         "prefixos": ("mercado_", "binance_", "tradingview_", "coingecko_", "cryptopanic_", "stocktwits_", "medo_"),

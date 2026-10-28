@@ -19,6 +19,12 @@ def sem_json_de_ferramenta(texto: str) -> str:
         texto = re.sub(r"</?[^>\n]*DSML[^>\n]*>", "", texto).strip()
         if not texto:
             return ""
+    if "<tool_" in texto:                 # <tool_browser_navigate>…</tool_…>
+        sem = re.sub(r"<tool_(\w+)>.*?</tool_\1>", "", texto, flags=re.S).strip()
+        if sem != texto.strip():
+            if not sem:
+                return ""
+            texto = sem
     dec = json.JSONDecoder()
     if _OBS.search(texto):
         # o modelo pequeno ecoava "OBSERVAÇÃO (navegador_ver): {json cru}"

@@ -68,10 +68,48 @@
            " " + norm(rotulos) + " " + norm(el.getAttribute("aria-label"));
   }
 
+  // Modelos escrevem seletores do Playwright/jQuery ("text=Consultar",
+  // "button:has-text('Consultar')", ":contains(...)") e listas com vírgula —
+  // CSS inválido, que antes virava "elemento não encontrado".
+  function alternativas(alvo) {
+    const saida = [];
+    for (const parte of alvo.split(/,(?![^()]*\))/).map((s) => s.trim()).filter(Boolean)) {
+      const m = parte.match(/^text\s*=\s*["']?(.+?)["']?$/i)
+             || parte.match(/:(?:has-text|contains|text)\(\s*["']?(.+?)["']?\s*\)/i);
+      if (m) {
+        const base = parte.split(/:(?:has-text|contains|text)\(/i)[0].trim();
+        saida.push({ texto: m[1], base: /^text\s*=/i.test(parte) ? "" : base });
+      } else {
+        saida.push({ css: parte });
+      }
+    }
+    return saida;
+  }
+
   // alvo = ref "e3" do último snapshot | seletor CSS | texto/rótulo do elemento
   function achar(alvo) {
     alvo = String(alvo == null ? "" : alvo).trim();
     if (!alvo) return null;
+    const alts = alternativas(alvo);
+    if (alts.length > 1 || alts.some((a) => a.texto)) {
+      for (const a of alts) {
+        if (a.css) {
+          const el = acharSimples(a.css);
+          if (el) return el;
+          continue;
+        }
+        const q = norm(a.texto);
+        let cand = consultar(a.base || SEL_INTERATIVO).filter(visivel);
+        const el = cand.find((e) => norm(e.innerText || e.value || e.getAttribute("aria-label") || "") === q)
+                || cand.find((e) => rotulo(e).includes(q));
+        if (el) return el;
+      }
+      return null;
+    }
+    return acharSimples(alvo);
+  }
+
+  function acharSimples(alvo) {
     if (/^e\d+$/.test(alvo)) {
       const el = consultar('[data-yvakor-ref="' + alvo + '"]')[0];
       if (el) return el;
@@ -188,10 +226,18 @@
       if (e.desabilitado) extra += " [desabilitado]";
       return "[" + e.ref + "] <" + e.tag + extra + "> " + e.texto;
     });
+    const cap = captchaEstado();
+    const avisoCaptcha = !cap.presente ? "" : cap.resolvido
+      ? "\n\nCAPTCHA: RESOLVIDO pelo usuário. NÃO recarregue a página nem preencha de novo " +
+        "(isso invalida o captcha): clique direto no botão de envio."
+      : "\n\nCAPTCHA: PENDENTE. Você NÃO resolve captcha. Preencha os campos e chame " +
+        "navegador_aguardar_captcha para o usuário resolver; depois clique no botão de envio.";
     return {
       url: location.href, title: document.title, text: texto, items: itens,
+      captcha: cap.presente ? cap : undefined,
       resumo: "URL: " + location.href + "\nTÍTULO: " + document.title +
-              "\n\nTEXTO:\n" + texto.slice(0, 1800) + "\n\nELEMENTOS:\n" + linhas.join("\n")
+              "\n\nTEXTO:\n" + texto.slice(0, 1800) + "\n\nELEMENTOS:\n" + linhas.join("\n") +
+              avisoCaptcha
     };
   }
 
@@ -220,11 +266,51 @@
     const el = achar(alvo);
     if (!el) return { ok: false, erro: "elemento não encontrado — use navegador_ver para ver as refs atuais" };
     if (el.disabled) return { ok: false, erro: "elemento desabilitado" };
+    const cap = captchaEstado();
+    const envia = !!(el.form && (el.type === "submit" || el.tagName === "BUTTON" && !el.type))
+               || (el.tagName === "A" && el.href && !/^javascript:/i.test(el.getAttribute("href") || ""));
     const v = V();
+    if (envia) {
+      // Envio de formulário/link NAVEGA: a página é descarregada antes de este
+      // script devolver o resultado, e a extensão ficava presa até o tempo limite
+      // ("a extensão não respondeu"). Responde ANTES e clica logo em seguida.
+      const resp = comPagina({ navegando: true, captcha: cap.presente ? cap : undefined });
+      setTimeout(() => {
+        if (v && v.click) v.click(el, "clicando").catch(() => el.click());
+        else { el.scrollIntoView({ block: "center" }); el.click(); }
+      }, 30);
+      return resp;
+    }
     if (v && v.click) await v.click(el, "clicando");
     else { el.scrollIntoView({ block: "center" }); el.click(); }
     await dormir(150);
     return comPagina({});
+  }
+
+  // ---- captcha (detectar e esperar o USUÁRIO resolver; nunca resolve sozinho) ----
+  function captchaEstado() {
+    const sinais = consultar(
+      "iframe[src*='hcaptcha'],iframe[src*='recaptcha'],iframe[src*='turnstile']," +
+      "iframe[src*='captcha'],.h-captcha,.g-recaptcha,.cf-turnstile,[data-sitekey]");
+    const respostas = consultar(
+      "textarea[name='h-captcha-response'],textarea[name='g-recaptcha-response']," +
+      "input[name='cf-turnstile-response'],input[name='h-captcha-response']");
+    const presente = sinais.length > 0 || respostas.length > 0;
+    const resolvido = respostas.some((e) => (e.value || "").trim().length > 20);
+    return { presente, resolvido };
+  }
+  function captcha() {
+    const c = captchaEstado();
+    if (c.presente && !c.resolvido) {
+      const alvo = consultar(".h-captcha,.g-recaptcha,.cf-turnstile,[data-sitekey]," +
+                             "iframe[src*='captcha']")[0];
+      if (alvo) {
+        alvo.scrollIntoView({ block: "center" });
+        alvo.style.outline = "3px solid #d4a017";
+        alvo.style.outlineOffset = "4px";
+      }
+    }
+    return Object.assign({ ok: true }, c, { url: location.href, titulo: document.title });
   }
 
   // ---- escrever ----
@@ -708,5 +794,5 @@
 
   window.__yvakorAcoes = { snapshot, extrair, clicar, escrever, pressionar,
                            selecionar, enviar_arquivo, passar_mouse, esperar, rolar,
-                           descrever_acao, procurar };
+                           descrever_acao, procurar, captcha };
 })();

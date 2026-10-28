@@ -17,6 +17,8 @@ const acoesExecutadas = [];
 const PAGINA_PROTEGIDA = /^(chrome|edge|about|chrome-extension|devtools|view-source|chrome-search):/;
 const ctrlOrActiveBG = async () => ({ id: 7, url: urlAba });
 const indicadorLigar = async () => {};
+const dormirBG = (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5)));
+const aguardarCarregarBG = async () => null;
 const chrome = { scripting: { executeScript: async (o) => {
   if (o.files) return [];
   const [nome] = o.args;

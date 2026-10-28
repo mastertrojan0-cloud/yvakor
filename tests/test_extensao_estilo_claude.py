@@ -418,7 +418,7 @@ def test_background_e_motor_expoem_o_procurar():
     bg = (EXT / "background.js").read_text(encoding="utf-8")
     assert 'c.tipo === "find"' in bg and 'acaoPagina("procurar"' in bg
     pagina = (EXT / "pagina.js").read_text(encoding="utf-8")
-    assert "procurar }" in pagina.split("window.__yvakorAcoes =")[-1]
+    assert "procurar" in pagina.split("window.__yvakorAcoes =")[-1].split("};")[0]
 
 
 # --------------------------------------------------------------------------- #
@@ -1005,6 +1005,57 @@ def test_resposta_que_alega_preenchimento_sem_prova_e_corrigida():
     assert alegacao_sem_prova("Preenchi tudo.", {"navegador_preencher": [False]})
     assert not alegacao_sem_prova("Preenchi tudo.", {"navegador_preencher": [False, True]})
     assert AVISO_SEM_PROVA.startswith("⚠️")
+
+
+def test_formato_tool_xml_vira_ferramenta_e_nao_vaza_no_chat():
+    """Resposta real: '<tool_browser_navigate><url>…</url></tool_browser_navigate>'."""
+    from yvakor.agent import _parse_acoes
+    from yvakor.textos import sem_json_de_ferramenta
+    reg = _registro_com_specs([])
+    reg.register("navegador_ir", lambda **k: {"ok": True}, "Ir.", {"url": "str"})
+    raw = ("<tool_browser_navigate>\n<url>https://servicos.receita.fazenda.gov.br/"
+           "servicos/cpf/cpf2via/</url>\n</tool_browser_navigate>")
+    a = _parse_acoes(raw, reg)
+    assert a[0]["ferramenta"] == "navegador_ir"
+    assert a[0]["args"] == {"url": "https://servicos.receita.fazenda.gov.br/servicos/cpf/cpf2via/"}
+    assert sem_json_de_ferramenta("Vou abrir. " + raw) == "Vou abrir."
+
+
+def test_aguardar_captcha_espera_o_usuario_e_nunca_interage(monkeypatch):
+    """Passagem do captcha: foca a aba, avisa e só devolve quando o USUÁRIO resolve."""
+    import yvakor.orchestrator as orq
+    from yvakor.extensao_bridge import PONTE
+    pedidos = []
+    estados = iter([{"ok": True, "presente": True, "resolvido": False},
+                    {"ok": True, "presente": True, "resolvido": False},
+                    {"ok": True, "presente": True, "resolvido": True}])
+    monkeypatch.setattr(PONTE, "comando",
+                        lambda tipo, args=None, espera=45.0: pedidos.append((tipo, args)) or next(estados))
+    monkeypatch.setattr(orq.time, "sleep", lambda s: None)
+    src = Path(orq.__file__).read_text(encoding="utf-8")
+    assert '"navegador_aguardar_captcha", aguardar_captcha' in src
+    # executa a função registrada num registro real
+    from yvakor.orchestrator import Orchestrator
+    fake = SimpleNamespace(tools=SimpleNamespace(tools={}, specs={}), _prog_lock=threading.Lock(),
+                           _tl=threading.local(),
+                           progress={"s1": {"running": True, "steps": []}},
+                           _prog_step=lambda s, l: fake.progress[s]["steps"].append(l))
+    registrados = {}
+    fake.tools.register = lambda nome, fn, *a, **k: registrados.__setitem__(nome, fn)
+    fake.tools.tools = registrados
+    try:
+        Orchestrator._usar_extensao_como_alvo(fake)
+    except Exception:
+        pass
+    fn = registrados.get("navegador_aguardar_captcha")
+    if fn is None:                         # registro depende de outras peças: checa o texto
+        assert "PONTE.comando(\"captcha\", {\"focar\": True" in src
+        return
+    r = fn(segundos=30)
+    assert r["resolvido"] is True and "não recarregue" in r["dica"]
+    assert pedidos[0] == ("captcha", {"focar": True})
+    assert all(t == "captcha" for t, _ in pedidos)           # só lê o estado
+    assert any("captcha" in l for l in fake.progress["s1"]["steps"])
 
 
 def test_orcamento_critico_mantem_a_nuvem_como_reserva(tmp_path, monkeypatch):

@@ -390,7 +390,21 @@ _DSML_PARAM = re.compile(
 
 
 _MARCACAO_FERRAMENTA = re.compile(
-    r"DSML|\"usar_ferramenta\"|\"(ferramenta|tool)\"\s*:\s*\"")
+    r"DSML|\"usar_ferramenta\"|\"(ferramenta|tool)\"\s*:\s*\"|<tool_\w+>")
+
+# Formato XML que o DeepSeek às vezes usa:
+# <tool_browser_navigate><url>https://…</url></tool_browser_navigate>
+_TOOL_XML = re.compile(r"<tool_(\w+)>(.*?)</tool_\1>", re.S)
+_TOOL_XML_ARG = re.compile(r"<(\w+)>(.*?)</\1>", re.S)
+_ALIAS_XML = {
+    "browser_navigate": "navegador_ir", "browser_open": "navegador_abrir",
+    "browser_click": "navegador_clicar", "browser_type": "navegador_digitar",
+    "browser_fill": "navegador_preencher", "browser_snapshot": "navegador_ver",
+    "browser_read": "navegador_extrair", "browser_extract": "navegador_extrair",
+    "browser_search": "navegador_pesquisar", "browser_scroll": "navegador_rolar",
+    "browser_press": "navegador_pressionar", "browser_screenshot": "navegador_captura",
+    "browser_wait": "navegador_esperar",
+}
 
 
 def _parse_acoes(raw: str, registry=None) -> list[dict]:
@@ -420,6 +434,19 @@ def _parse_acoes(raw: str, registry=None) -> list[dict]:
         norm = _parse_acao(json.dumps({"acao": "usar_ferramenta",
                                        "ferramenta": nome, "args": args},
                                       ensure_ascii=False), registry)
+        if norm:
+            acoes.append(norm)
+    if acoes:
+        return acoes
+    # 1b) <tool_nome><arg>valor</arg></tool_nome>
+    for m in _TOOL_XML.finditer(raw):
+        nome = _ALIAS_XML.get(m.group(1), m.group(1))
+        if registry is not None and nome not in registry.tools \
+                and "navegador_" + m.group(1) in registry.tools:
+            nome = "navegador_" + m.group(1)
+        args = {a.group(1): a.group(2).strip() for a in _TOOL_XML_ARG.finditer(m.group(2))}
+        norm = _parse_acao(json.dumps({"acao": "usar_ferramenta", "ferramenta": nome,
+                                       "args": args}, ensure_ascii=False), registry)
         if norm:
             acoes.append(norm)
     if acoes:

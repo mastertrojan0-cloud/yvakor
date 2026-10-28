@@ -199,16 +199,35 @@ async function executarNaPagina(t, nome, args) {
   await indicadorLigar(t.id);
   await chrome.scripting.executeScript({
     target: { tabId: t.id }, files: ["overlay.js", "pagina.js"] });
-  const r = await chrome.scripting.executeScript({
+  const urlAntes = t.url || "";
+  const execucao = chrome.scripting.executeScript({
     target: { tabId: t.id },
     func: async (n, a) => {
       try { return await window.__yvakorAcoes[n](a); }
       catch (e) { return { ok: false, erro: String((e && e.message) || e) }; }
     },
     args: [nome, args]
-  });
-  const resultado = r && r[0] && r[0].result;
-  return resultado || { ok: false, erro: "a página não respondeu" };
+  }).catch((e) => ({ falhou: String((e && e.message) || e) }));
+  // Se a ação fez a página navegar, o script some junto e a promessa pode NUNCA
+  // voltar: sem este limite o comando ficava preso até o núcleo desistir (45 s,
+  // "a extensão não respondeu"). Espera a ação e, no limite, olha a aba.
+  const limiteMs = nome === "esperar" ? (Number(args.segundos) || 10) * 1000 + 5000 : 15000;
+  const r = await Promise.race([execucao, dormirBG(limiteMs).then(() => ({ tempo: true }))]);
+  if (Array.isArray(r)) {
+    const resultado = r[0] && r[0].result;
+    if (resultado) return resultado;
+  }
+  const agora = await chrome.tabs.get(t.id).catch(() => null);
+  if (agora && (agora.status === "loading" || (agora.url || "") !== urlAntes)) {
+    if (agora.status === "loading") await aguardarCarregarBG(t.id, 10000);
+    const fim = await chrome.tabs.get(t.id).catch(() => agora);
+    return { ok: true, navegou: true, url: fim.url || "", titulo: fim.title || "",
+             aviso: "a ação levou a página a navegar; use navegador_ver para ler a página nova" };
+  }
+  if (r && r.falhou) return { ok: false, erro: "a página não respondeu: " + r.falhou };
+  return { ok: false, erro: r && r.tempo
+    ? "a página não respondeu em " + Math.round(limiteMs / 1000) + "s (pode haver um diálogo aberto)"
+    : "a página não respondeu" };
 }
 
 // ---- permissões (inspirado no Claude no Chrome) ----
@@ -522,6 +541,17 @@ async function executarBGInterno(c) {
   if (c.tipo === "hover") {
     const { resultado } = await acaoPagina("passar_mouse", { alvo: a.alvo || "" });
     return resultado;
+  }
+  if (c.tipo === "captcha") {
+    // Só traz a aba para a frente, destaca o captcha e informa o estado.
+    // Quem resolve é o USUÁRIO; a extensão nunca interage com o captcha.
+    const t = await ctrlOrActiveBG();
+    if (a.focar) {
+      await chrome.tabs.update(t.id, { active: true }).catch(() => {});
+      if (chrome.windows) await chrome.windows.update(t.windowId, { focused: true }).catch(() => {});
+    }
+    const { resultado } = await acaoPagina("captcha", {});
+    return Object.assign({ tab_id: t.id }, resultado);
   }
   if (c.tipo === "wait") {
     const { resultado } = await acaoPagina("esperar", {
