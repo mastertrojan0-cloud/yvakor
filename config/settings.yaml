@@ -246,6 +246,31 @@ rede:
     tls: false
 
 # --------------------------------------------------------------------- #
+# Entorno — aprende a rotina do local (PC, rede, uso) sem chamar a IA.
+# Só guarda médias e contagens: nada de títulos de janela, teclas, sites
+# ou pacotes. Ferramentas: entorno_resumo/perfil/eventos/status/pausar.
+# --------------------------------------------------------------------- #
+entorno:
+  habilitado: true
+  sensores:                   # false desliga um sensor
+    sistema: true             # CPU, memória, disco, bateria
+    trafego: true             # KB/s de download/upload
+    conexoes: true            # nº de conexões e portas em escuta
+    atividade: true           # PC em uso (tempo ocioso) + nome do app em foco
+    processos: true           # processos novos no PC
+    dispositivos: true        # presença dos aparelhos (lê o monitor de rede)
+    historico: true           # ferramentas usadas (data/rastros.jsonl)
+  intervalos: {}              # ex.: {sistema: 120} — segundos por sensor
+  ignorar_apps: []            # ex.: ["keepass.exe"] — nunca registrados
+  ocioso_s: 120               # sem teclado/mouse por mais que isso = PC parado
+  cpu_max: 80                 # acima disso só os sensores essenciais rodam
+  orcamento_ms: 150           # sensor mais caro que isso tem o intervalo dobrado
+  aquecimento_horas: 24       # antes disso aprende, mas não alerta
+  z_anomalia: 3.5             # desvios do normal para virar anomalia
+  notificar: true             # avisa anomalias (sem voz, máx. por hora abaixo)
+  max_avisos_hora: 3
+
+# --------------------------------------------------------------------- #
 # Voz — falar e ouvir
 # --------------------------------------------------------------------- #
 notificacoes:

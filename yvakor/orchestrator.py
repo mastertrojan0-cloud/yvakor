@@ -301,6 +301,17 @@ class Orchestrator:
                              name="yvakor-vault-boot").start()
         except Exception as e:
             print(f"  [aviso] cérebro indisponível: {e}")
+        # Entorno: aprende a rotina do local (PC, rede, uso) por estatística
+        # incremental numa thread de baixa prioridade — sem chamar a IA.
+        self.entorno = None
+        if self.settings.get("entorno", {}).get("habilitado", True):
+            try:
+                from yvakor.entorno import MotorEntorno, register_entorno_tools
+                self.entorno = MotorEntorno(self.settings, self.rede, self.cerebro)
+                register_entorno_tools(self.tools, self.entorno)
+                self.entorno.iniciar()
+            except Exception as e:
+                print(f"  [aviso] motor de entorno indisponível: {e}")
         self.agent = AgentLoop(self.router, self.tools,
                                max_iterations=self.settings["agent"]["max_iterations"],
                                nativo=self.settings["agent"].get(
@@ -901,6 +912,13 @@ class Orchestrator:
             bloco = licoes.padrao().bloco(user_message)
             if bloco:
                 parts.append(bloco)
+        except Exception:
+            pass
+        try:
+            if getattr(self, "entorno", None) is not None:
+                bloco = self.entorno.bloco_prompt(user_message)
+                if bloco:
+                    parts.append(bloco)
         except Exception:
             pass
         if relevant_skills:
@@ -1967,6 +1985,11 @@ class Orchestrator:
                 self.monitor_rede.parar()
             if self.rede is not None:
                 self.rede.shutdown()
+        except Exception:
+            pass
+        try:
+            if getattr(self, "entorno", None) is not None:
+                self.entorno.parar()
         except Exception:
             pass
         # Fecha conexões SQLite com checkpoint/optimize (dados consistentes).

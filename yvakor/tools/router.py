@@ -95,6 +95,15 @@ GRUPOS = {
                      "rede", "wifi", "mqtt", "luz", "tomada", "onvif", "rtsp",
                      "roteador", "impressora", "casa"),
     },
+    "entorno": {
+        "prefixos": ("entorno_", "ambiente_"),
+        "palavras": ("ambiente", "entorno", "rotina", "costume", "habito",
+                     "hábito", "normal", "anomalia", "estranho", "lento",
+                     "trafego", "tráfego", "aprendeu", "padrao", "padrão"),
+        "radicais": ("rotin", "costum", "habit", "hábit", "anomal", "estranh",
+                     "entorn", "ambient"),
+        "prioridade": ("entorno_resumo", "entorno_eventos", "entorno_perfil"),
+    },
     "voz": {
         "prefixos": ("voz_",),
         "palavras": ("voz", "falar", "fale", "diga", "ouvir", "ouça", "audio",
