@@ -144,7 +144,8 @@ GRUPOS = {
 }
 
 NUCLEO = ("executar_shell", "arquivos_listar", "arquivos_ler",
-          "cerebro_buscar", "pensar", "tarefas_checklist", "perguntar_usuario")
+          "cerebro_buscar", "pensar", "tarefas_checklist", "perguntar_usuario",
+          "entender_pedido")
 
 # Quando nenhum grupo casa: um conjunto geral e estável (navegar, pesquisar,
 # rodar Python, gerar gráfico/relatório). Antes eram TODAS as 146 ferramentas

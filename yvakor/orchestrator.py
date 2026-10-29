@@ -301,6 +301,10 @@ class Orchestrator:
                              name="yvakor-vault-boot").start()
         except Exception as e:
             print(f"  [aviso] cérebro indisponível: {e}")
+        from yvakor.interprete import register_interprete_tools
+        register_interprete_tools(
+            self.tools, self.router,
+            lambda: self.episodic.history_messages(6))
         # Entorno: aprende a rotina do local (PC, rede, uso) por estatística
         # incremental numa thread de baixa prioridade — sem chamar a IA.
         self.entorno = None
@@ -1517,7 +1521,25 @@ class Orchestrator:
                        self.settings["memory"]["episodic_context_last_n"],
                        session_id=sid))
         history = self._sanear_falhas_antigas(history)
-        history.append({"role": "user", "content": user_message})
+        # Entender antes de agir: digitação, correção ("errado"), continuação
+        # ("excelente, agora busca…") e serviços citados viram instrução
+        # explícita junto da mensagem (também guia a escolha de ferramentas).
+        cfg_int = self.settings.get("interprete", {}) or {}
+        conteudo = user_message
+        if cfg_int.get("habilitado", True):
+            try:
+                from yvakor import interprete
+                interp = interprete.interpretar(
+                    user_message, history, None if modo_local else self.router,
+                    usar_modelo=bool(cfg_int.get("usar_modelo", True)))
+                bloco = interp.bloco()
+                if bloco:
+                    conteudo = f"{user_message}\n\n{bloco}"
+                    self._prog_step(sid, "🧭 interpretei o pedido: "
+                                         + (interp.objetivo or interp.tipo)[:90])
+            except Exception:
+                pass
+        history.append({"role": "user", "content": conteudo})
         if modo_local:
             history = history[-5:]   # prompt menor = passo bem mais rápido no 3B
 
@@ -1549,6 +1571,29 @@ class Orchestrator:
                                     forcar_provider=forcar,
                                     compacto=modo_local,
                                     dados_usuario=self._mensagens_usuario(sid))
+            # Resgate: desistiu no meio depois de tentar → 1 nova tentativa por
+            # outro caminho, com o que já falhou à vista.
+            try:
+                from yvakor import interprete
+                falhas = sum(1 for r in passos["rastro"] if not r.get("ok"))
+                if (cfg_int.get("resgate", True) and not modo_local
+                        and not (should_stop and should_stop())
+                        and interprete.desistiu_apos_tentar(answer, passos["n"], falhas)):
+                    self._prog_step(sid, "🔁 a tentativa desistiu — tentando outro caminho")
+                    resgate = interprete.bloco_resgate(
+                        answer, list(passos["nomes"]),
+                        [r.get("erro", "") for r in passos["rastro"] if not r.get("ok")])
+                    segunda = self.agent.run(
+                        system, history=history + [
+                            {"role": "assistant", "content": answer},
+                            {"role": "user", "content": resgate}],
+                        on_event=_trace, should_stop=should_stop,
+                        forcar_provider=forcar, compacto=False,
+                        dados_usuario=self._mensagens_usuario(sid))
+                    if segunda and segunda.strip():
+                        answer = segunda
+            except Exception:
+                pass
             # Lista local desta resposta (agent.artefatos é thread-local, lido
             # na MESMA thread) — garante que os entregáveis anexados são os
             # desta execução, não os de outra tarefa concorrente.

@@ -246,6 +246,15 @@ rede:
     tls: false
 
 # --------------------------------------------------------------------- #
+# Intérprete — entende o pedido antes de agir (digitação, "errado",
+# continuação, serviços citados) e tenta de novo quando a tarefa desiste.
+# --------------------------------------------------------------------- #
+interprete:
+  habilitado: true
+  usar_modelo: true           # 1 chamada curta ao DeepSeek só em correção/continuação
+  resgate: true               # 2ª tentativa por outro caminho se a 1ª desistir
+
+# --------------------------------------------------------------------- #
 # Entorno — aprende a rotina do local (PC, rede, uso) sem chamar a IA.
 # Só guarda médias e contagens: nada de títulos de janela, teclas, sites
 # ou pacotes. Ferramentas: entorno_resumo/perfil/eventos/status/pausar.
