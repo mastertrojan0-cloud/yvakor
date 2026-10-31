@@ -5,7 +5,7 @@ agent:
   name: "YVAKOR"
   language: "pt-BR"
   max_iterations: 25         # limite de ciclos por tarefa (navegar exige mais passos)
-  timeout_s: 180             # teto duro por execução do agente
+  timeout_s: 600             # teto por execução (manutenção do PC passa de 3 min; ao estourar, resume o feito)
   reflection_enabled: true   # loop de autoavaliação pós-tarefa
   avaliar_auto: true         # avalia qualidade da resposta em segundo plano
   # Aprender/avaliar em segundo plano quando só há o modelo local (modo "local"
@@ -123,6 +123,26 @@ memory:
 skills:
   library_path: "skills_library"
   stable_threshold: 3                 # usos com sucesso p/ marcar skill estável
+  # skills novas: skills_library/<nome>/SKILL.md (padrão Agent Skills);
+  # as .md antigas continuam valendo
+
+# Memória curada (Hermes): data/memories/MEMORY.md + USER.md, sempre no prompt
+memoria_curada:
+  habilitada: true
+  limite_memoria: 2200                # caracteres (anotações do agente)
+  limite_usuario: 1375                # caracteres (perfil do usuário)
+
+# Compactação: turnos fora da janela (episodic_context_last_n) viram resumo
+compactacao:
+  habilitada: true
+  a_cada_turnos: 6                    # resume quando 6 turnos novos saem da janela
+  max_caracteres: 1800
+  tarefa: "pesquisa_sintese"          # rota do modelo (ver llm.routing)
+
+# AGENTS.md/YVAKOR.md do workspace ativo + identity/SOUL.md (opcional)
+contexto_arquivos:
+  habilitado: true
+  max_chars: 20000                    # corte: 70% do começo + 20% do fim
 
 tools:
   sandbox_dir: "data/sandbox"
@@ -148,6 +168,8 @@ tools:
     - "arquivos_escrever"
     - "arquivos_editar"
     - "arquivos_apagar"
+    - "esvaziar_lixeira"
+    - "historico_apagar_tudo"
     - "arquivos_mover"
     - "arquivos_extrair"
     - "escrever_arquivo"
@@ -176,6 +198,10 @@ tools:
   # pedem confirmação; sob "total"/auto_approve podem ser liberadas. As de
   # always_confirm acima são SEMPRE protegidas, estejam aqui ou não.
   guarded_actions:
+    - "organizar_executar"      # 1 confirmação para o plano inteiro (desfazível)
+    - "sistema_drivers_atualizar"  # + UAC do Windows
+    - "guardiao_escanear"       # verificação do Windows Defender (usa CPU)
+    - "limpar_temporarios"      # apaga o %TEMP% antigo: 1 confirmação para tudo
     - "arquivos_copiar"
     - "arquivos_criar_pasta"
     - "arquivos_zipar"
@@ -246,6 +272,23 @@ rede:
     tls: false
 
 # --------------------------------------------------------------------- #
+# Workspaces — pastas de projeto. Com um ativo, o shell roda nele e caminhos
+# relativos apontam para ele. Aba WORKSPACES no app.
+# --------------------------------------------------------------------- #
+workspaces:
+  pasta_base: ""              # vazio = E:\Workspaces (ou ~\Workspaces sem disco E:)
+
+# --------------------------------------------------------------------- #
+# Guardião de rede e vírus — NÃO invasivo: observa e avisa; nunca mata
+# processo, bloqueia rede ou apaga. Só pede ao Windows Defender uma
+# verificação quando você pede (guardiao_escanear).
+# --------------------------------------------------------------------- #
+guardiao:
+  habilitado: true
+  notificar: true             # alto = notifica e fala; médio = notifica
+  intervalos: {}              # ex.: {defender: 3600, conexoes: 300} (segundos)
+
+# --------------------------------------------------------------------- #
 # Intérprete — entende o pedido antes de agir (digitação, "errado",
 # continuação, serviços citados) e tenta de novo quando a tarefa desiste.
 # --------------------------------------------------------------------- #
@@ -284,7 +327,7 @@ entorno:
 # --------------------------------------------------------------------- #
 notificacoes:
   ativo: true
-  categorias: [rede, tarefa, camera, sistema, receita, dispositivo]
+  categorias: [rede, tarefa, camera, sistema, receita, dispositivo, seguranca]
   silencio: ["23:00", "07:00"]
   intervalo_min_s: 8
 

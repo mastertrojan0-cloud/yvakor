@@ -13,13 +13,14 @@ em settings.yaml → maintenance):
 Endpoints/curinga: o servidor inicia o agendador; [manutencao] roda na hora.
 """
 from __future__ import annotations
-import re
 import threading
 import subprocess
 from yvakor import proc as _ywproc
-import time
 from pathlib import Path
 from datetime import datetime
+import logging
+
+_log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -46,11 +47,11 @@ class Maintenance:
                 continue
             if "status: nova" not in txt:
                 continue
-            usos = self.o.episodic.skill_success_count(f.stem)
+            usos = self.o.episodic.skill_success_count(self.o.skills.nome_de(f))
             if usos >= limiar:
                 novo = txt.replace("status: nova", "status: estavel", 1)
                 f.write_text(novo, encoding="utf-8")
-                res["skills_estabilizadas"].append(f.stem)
+                res["skills_estabilizadas"].append(self.o.skills.nome_de(f))
         # 1b. consolida memória semântica (dedup/limpeza) — usa a IA principal
         if self.cfg.get("consolidate_memory", True):
             try:
@@ -135,7 +136,7 @@ class Maintenance:
                                 f"podados={banco.get('podados', {}).get('removidos', 0)}; "
                                 f"codigo={codigo.get('estado')}")
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         return {"quando": self.last["quando"], "conhecimento": conhecimento,
                 "banco": banco, "codigo": codigo}
 
@@ -190,7 +191,7 @@ class Maintenance:
                 try:
                     self.run_cycle()
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
                 self._stop.wait(horas * 3600)
 
         self._timer = threading.Thread(target=_loop, daemon=True,

@@ -159,6 +159,11 @@ class ToolRegistry:
             return {"ok": False, "error": (
                 f"faltou o argumento obrigatório {', '.join(faltando)} — NADA foi "
                 f"feito. Argumentos esperados: {esperado}")}
+        from yvakor import hooks as _hooks
+        antes = _hooks.padrao().disparar("PreToolUse", name, tool_input=kwargs)
+        if antes.bloquear:
+            return {"ok": False, "error": f"bloqueado por hook: {antes.motivo} — NADA "
+                    "foi feito"}
         try:
             valor = self.tools[name](**kwargs)
         except TypeError as e:
@@ -172,6 +177,13 @@ class ToolRegistry:
         # Ferramentas que já devolvem {"ok": ...} não são embrulhadas de novo:
         # evita aninhamento ({"ok":true,"result":{"ok":false,...}}) que escondia
         # falhas do agente e inchava o contexto.
-        if isinstance(valor, dict) and "ok" in valor:
-            return valor
-        return {"ok": True, "result": valor}
+        saida = valor if isinstance(valor, dict) and "ok" in valor \
+            else {"ok": True, "result": valor}
+        # PostToolUse: o hook vê a resposta e pode devolver um aviso ao agente
+        # (a ação já aconteceu; "bloquear" aqui é feedback, não desfaz).
+        depois = _hooks.padrao().disparar("PostToolUse", name, tool_input=kwargs,
+                                          tool_response=saida)
+        if depois.bloquear or depois.contexto:
+            saida = {**saida, "hook": "; ".join(
+                ([depois.motivo] if depois.bloquear else []) + depois.contexto)}
+        return saida

@@ -59,6 +59,8 @@ from yvakor.health import coletar as _saude_health
 import logging
 from logging.handlers import RotatingFileHandler
 
+_log = logging.getLogger(__name__)
+
 
 def _configurar_log() -> None:
     # YVAKOR_LOG_DIR: os testes apontam para uma pasta temporária — antes
@@ -73,13 +75,18 @@ def _configurar_log() -> None:
     logger = logging.getLogger("yvakor")
     if logger.handlers:
         return
-    logger.setLevel(logging.INFO)
+    # YVAKOR_DEBUG=1: grava também as exceções que o código ignora de propósito
+    # (_log.debug nos `except`), com traceback — para diagnosticar falhas
+    # silenciosas. O console continua só com INFO para cima.
+    debug = os.environ.get("YVAKOR_DEBUG", "").lower() in ("1", "true", "sim")
+    logger.setLevel(logging.DEBUG if debug else logging.INFO)
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
     arq = RotatingFileHandler(pasta / "yvakor.log", maxBytes=5 * 1024 * 1024,
                               backupCount=5, encoding="utf-8")
     arq.setFormatter(fmt)
     logger.addHandler(arq)
     console = logging.StreamHandler()
+    console.setLevel(logging.INFO)
     console.setFormatter(fmt)
     logger.addHandler(console)
     logger.info("YVAKOR — log rotativo ativo")
@@ -231,9 +238,9 @@ def _gravar_token(tok: str) -> None:
         try:
             os.chmod(arq, 0o600)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
 
 
 # Token desta execução (só em memória até main() publicá-lo).
@@ -438,7 +445,7 @@ class Handler(BaseHTTPRequestHandler):
             if 0 < n <= 2_000_000:
                 self.rfile.read(n)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         self.close_connection = True
 
     def _autorizar_efeito(self) -> bool:
@@ -559,7 +566,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 proc.terminate()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
 
     def _servir_video(self, arq):
         tamanho = arq.stat().st_size
@@ -604,12 +611,12 @@ class Handler(BaseHTTPRequestHandler):
             logging.getLogger("yvakor.http").exception(
                 "falha não tratada em %s: %s", metodo, exc)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         try:
             self._json(500, {"error": "falha interna",
                              "detalhe": str(exc)[:300]})
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def _do_get(self):
         # Anti DNS-rebinding também na leitura: sem isso, um site que re-resolva
@@ -835,9 +842,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, _injetar_token(html),
                               "text/html; charset=utf-8")
 
+        if self.path == "/api/comandos":
+            from yvakor.barra import comandos_disponiveis
+            agent = get_agent()
+            return self._json(200, {"comandos": comandos_disponiveis(
+                agent.skills, getattr(agent, "plugins", None))})
+
         if self.path == "/api/status":
             agent = get_agent()
-            skills = [f.stem for f in agent.skills.all_skills()]
+            skills = [agent.skills.nome_de(f) for f in agent.skills.all_skills()]
             episodes = agent.episodic.conn.execute(
                 "SELECT COUNT(*) FROM episodes").fetchone()[0]
             return self._json(200, {
@@ -866,7 +879,15 @@ class Handler(BaseHTTPRequestHandler):
         # Conversas
         if self.path == "/api/sessions":
             ag = get_agent()
-            return self._json(200, {"sessions": ag.episodic.listar_conversas(),
+            conversas = ag.episodic.listar_conversas()
+            try:                       # nome do workspace de cada conversa (agrupar)
+                from yvakor import workspaces as _ws
+                nomes = {w["id"]: w["nome"] for w in _ws.listar(com_info=False)["itens"]}
+                for c in conversas:
+                    c["workspace_nome"] = nomes.get(c.get("workspace") or "", "")
+            except Exception:
+                _log.debug("exceção ignorada", exc_info=True)
+            return self._json(200, {"sessions": conversas,
                                     "active": ag.episodic.active_id})
 
         if self.path.startswith("/api/sessions/buscar"):
@@ -935,6 +956,36 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/maintenance":
             return self._json(200, get_agent().maintenance.last)
 
+        if self.path == "/api/historico/resumo":
+            from yvakor import historico
+            return self._json(200, historico.resumo(get_agent().episodic))
+
+        # ---- Workspaces (pastas de projeto) ----
+        if self.path == "/api/workspaces":
+            from yvakor import workspaces
+            return self._json(200, workspaces.listar())
+        if self.path.startswith("/api/workspaces/mudancas") or                 self.path.startswith("/api/workspaces/diff"):
+            from urllib.parse import urlparse, parse_qs
+            from yvakor import workspaces
+            q = parse_qs(urlparse(self.path).query)
+            alvo = q.get("id", [""])[0]
+            if "/diff" in self.path:
+                return self._json(200, workspaces.diff(alvo, q.get("arquivo", [""])[0]))
+            return self._json(200, workspaces.mudancas(alvo))
+        if self.path.startswith("/api/vscode/comandos"):
+            # long-poll da extensão do VS Code (só loopback, como o resto da API)
+            if not self._host_ok():
+                return self._json(403, {"error": "host não autorizado"})
+            from urllib.parse import urlparse, parse_qs
+            from yvakor import vscode
+            espera = float(parse_qs(urlparse(self.path).query).get("espera", ["25"])[0])
+            return self._json(200, {"comandos": vscode.pegar_comandos(espera)})
+        if self.path.startswith("/api/workspaces/detalhe"):
+            from urllib.parse import urlparse, parse_qs
+            from yvakor import workspaces
+            alvo = (parse_qs(urlparse(self.path).query).get("id", [""])[0])
+            return self._json(200, workspaces.detalhe(alvo))
+
         # ---- MCP: servidores e ferramentas conectadas ----
         if self.path == "/api/mcp":
             ag = get_agent()
@@ -958,7 +1009,7 @@ class Handler(BaseHTTPRequestHandler):
                 linhas = arq.read_text(encoding="utf-8").splitlines()[-30:]
                 itens = [json.loads(l) for l in linhas if l.strip()]
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             return self._json(200, {"ok": True, "avaliacoes": itens})
 
         # ---- Agenda / tarefas agendadas ----
@@ -1110,7 +1161,7 @@ class Handler(BaseHTTPRequestHandler):
                     encoding="utf-8"))
                 ativo = bool(pref.get("voz_ativa", True))
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             return self._json(200, {"ok": True, "ativo": ativo})
 
         if self.path == "/api/voz/microfone":
@@ -1371,7 +1422,7 @@ class Handler(BaseHTTPRequestHandler):
                                     except OSError:
                                         pass
                         except Exception:
-                            pass
+                            _log.debug("exceção ignorada", exc_info=True)
                     bloco_anexos = ""
                     if anexos:
                         linhas = []
@@ -1407,11 +1458,11 @@ class Handler(BaseHTTPRequestHandler):
                             ag.episodic.log("conversa", message, aviso,
                                             session_id=sid_chat)
                         except Exception:
-                            pass
+                            _log.debug("exceção ignorada", exc_info=True)
                     try:
                         ag.notificador.emitir(aviso, "tarefa", 2)
                     except Exception:
-                        pass
+                        _log.debug("exceção ignorada", exc_info=True)
                     return self._json(200, {
                         "answer": aviso,
                         "session": sid_chat,
@@ -1747,13 +1798,62 @@ class Handler(BaseHTTPRequestHandler):
                     try:
                         atual = json.loads(arq.read_text(encoding="utf-8"))
                     except Exception:
-                        pass
+                        _log.debug("exceção ignorada", exc_info=True)
                     atual["voz_ativa"] = ativo
                     arq.write_text(json.dumps(atual, ensure_ascii=False, indent=2),
                                    encoding="utf-8")
                 except Exception as exc:
                     return self._json(500, {"error": str(exc)})
+                # Pausar = calar AGORA (antes só gravava a preferência e a fala
+                # em andamento ia até o fim).
+                if not ativo and ag.voz is not None:
+                    try:
+                        ag.voz.tts.parar()
+                    except Exception:
+                        _log.debug("exceção ignorada", exc_info=True)
                 return self._json(200, {"ok": True, "ativo": ativo})
+
+            if self.path.startswith("/api/workspaces/"):
+                from yvakor import workspaces
+                acao = self.path.rsplit("/", 1)[-1]
+                if acao == "criar":
+                    return self._json(200, workspaces.criar(
+                        data.get("nome", ""), data.get("modelo", "vazio"),
+                        data.get("descricao", ""), settings=ag.settings))
+                if acao == "adicionar":
+                    return self._json(200, workspaces.adicionar(
+                        data.get("caminho", ""), data.get("nome", ""),
+                        ativar=bool(data.get("ativar", True))))
+                if acao == "ativar":
+                    return self._json(200, workspaces.ativar(data.get("id") or None))
+                if acao == "remover":
+                    return self._json(200, workspaces.remover(data.get("id", "")))
+                if acao == "abrir":
+                    return self._json(200, workspaces.abrir(
+                        data.get("id", ""), data.get("onde", "pasta")))
+                return self._json(404, {"error": "ação de workspace desconhecida"})
+
+            if self.path == "/api/historico/apagar":
+                from yvakor import historico
+                return self._json(200, historico.apagar_historico(
+                    ag.episodic, ag.cerebro, confirmar=str(data.get("confirmar") or "")))
+
+            if self.path == "/api/vscode/contexto":
+                from yvakor import vscode
+                return self._json(200, vscode.registrar_contexto(data))
+
+            if self.path in ("/api/vscode/abrir", "/api/vscode/diff"):
+                from yvakor import vscode
+                arquivo = str(data.get("arquivo") or "")
+                if self.path.endswith("diff"):
+                    return self._json(200, vscode.mostrar_diff(arquivo))
+                return self._json(200, vscode.abrir(arquivo, int(data.get("linha") or 1)))
+
+            if self.path == "/api/voz/parar":
+                # interrompe a fala atual sem desligar a voz
+                if ag.voz is None:
+                    return self._json(200, {"ok": True, "fila_limpa": 0})
+                return self._json(200, ag.voz.tts.parar())
 
             if self.path == "/api/voz/falar":
                 if ag.voz is None:
@@ -1860,7 +1960,13 @@ class Handler(BaseHTTPRequestHandler):
                     # app/extensão abrindo: conversa nova (reaproveita uma vazia)
                     ag.episodic.conversa_nova_ao_abrir()
                 else:
-                    ag.episodic.nova_conversa(data.get("title", ""))
+                    # conversa nova nasce no workspace pedido (ou no ativo)
+                    ws = data.get("workspace")
+                    if ws is None:
+                        from yvakor import workspaces as _ws
+                        atual = _ws.ativo()
+                        ws = atual["id"] if atual else ""
+                    ag.episodic.nova_conversa(data.get("title", ""), workspace=ws)
                 return self._json(200, {"active": ag.episodic.active_id,
                                         "sessions": ag.episodic.listar_conversas()})
 
@@ -1868,7 +1974,12 @@ class Handler(BaseHTTPRequestHandler):
             if self.path.startswith("/api/sessions/") and self.path.endswith("/activate"):
                 sid = self.path[len("/api/sessions/"):-len("/activate")]
                 ok = ag.episodic.retomar_conversa(sid)
-                return self._json(200 if ok else 404, {"active": ag.episodic.active_id})
+                ws = ag.episodic.workspace_da_conversa(sid) if ok else None
+                if ws:                 # abrir a conversa ativa o workspace dela
+                    from yvakor import workspaces as _ws
+                    _ws.ativar(ws)
+                return self._json(200 if ok else 404, {"active": ag.episodic.active_id,
+                                                       "workspace": ws or ""})
 
             # renomear conversa
             if self.path.startswith("/api/sessions/") and self.path.endswith("/rename"):
@@ -1955,7 +2066,7 @@ def main():
         from yvakor.robustez import ao_encerrar
         ao_encerrar(lambda: threading.Thread(target=servidor.shutdown, daemon=True).start())
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
     try:
         servidor.serve_forever()
     except KeyboardInterrupt:
@@ -1968,13 +2079,13 @@ def main():
             if _agent is not None:
                 _agent.shutdown()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         servidor.server_close()
         try:
             from yvakor import banco
             banco.encerrar()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         print("\n  YVAKOR encerrado.")
 
 

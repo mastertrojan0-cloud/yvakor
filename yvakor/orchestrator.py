@@ -42,6 +42,9 @@ from yvakor.cerebro import Cerebro
 from yvakor.cerebro.tools import register_cerebro_tools
 from yvakor.arquivos import register_arquivos_tools
 from yvakor.telemetria import Telemetria
+import logging
+
+_log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -103,7 +106,7 @@ def _gravar_rastro(sid, pedido: str, resposta: str, passos: list[dict],
         with RASTROS.open("a", encoding="utf-8") as f:
             f.write(json.dumps(linha, ensure_ascii=False) + "\n")
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
 
 
 class ConfirmationBroker:
@@ -184,7 +187,14 @@ class Orchestrator:
         self.notificador = Notificador(self.settings)
         self.episodic = EpisodicMemory(ROOT / self.settings["memory"]["episodic_db"])
         self.semantic = SemanticMemory(ROOT / self.settings["memory"]["semantic_index"])
-        self.skills = SkillLibrary(ROOT / self.settings["skills"]["library_path"])
+        # Plugins (pacotes de skills + comandos + MCP), no layout do Claude
+        from yvakor.plugins import GerenciadorPlugins
+        self.plugins = GerenciadorPlugins()
+        # Hooks (config/hooks.json + plugins ligados) valem para todas as ferramentas
+        from yvakor import hooks as _hooks
+        _hooks.configurar(extras=self.plugins.hooks_extras)
+        self.skills = SkillLibrary(ROOT / self.settings["skills"]["library_path"],
+                                   extras=self.plugins.skills_extras)
         self.reflection = ReflectionLoop(self.router, self.skills, self.episodic)
         self.absorber = KnowledgeAbsorber(self.router, self.semantic,
                                           self.skills, self.episodic)
@@ -204,7 +214,7 @@ class Orchestrator:
         self.midia = Player()
         _reg_midia(self.tools, self.midia)
         from yvakor.mcp import MCPManager
-        self.mcp = MCPManager(self.tools)
+        self.mcp = MCPManager(self.tools, extras=self.plugins.servidores_mcp)
         try:
             self.mcp.iniciar()
         except Exception as e:
@@ -229,6 +239,14 @@ class Orchestrator:
         register_notificacoes_tools(self.tools, self.notificador)
         register_builtins(self.tools)
         register_arquivos_tools(self.tools)   # acesso total ao sistema de arquivos
+        from yvakor.workspaces import register_workspaces_tools
+        register_workspaces_tools(self.tools, self.settings)  # pastas de projeto
+        from yvakor.vscode import register_vscode_tools
+        register_vscode_tools(self.tools)       # editor integrado (extensão do YVAKOR)
+        from yvakor.organizador import register_organizador_tools
+        register_organizador_tools(self.tools)  # organizar pastas em lote, com desfazer
+        from yvakor.drivers import register_drivers_tools
+        register_drivers_tools(self.tools)      # drivers: problemas, antigos, Windows Update
         # pensar, checklist, grep e leitura web no estilo das ferramentas do Claude
         from yvakor.ferramentas_claude import register_ferramentas_claude
         register_ferramentas_claude(self.tools)
@@ -280,7 +298,7 @@ class Orchestrator:
                     + str(dados.get("texto", ""))[:100], "tarefa", 2)
                 marca.unlink()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         # Cérebro: vault markdown (Obsidian) indexado em FTS5.
         self.cerebro: Cerebro | None = None
         try:
@@ -316,6 +334,48 @@ class Orchestrator:
                 self.entorno.iniciar()
             except Exception as e:
                 print(f"  [aviso] motor de entorno indisponível: {e}")
+        # Guardião de rede e vírus: observa e avisa, nunca bloqueia/apaga.
+        self.guardiao = None
+        if self.settings.get("guardiao", {}).get("habilitado", True):
+            try:
+                from yvakor.guardiao import Guardiao, register_guardiao_tools
+                self.guardiao = Guardiao(self.settings, self.rede)
+                register_guardiao_tools(self.tools, self.guardiao)
+                self.guardiao.iniciar()
+            except Exception as e:
+                print(f"  [aviso] guardião indisponível: {e}")
+        from yvakor.historico import register_historico_tools
+        register_historico_tools(self.tools, self.episodic, self.cerebro)
+        # Estrutura do Hermes Agent: skills com divulgação progressiva e
+        # memória curada (MEMORY.md/USER.md) sempre presente no prompt.
+        from yvakor.memory.procedural import register_skills_tools
+        register_skills_tools(self.tools, self.skills)
+        self.memoria_curada = None
+        cfg_mem = self.settings.get("memoria_curada") or {}
+        if cfg_mem.get("habilitada", True):
+            from yvakor.memoria_curada import MemoriaCurada, register_memoria_tools
+            self.memoria_curada = MemoriaCurada(limites={
+                "memoria": cfg_mem.get("limite_memoria"),
+                "usuario": cfg_mem.get("limite_usuario")})
+            register_memoria_tools(self.tools, self.memoria_curada)
+        # Subagentes com ferramentas (agents/*.md + plugins), contexto isolado
+        from yvakor.agentes import Agentes, register_agentes_tools
+        self.agentes = Agentes(
+            self.router, self.tools, extras=self.plugins.agentes_extras,
+            nativo=self.settings["agent"].get("ferramentas_nativas", False),
+            timeout_s=int(self.settings["agent"].get("timeout_s", 180)))
+        register_agentes_tools(self.tools, self.agentes)
+        # Compactação: turnos que saem da janela viram resumo contínuo
+        self.compactador = None
+        cfg_comp = self.settings.get("compactacao") or {}
+        if cfg_comp.get("habilitada", True):
+            from yvakor.compactacao import CompactadorConversa
+            self.compactador = CompactadorConversa(
+                self.episodic, self.router,
+                janela=self.settings["memory"]["episodic_context_last_n"],
+                lote=int(cfg_comp.get("a_cada_turnos", 6)),
+                limite=int(cfg_comp.get("max_caracteres", 1800)),
+                tarefa=str(cfg_comp.get("tarefa", "pesquisa_sintese")))
         self.agent = AgentLoop(self.router, self.tools,
                                max_iterations=self.settings["agent"]["max_iterations"],
                                nativo=self.settings["agent"].get(
@@ -744,7 +804,7 @@ class Orchestrator:
                 from yvakor.notificacoes import emitir
                 emitir(aviso, "tarefa", 2)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             with self._prog_lock:                # aparece no painel de processo
                 rodando = [s for s, p in self.progress.items() if p.get("running")]
             for s in rodando:
@@ -905,29 +965,70 @@ class Orchestrator:
             "(“e agora?”, “isso”, “ele”, “sim”, “não”, “faça”), use os turnos "
             "anteriores; não peça ao usuário para repetir o contexto.")
         parts = [identity, principles, regras]
+        cfg_ctx = self.settings.get("contexto_arquivos") or {}
+        if cfg_ctx.get("habilitado", True):
+            try:
+                from yvakor.arquivos_contexto import bloco_soul
+                bloco = bloco_soul()
+                if bloco:
+                    parts.insert(1, bloco)
+            except Exception:
+                _log.debug("exceção ignorada", exc_info=True)
         try:
             from yvakor.ajustes import bloco_perfil
             if bloco_perfil():
                 parts.append(bloco_perfil())
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
+        if getattr(self, "memoria_curada", None) is not None:
+            try:
+                parts.append(self.memoria_curada.bloco_prompt())
+            except Exception:
+                _log.debug("exceção ignorada", exc_info=True)
+        if getattr(self, "agentes", None) is not None:
+            try:   # como o Claude Code: os agentes aparecem para o modelo saber delegar
+                parts.append("## SUBAGENTES (delegue com agente_delegar; liste com "
+                             "agentes_listar — não são as skills)\n" + "\n".join(
+                                 f"- {d.nome}: {d.descricao[:110]}"
+                                 for d in list(self.agentes.definicoes().values())[:12]))
+            except Exception:
+                _log.debug("exceção ignorada", exc_info=True)
         try:
             from yvakor import licoes
             bloco = licoes.padrao().bloco(user_message)
             if bloco:
                 parts.append(bloco)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
+        try:
+            from yvakor.workspaces import bloco_prompt as _bloco_ws
+            from yvakor.workspaces import caminho_ativo as _cam_ws
+            bloco = _bloco_ws()
+            if bloco:
+                parts.append(bloco)
+                if cfg_ctx.get("habilitado", True):
+                    from yvakor.arquivos_contexto import bloco_projeto
+                    bloco = bloco_projeto(_cam_ws(), int(cfg_ctx.get("max_chars", 20000)))
+                    if bloco:
+                        parts.append(bloco)
+                from yvakor.vscode import bloco_prompt as _bloco_vscode
+                bloco = _bloco_vscode(_cam_ws())
+                if bloco:
+                    parts.append(bloco)
+        except Exception:
+            _log.debug("exceção ignorada", exc_info=True)
         try:
             if getattr(self, "entorno", None) is not None:
                 bloco = self.entorno.bloco_prompt(user_message)
                 if bloco:
                     parts.append(bloco)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         if relevant_skills:
             parts.append("## SKILLS RELEVANTES (siga estes procedimentos)\n"
-                         + "\n---\n".join(s[:1200] for s in relevant_skills))
+                         + "\n---\n".join(s[:1200] for s in relevant_skills)
+                         + "\n(Trecho resumido: skill_ver(nome) traz o procedimento "
+                           "completo.)")
         if memories:
             parts.append("## MEMÓRIAS RELEVANTES\n"
                          + "\n".join(f"- {m[:300]}" for m in memories))
@@ -980,7 +1081,7 @@ class Orchestrator:
                     "ferramenta NESTA resposta; falhas de mensagens antigas já "
                     "foram resolvidas.")
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         # O histórico da conversa NÃO entra mais aqui como texto truncado: agora
         # é enviado ao modelo como turnos user/assistant reais (ver process()).
         parts.append(f"## DATA ATUAL\n{datetime.now().strftime('%Y-%m-%d %H:%M')}")
@@ -1150,19 +1251,37 @@ class Orchestrator:
             # botão Parar (cancelar(sid)) OU o should_stop de quem chamou (cowork)
             return (sid in self._cancelados) or bool(should_stop and should_stop())
 
+        # Cada conversa trabalha no SEU workspace (como no Claude Code);
+        # conversa antiga sem workspace segue o ativo global.
+        from yvakor import workspaces as _ws
+        try:
+            ws_conversa = self.episodic.workspace_da_conversa(sid)
+        except Exception:
+            ws_conversa = None
         try:
             self.episodic.modo_privado(private)
-            return self._process_impl(
-                user_message, session_id=session_id, should_stop=parar,
-                extra_context=extra_context, on_event=on_event,
-                private=private, history_override=history_override)
+            with _ws.usar(ws_conversa):
+                resposta = self._process_impl(
+                    user_message, session_id=session_id, should_stop=parar,
+                    extra_context=extra_context, on_event=on_event,
+                    private=private, history_override=history_override)
+            if not private and getattr(self, "compactador", None) is not None:
+                self.compactador.atualizar_fundo(sid)
+            # hook Stop: só aviso (log, notificação, backup…), em segundo plano
+            from yvakor import hooks as _hooks
+            if _hooks.padrao().regras("Stop"):
+                threading.Thread(
+                    target=_hooks.padrao().disparar, daemon=True, name="yvakor-hook-stop",
+                    args=("Stop",), kwargs={"session_id": sid, "prompt": user_message,
+                                            "response": str(resposta)[:20000]}).start()
+            return resposta
         finally:
             with self._cancel_lock:
                 self._cancelados.discard(sid)
             try:
                 self.episodic.modo_privado(False)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
 
     def cancelar(self, sid: str | None = None, origem: str = "") -> list[str]:
         """Botão Parar. Sem `sid`, interrompe TODA execução em andamento.
@@ -1182,19 +1301,19 @@ class Orchestrator:
             try:
                 self._prog_step(s, rotulo)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         with self._cancel_lock:
             self._cancelados.update(alvos)
         for s in alvos:
             try:
                 self.confirm_broker.resolve(s, False)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         try:
             from yvakor.extensao_bridge import PONTE
             PONTE.cancelar_pendentes()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         return alvos
 
     def _process_impl(self, user_message: str, session_id: str | None = None,
@@ -1227,6 +1346,16 @@ class Orchestrator:
         if not private:
             self._aprender_com_feedback(sid, user_message)
 
+        # hook UserPromptSubmit: pode barrar a mensagem ou somar contexto
+        from yvakor import hooks as _hooks
+        _h = _hooks.padrao().disparar("UserPromptSubmit", session_id=sid,
+                                      prompt=user_message)
+        if _h.bloquear:
+            return f"⛔ Mensagem barrada por um hook: {_h.motivo}"
+        if _h.contexto:
+            extra_context = self._juntar_contexto(
+                "## CONTEXTO DOS HOOKS\n" + "\n".join(_h.contexto), extra_context)
+
         # Chamada pelo nome: responde na hora; com pedido junto, remove o nome.
         from yvakor.nome import separar as _separar_nome
         _chamou, _resto = _separar_nome(user_message)
@@ -1237,6 +1366,33 @@ class Orchestrator:
                                   session_id=sid)
                 return resposta
             user_message = _resto
+
+        compactador = getattr(self, "compactador", None)
+        if compactador is not None and user_message.strip().lower() == "/compactar":
+            r = compactador.atualizar(sid, forcar=True)
+            texto = ("🗜️ Conversa compactada: " + str(r.get("compactou")) + " turno(s) "
+                     "antigos viraram resumo.\n\n" + r["resumo"]) if r.get("compactou") \
+                else ("Nada para compactar ainda: a conversa cabe inteira no contexto."
+                      if r.get("ok") else f"❌ Não consegui compactar: {r.get('error')}")
+            if not private:
+                self.episodic.log("conversa", user_message, texto, session_id=sid)
+            return texto
+        if compactador is not None:
+            extra_context = self._juntar_contexto(compactador.bloco_prompt(sid),
+                                                  extra_context)
+
+        # Comandos com barra: /skills, /plugins, /<skill> pedido, /<comando>.
+        from yvakor import barra as _barra
+        _cmd = _barra.interpretar(user_message, self.skills, getattr(self, "plugins", None))
+        if _cmd and _cmd["tipo"] == "resposta":
+            if not private:
+                self.episodic.log("conversa", user_message, _cmd["texto"],
+                                  session_id=sid)
+            return _cmd["texto"]
+        if _cmd:
+            self._prog_step(sid, _cmd["rotulo"])
+            user_message = _cmd["mensagem"]
+            extra_context = self._juntar_contexto(_cmd["contexto"], extra_context)
 
         # Intenções diretas de texto (hora, data, status…), sem IA.
         from yvakor.voz.diretos import detectar as _dd, executar as _de
@@ -1272,7 +1428,7 @@ class Orchestrator:
                                   session_id=sid)
                 return _resp
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
         # Comando de rede por texto: executa direto (sem IA), como na voz.
         try:
@@ -1287,10 +1443,10 @@ class Orchestrator:
                         "rede", (time.time() - inicio) * 1000,
                         detalhe=_r.get("acao", ""))
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
                 return _resp
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
         # Aprendiz de entorno por texto (mapear/ficha), direto.
         try:
@@ -1302,7 +1458,7 @@ class Orchestrator:
                                   session_id=sid)
                 return _resp
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
         # Desenvolvimento completo: gera, salva e abre o projeto.
         try:
@@ -1314,7 +1470,7 @@ class Orchestrator:
                                   session_id=sid)
                 return _resp
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
         # ---- Cérebro primeiro: conhecimento antes de gastar IA ----
         decisao = None
@@ -1348,13 +1504,13 @@ class Orchestrator:
                 self.cerebro.registrar_origem("cerebro")
                 self._sincronizar_cerebro_async()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             try:
                 self.telemetria.registrar(
                     "cerebro", (time.time() - inicio) * 1000,
                     detalhe="resposta direta do vault/memória")
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             return resposta
 
         if decisao and decisao.get("modo") == "receita":
@@ -1383,14 +1539,14 @@ class Orchestrator:
                 self.cerebro.registrar_origem("receita")
                 self._sincronizar_cerebro_async()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             try:
                 self.telemetria.registrar(
                     "receita", (time.time() - inicio) * 1000,
                     ferramentas=len(receita.passos),
                     detalhe=receita.nome)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             return resposta
 
         contexto_cerebro = decisao.get("contexto") if decisao else None
@@ -1410,8 +1566,19 @@ class Orchestrator:
         # loop com ferramentas e de um modelo forte: nunca pega o atalho do 3B,
         # que só conversa. (No modo "local" o usuário escolheu o local de qualquer
         # forma — o roteador não chama a nuvem.)
-        _acao_navegador = bool(AgentLoop._INTENCAO_NAVEGADOR.search(user_message))
-        if (forcar is None and not extra_context
+        _acao_navegador = AgentLoop.intencao_navegador(user_message)
+        # Só papo/pergunta geral pega o atalho: a decisão é pela INTENÇÃO
+        # (verbo de ação, assunto do PC, "sim"/"procede" a uma proposta), não
+        # pelo tamanho do texto — na conversa 71 tudo com <160 caracteres ia
+        # ao 3B sem ferramentas, que recusava ou só prometia.
+        try:
+            from yvakor.interprete import conversa_casual
+            _casual = conversa_casual(user_message, self.episodic.history_messages(
+                2, session_id=sid))
+        except Exception:
+            _log.debug("exceção ignorada", exc_info=True)
+            _casual = False
+        if (forcar is None and not extra_context and _casual
                 and self.router.modo not in ("deepseek", "gemini")
                 and not (_acao_navegador and self.router.modo == "auto")
                 and _tipo_simples in (
@@ -1438,13 +1605,13 @@ class Orchestrator:
                         try:
                             self.cerebro.registrar_origem("local")
                         except Exception:
-                            pass
+                            _log.debug("exceção ignorada", exc_info=True)
                     try:
                         self.telemetria.registrar(
                             "local", (time.time() - inicio) * 1000,
                             provedor="ollama", ferramentas=0)
                     except Exception:
-                        pass
+                        _log.debug("exceção ignorada", exc_info=True)
                     self._sincronizar_cerebro_async()
                     return resposta_local
                 self._prog_done(sid)
@@ -1484,7 +1651,7 @@ class Orchestrator:
                 try:
                     on_event(tipo, dado)
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
             if tipo == "ferramenta":
                 passos["n"] += 1
                 passos["nomes"].append(str(dado.get("nome", "")))
@@ -1497,7 +1664,7 @@ class Orchestrator:
                 try:
                     print(f"\n  {label}", flush=True)
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
             elif tipo == "plano" and isinstance(dado, dict):
                 self._prog_step(sid, self._rotulo_plano(dado))
             elif tipo == "aprovacao_plano":
@@ -1514,7 +1681,7 @@ class Orchestrator:
                         print(f"    ⚠ {res.get('error', res.get('erro', 'falha'))[:120]}",
                               flush=True)
                     except Exception:
-                        pass
+                        _log.debug("exceção ignorada", exc_info=True)
 
         history = (list(history_override) if history_override is not None
                    else self.episodic.history_messages(
@@ -1538,7 +1705,7 @@ class Orchestrator:
                     self._prog_step(sid, "🧭 interpretei o pedido: "
                                          + (interp.objetivo or interp.tipo)[:90])
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         history.append({"role": "user", "content": conteudo})
         if modo_local:
             history = history[-5:]   # prompt menor = passo bem mais rápido no 3B
@@ -1562,9 +1729,12 @@ class Orchestrator:
                 emitir("YVAKOR está esperando sua resposta: " + str(titulo)[:120],
                        "tarefa", 2)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             return self.confirm_broker.perguntar(sid, tipo, titulo, detalhe, opcoes)
         interacao.definir(_perguntar)
+        # Ferramentas longas (limpeza, organização) mostram o avanço no painel.
+        from yvakor import organizador as _org
+        _org.definir_progresso(lambda txt: self._prog_step(sid, txt))
         try:
             answer = self.agent.run(system, history=history, on_event=_trace,
                                     should_stop=should_stop,
@@ -1593,7 +1763,7 @@ class Orchestrator:
                     if segunda and segunda.strip():
                         answer = segunda
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             # Lista local desta resposta (agent.artefatos é thread-local, lido
             # na MESMA thread) — garante que os entregáveis anexados são os
             # desta execução, não os de outra tarefa concorrente.
@@ -1605,6 +1775,7 @@ class Orchestrator:
         finally:
             clear_thread_confirmer()
             interacao.limpar()
+            _org.definir_progresso(None)
             self._prog_done(sid)
 
         self.episodic.log("conversa", user_message, answer, session_id=sid)
@@ -1640,7 +1811,7 @@ class Orchestrator:
             try:
                 self.cerebro.registrar_origem("local" if forcar else "api")
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         try:
             self.telemetria.registrar(
                 "local" if forcar else "api",
@@ -1648,7 +1819,7 @@ class Orchestrator:
                 provedor="ollama" if forcar else "deepseek",
                 ferramentas=passos["n"])
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         # Obsidian quase em tempo real: sincroniza no máximo a cada 2 min.
         self._sincronizar_cerebro_async()
         return answer
@@ -1789,7 +1960,11 @@ class Orchestrator:
             if bloco_perfil():
                 partes.append(bloco_perfil()[:700])
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
+        if getattr(self, "memoria_curada", None) is not None:
+            bloco = self.memoria_curada.bloco_compacto()
+            if bloco:
+                partes.append(bloco)
         if contexto_cerebro:
             partes.append("Contexto conhecido:\n" + contexto_cerebro[:600])
         if extra_context:
@@ -1926,7 +2101,7 @@ class Orchestrator:
                     from yvakor import licoes
                     licoes.padrao().registrar(r["licao"], "erro", exemplo=pergunta)
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
             return nota
         except Exception:
             return None
@@ -1971,7 +2146,7 @@ class Orchestrator:
                     and not self.settings["agent"].get("aprender_local", False)):
                 return
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         nota = None
         if self.settings["agent"].get("avaliar_auto"):
             nota = self._avaliar_fundo(pergunta, resposta, contexto, ferramentas)
@@ -1982,7 +2157,7 @@ class Orchestrator:
         try:
             self.absorber.after_response(pergunta, resposta, task_type)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         finally:
             self._abs_lock.release()
 
@@ -2009,45 +2184,50 @@ class Orchestrator:
         try:
             self.mcp.parar()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         try:
             self.agenda.parar()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         try:
             self.cowork.shutdown()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         try:
             if self.navegadores is not None:
                 self.navegadores.shutdown()
             elif self.browser is not None:
                 self.browser.shutdown()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         try:
             if self.monitor_rede is not None:
                 self.monitor_rede.parar()
             if self.rede is not None:
                 self.rede.shutdown()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
+        try:
+            if getattr(self, "guardiao", None) is not None:
+                self.guardiao.parar()
+        except Exception:
+            _log.debug("exceção ignorada", exc_info=True)
         try:
             if getattr(self, "entorno", None) is not None:
                 self.entorno.parar()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         # Fecha conexões SQLite com checkpoint/optimize (dados consistentes).
         for obj in (self.cerebro, self.skills, self.semantic, self.episodic):
             try:
                 if obj is not None:
                     obj.fechar()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         try:
             self.telemetria.fechar()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def avisar(self, texto: str) -> None:
         """Fala um aviso curto (usado por tarefas de segundo plano)."""
@@ -2056,4 +2236,4 @@ class Orchestrator:
                     "avisar_cowork", False):
                 self.voz.falar(texto)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)

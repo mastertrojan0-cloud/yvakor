@@ -49,4 +49,13 @@ ok("o do usuário vence o padrão de mesmo comando", A.expandir("/resumir", meus
 ok("entradas inválidas (sem comando / prompt vazio) são ignoradas", !meus.some((a) => a.comando === "vazio") && meus.length === lista.length + 1);
 ok("{selecao} é limitado (não estoura o contexto)", A.expandir("/explicar", lista, { selecao: "x".repeat(9000) }).prompt.length < 4300);
 
+// comandos do núcleo (GET /api/comandos) seguem intactos ao servidor
+const comNucleo = A.juntar([], [{ comando: "skills", nome: "Skills" }, { comando: "relatorio-vendas" },
+                                { comando: "meu-plugin:deploy" }, { comando: "resumir", nome: "não sobrescreve" }]);
+r = A.expandir("/relatorio-vendas de março", comNucleo, {});
+ok("skill do núcleo vai sem expandir", r.ok && r.prompt === "/relatorio-vendas de março", r.prompt);
+ok("comando de plugin com ':' é reconhecido", A.expandir("/meu-plugin:deploy", comNucleo, {}).prompt === "/meu-plugin:deploy");
+ok("atalho local vence o do núcleo", /Resuma esta página/.test(A.expandir("/resumir", comNucleo, {}).prompt));
+ok("comando do núcleo aparece nas sugestões", A.sugerir("/sk", comNucleo).some((a) => a.comando === "skills"));
+
 console.log(JSON.stringify({ casos }));

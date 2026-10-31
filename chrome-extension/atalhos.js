@@ -5,6 +5,9 @@
  * Um atalho é {comando, nome, prompt, exige?}. O prompt aceita os marcadores
  * {args} (o que vem depois do comando), {selecao} (texto selecionado na página),
  * {url} e {titulo}. `exige` = "args" | "selecao": o atalho só roda com isso.
+ *
+ * Comandos do NÚCLEO (GET /api/comandos: /skills, /plugins, /<skill>, comandos
+ * de plugin) entram com `servidor: true` e seguem intactos para o servidor.
  */
 (function (raiz) {
   "use strict";
@@ -25,16 +28,21 @@
       prompt: "Traduza o conteúdo principal desta página para o português do Brasil." },
   ];
 
-  const norm = (c) => String(c == null ? "" : c).toLowerCase().replace(/^\//, "").replace(/[^a-z0-9_-]/g, "");
+  const norm = (c) => String(c == null ? "" : c).toLowerCase().replace(/^\//, "").replace(/[^a-z0-9_:-]/g, "");
 
-  // Atalhos do usuário vencem os padrão de mesmo comando.
-  function juntar(usuario) {
+  // Atalhos do usuário vencem os padrão de mesmo comando; os do núcleo só
+  // entram onde não há atalho local.
+  function juntar(usuario, servidor) {
     const mapa = new Map(PADRAO.map((a) => [a.comando, Object.assign({ padrao: true }, a)]));
     for (const a of usuario || []) {
       const c = norm(a && a.comando);
       if (c && a.prompt && String(a.prompt).trim()) {
         mapa.set(c, { comando: c, nome: String(a.nome || c).slice(0, 60), prompt: String(a.prompt), exige: a.exige || undefined });
       }
+    }
+    for (const s of servidor || []) {
+      const c = norm(s && s.comando);
+      if (c && !mapa.has(c)) mapa.set(c, { comando: c, nome: String(s.nome || c).slice(0, 60), servidor: true });
     }
     return Array.from(mapa.values());
   }
@@ -64,6 +72,7 @@
       }
       return { ok: false, nao_atalho: true };
     }
+    if (atalho.servidor) return { ok: true, prompt: t, atalho };
     if (atalho.exige === "selecao" && !String(ctx.selecao || "").trim()) {
       return { ok: false, erro: "Selecione um texto na página antes de usar /" + cmd + "." };
     }

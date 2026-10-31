@@ -23,18 +23,20 @@ from __future__ import annotations
 import re
 import sqlite3
 import threading
-import time
 from datetime import datetime
 from pathlib import Path
 
 from yvakor.memory.db import (
     conectar, criar_fts, fts_query, hash_texto, meta_get, meta_set,
-    normalizar, otimizar_fts, tabela_existe, tem_fts5,
+    normalizar, otimizar_fts, tem_fts5,
 )
 from yvakor.cerebro.resolvedor import Resolvedor
 from yvakor.cerebro.receitas import (
     ExecutorReceitas, Receita, carregar_todas,
 )
+import logging
+
+_log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 WIKILINK = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]")
@@ -78,7 +80,7 @@ class Cerebro:
         try:
             self.receitas = carregar_todas(self.skills.path)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     # ------------------------------------------------------------------ #
     # Schema
@@ -162,14 +164,15 @@ class Cerebro:
                     texto = arq.read_text(encoding="utf-8", errors="replace")
                 except Exception:
                     continue
-                titulo = arq.stem
+                nome = self.skills.nome_de(arq)
+                titulo = nome
                 for linha in texto.splitlines():
                     if linha.startswith("# "):
                         titulo = linha[2:].strip()
                         break
-                corpo = (_frontmatter(titulo, "skill", ["skill", arq.stem])
+                corpo = (_frontmatter(titulo, "skill", ["skill", nome])
                          + f"# {titulo}\n\n{texto}\n\n## Ligações\n- [[Home]]\n")
-                if self._escrever(self.dir / "Skills" / f"{arq.stem}.md", corpo):
+                if self._escrever(self.dir / "Skills" / f"{nome}.md", corpo):
                     escritos["skills"] += 1
 
         # --- conversas (resumo + últimas mensagens) ---
@@ -549,4 +552,4 @@ class Cerebro:
             self.otimizar()
             self.conn.close()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)

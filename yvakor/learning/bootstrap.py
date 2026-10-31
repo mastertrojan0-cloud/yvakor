@@ -65,7 +65,7 @@ class LearningBootstrap:
 
     # ------------------------------------------------------------------ #
     def _existing_skill_names(self) -> list[str]:
-        return [f.stem for f in self.skills.all_skills()]
+        return [self.skills.nome_de(f) for f in self.skills.all_skills()]
 
     # 1. Fatos-base do perfil ------------------------------------------- #
     def seed_facts(self) -> int:

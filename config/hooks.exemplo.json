@@ -1,0 +1,22 @@
+{
+  "_leia": "Exemplo. Para usar, copie para config/hooks.json (o YVAKOR relê sozinho). Formato igual ao do Claude Code; detalhes em yvakor/hooks.py.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "executar_shell|executar_python",
+        "hooks": [{"type": "command", "command": "python scripts/hook_bloquear_perigosos.py", "timeout": 10}]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "arquivos_escrever|arquivos_editar",
+        "hooks": [{"type": "command", "command": "python -m ruff check --quiet .", "timeout": 60}]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{"type": "command", "command": "python scripts/hook_registrar.py", "timeout": 10}]
+      }
+    ]
+  }
+}

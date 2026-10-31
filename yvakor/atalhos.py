@@ -3,6 +3,9 @@
 Espelho de chrome-extension/atalhos.js — os mesmos atalhos padrão e as mesmas
 regras. tests/test_extensao_estilo_claude.py confere que os dois não divergem.
 O prompt aceita {args}, {selecao}, {url} e {titulo}.
+
+Comandos do NÚCLEO (GET /api/comandos: /skills, /plugins, /<skill>, comandos
+de plugin) entram com "servidor": True e seguem intactos para o servidor.
 """
 from __future__ import annotations
 
@@ -28,16 +31,20 @@ PADRAO = [
 
 
 def _norm(c) -> str:
-    return re.sub(r"[^a-z0-9_-]", "", str(c or "").lower().lstrip("/"))
+    return re.sub(r"[^a-z0-9_:-]", "", str(c or "").lower().lstrip("/"))
 
 
-def juntar(usuario=None) -> list[dict]:
+def juntar(usuario=None, servidor=None) -> list[dict]:
     mapa = {a["comando"]: dict(a) for a in PADRAO}
     for a in usuario or []:
         c = _norm((a or {}).get("comando"))
         if c and str(a.get("prompt") or "").strip():
             mapa[c] = {"comando": c, "nome": str(a.get("nome") or c)[:60],
                        "prompt": str(a["prompt"]), "exige": a.get("exige") or None}
+    for s in servidor or []:
+        c = _norm((s or {}).get("comando"))
+        if c and c not in mapa:
+            mapa[c] = {"comando": c, "nome": str(s.get("nome") or c)[:60], "servidor": True}
     return list(mapa.values())
 
 
@@ -57,6 +64,8 @@ def expandir(texto: str, lista: list[dict] | None = None, ctx: dict | None = Non
         if re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_-]{1,19}", m.group(1)):
             return {"erro": f"O atalho /{cmd} não existe. Digite / para ver os disponíveis."}
         return {"nao_atalho": True}
+    if atalho.get("servidor"):
+        return {"ok": True, "prompt": t}
     if atalho.get("exige") == "selecao" and not str(ctx.get("selecao") or "").strip():
         return {"erro": f"Selecione um texto na página antes de usar /{cmd}."}
     if atalho.get("exige") == "args" and not args:

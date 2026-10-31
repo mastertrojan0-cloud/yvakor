@@ -775,6 +775,9 @@ async function carregarAtalhos() {
   try {
     const r = await chrome.storage.local.get("atalhos_usuario");
     listaAtalhos = YvakorAtalhos.juntar(r.atalhos_usuario || []);
+    // comandos do núcleo (/skills, /plugins, /<skill>…)
+    const c = await api("/api/comandos", { timeout: 4000 }).catch(() => ({}));
+    listaAtalhos = YvakorAtalhos.juntar(r.atalhos_usuario || [], c.comandos || []);
   } catch (e) { /* usa só os padrão */ }
   montarChips();
 }

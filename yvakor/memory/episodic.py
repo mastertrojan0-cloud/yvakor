@@ -20,9 +20,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from yvakor.memory.db import (
-    conectar, criar_fts, colunas, fts_query, hash_texto, meta_get, meta_set,
-    otimizar_fts, tabela_existe, tem_fts5,
+    conectar, criar_fts, colunas, fts_query, meta_get, meta_set,
+    otimizar_fts, tem_fts5,
 )
+import logging
+
+_log = logging.getLogger(__name__)
 
 SCHEMA_VERSAO = 2
 KINDS_OPERACIONAIS = ("ferramenta", "manutencao", "bootstrap", "skill_bootstrap")
@@ -87,7 +90,9 @@ class EpisodicMemory:
             sess_cols = colunas(self.conn, "sessions")
             for coluna, tipo in (("last_at", "TEXT"),
                                  ("last_preview", "TEXT DEFAULT ''"),
-                                 ("msg_count", "INTEGER DEFAULT 0")):
+                                 ("msg_count", "INTEGER DEFAULT 0"),
+                                 # conversa pertence a um workspace (como no Claude Code)
+                                 ("workspace", "TEXT DEFAULT ''")):
                 if coluna not in sess_cols:
                     self.conn.execute(f"ALTER TABLE sessions ADD COLUMN {coluna} {tipo}")
 
@@ -152,7 +157,7 @@ class EpisodicMemory:
         self.conn.commit()
 
     def _create_session(self, title: str = "", activate: bool = True,
-                        kind: str = "chat") -> str:
+                        kind: str = "chat", workspace: str = "") -> str:
         sid = uuid.uuid4().hex[:8]
         if activate:
             self.conn.execute("UPDATE sessions SET active=0")
@@ -162,8 +167,8 @@ class EpisodicMemory:
         ts = _agora()
         self.conn.execute(
             "INSERT INTO sessions (id, title, created_at, active, kind, last_at, "
-            "last_preview, msg_count) VALUES (?,?,?,?,?,?,'',0)",
-            (sid, title, ts, 1 if activate else 0, kind, ts))
+            "last_preview, msg_count, workspace) VALUES (?,?,?,?,?,?,'',0,?)",
+            (sid, title, ts, 1 if activate else 0, kind, ts, workspace or ""))
         self.conn.commit()
         return sid
 
@@ -310,8 +315,8 @@ class EpisodicMemory:
 
     def listar_conversas(self, kind: str | None = "chat") -> list[dict]:
         sql = ("SELECT id, title, created_at, active, COALESCE(kind,'chat'), "
-               "COALESCE(msg_count,0), last_at, COALESCE(last_preview,'') "
-               "FROM sessions")
+               "COALESCE(msg_count,0), last_at, COALESCE(last_preview,''), "
+               "COALESCE(workspace,'') FROM sessions")
         params: tuple = ()
         if kind is not None:
             sql += " WHERE COALESCE(kind,'chat')=?"
@@ -322,7 +327,23 @@ class EpisodicMemory:
             "id": r[0], "title": r[1] or "", "created_at": r[2],
             "active": bool(r[3]), "kind": r[4], "episodes": r[5],
             "last_at": r[6] or r[2], "preview": (r[7] or "").strip()[:160],
+            "workspace": r[8] or "",
         } for r in rows]
+
+    def workspace_da_conversa(self, sid: str | None) -> str | None:
+        """Workspace da conversa; None se não tem (segue o ativo global)."""
+        if not sid:
+            return None
+        row = self.conn.execute("SELECT COALESCE(workspace,'') FROM sessions WHERE id=?",
+                                (sid,)).fetchone()
+        return (row[0] or None) if row else None
+
+    def definir_workspace(self, sid: str, workspace: str) -> bool:
+        with self._lock:
+            cur = self.conn.execute("UPDATE sessions SET workspace=? WHERE id=?",
+                                    (workspace or "", sid))
+            self.conn.commit()
+        return cur.rowcount > 0
 
     def episodes_count(self) -> int:
         return self.conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
@@ -336,9 +357,9 @@ class EpisodicMemory:
     # ------------------------------------------------------------------ #
     # Gestão de conversas
     # ------------------------------------------------------------------ #
-    def nova_conversa(self, titulo: str = "") -> str:
+    def nova_conversa(self, titulo: str = "", workspace: str = "") -> str:
         with self._lock:
-            sid = self._create_session(titulo)
+            sid = self._create_session(titulo, workspace=workspace)
         row = self.conn.execute("SELECT title FROM sessions WHERE id=?",
                                 (sid,)).fetchone()
         return f"{sid} ({row[0] if row else ''})"
@@ -408,6 +429,10 @@ class EpisodicMemory:
             if not linha:
                 return False, "Conversa não encontrada."
             self.conn.execute("DELETE FROM episodes WHERE session_id=?", (sid,))
+            try:                  # resumo compactado (yvakor/compactacao.py)
+                self.conn.execute("DELETE FROM conversa_resumos WHERE session_id=?", (sid,))
+            except sqlite3.OperationalError:
+                pass
             self.conn.execute("DELETE FROM sessions WHERE id=?", (sid,))
             if linha[0]:
                 ultima = self.conn.execute(
@@ -550,4 +575,4 @@ class EpisodicMemory:
             self.otimizar()
             self.conn.close()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)

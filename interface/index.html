@@ -1321,6 +1321,15 @@ let listaAtalhos = [];
 try{
   if(window.YvakorAtalhos) listaAtalhos = YvakorAtalhos.juntar(JSON.parse(localStorage.getItem('yv_atalhos') || '[]'));
 }catch(e){ if(window.YvakorAtalhos) listaAtalhos = YvakorAtalhos.juntar([]); }
+// comandos do núcleo (/skills, /plugins, /<skill>…): autocompletar e envio direto
+(async ()=>{
+  try{
+    const r = await (await fetch('/api/comandos')).json();
+    let usuario = [];
+    try{ usuario = JSON.parse(localStorage.getItem('yv_atalhos') || '[]'); }catch(e){}
+    if(window.YvakorAtalhos) listaAtalhos = YvakorAtalhos.juntar(usuario, r.comandos || []);
+  }catch(e){}
+})();
 
 async function pararTarefa(){
   enviar.textContent = '…';
