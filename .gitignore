@@ -7,3 +7,8 @@ data/
 node_modules/
 *.zip
 runId.txt
+
+# Relatórios gerados na máquina do usuário e pacotes de build
+drivers_terceiros.csv
+relatorio_drivers.txt
+*.vsix
