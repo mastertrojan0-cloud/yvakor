@@ -219,3 +219,58 @@ def test_regras_de_autonomia_no_prompt():
     assert "TERMINE O TRABALHO" in raciocinio.METODO
     assert "MENSAGEM CURTA" in raciocinio.METODO
     assert "NÃO OFEREÇA" in PROTOCOLO
+
+
+def test_nao_pede_aval_que_o_usuario_ja_deu():
+    """Conversa 71: autorizado, ainda terminava com menu/'pode executar?'."""
+    from yvakor.agent import pediu_aval_ja_dado
+    menu = ("**Como seguir (escolha um):**\n1. Corrigir\n2. Atualizar\n\n"
+            "Me diga qual caminho e eu executo.")
+    assert pediu_aval_ja_dado(menu, ["vamos atualizar de qualquer forma e corretamente"])
+    assert pediu_aval_ja_dado("Posso desinstalar o RemoteFX? quero seu ok",
+                              ["se for necessario atualiza"])
+    assert pediu_aval_ja_dado(menu, ["quais drivers estão velhos?"]) is None
+    assert pediu_aval_ja_dado("Me diga qual senha do Wi-Fi usar.", ["resolva"]) is None
+
+
+def test_shell_que_refaz_ferramenta_propria_volta_com_a_indicacao():
+    """Exame de 29/10: o modelo escrevia PowerShell em vez de usar as próprias."""
+    from yvakor.agent import ferramenta_dedicada
+    tem = {"limpar_temporarios", "esvaziar_lixeira", "sistema_drivers",
+           "sistema_drivers_atualizar", "organizar_plano", "organizar_analisar"}
+    casos = {
+        r'Remove-Item "$env:TEMP\*" -Recurse -Force': "limpar_temporarios",
+        "Clear-RecycleBin -Force": "esvaziar_lixeira",
+        "Get-PnpDevice | Where-Object Status -ne OK": "sistema_drivers",
+        "Disable-PnpDevice -InstanceId X -Confirm:$false": "sistema_drivers_atualizar",
+        r'Move-Item "$env:USERPROFILE\Downloads\*.pdf" docs': "organizar_plano",
+    }
+    for cmd, esperado in casos.items():
+        assert ferramenta_dedicada("executar_shell", {"comando": cmd}, tem)[0] == esperado, cmd
+    assert ferramenta_dedicada("executar_shell", {"comando": "ipconfig /all"}, tem) is None
+    assert ferramenta_dedicada("executar_shell", {"comando": "Clear-RecycleBin"}, set()) is None
+
+
+def test_insistir_no_mesmo_comando_executa():
+    from yvakor.agent import AgentLoop
+    from yvakor.tools.registry import ToolRegistry
+    reg = ToolRegistry({"tools": {"guarded_actions": []}})
+    rodou = []
+    reg.register("executar_shell", lambda comando: rodou.append(comando) or {"ok": True}, "",
+                 {"comando": "str"})
+    reg.register("esvaziar_lixeira", lambda: {"ok": True}, "", {})
+    loop = AgentLoop(None, reg)
+    loop._tl.dedicadas_avisadas = set()
+    primeiro = loop._rodar("executar_shell", {"comando": "Clear-RecycleBin -Force"})
+    assert not primeiro["ok"] and "esvaziar_lixeira" in primeiro["error"] and rodou == []
+    assert loop._rodar("executar_shell", {"comando": "Clear-RecycleBin -Force"})["ok"]
+    assert rodou == ["Clear-RecycleBin -Force"]
+
+
+def test_recusa_de_ordem_direta_e_cobrada():
+    """Exame de 29/10: "deleta os temporários" → "Não vou fazer isso"."""
+    from yvakor.agent import pediu_aval_ja_dado
+    recusa = "Não vou fazer isso — é risco real de destruir coisa que você precisa."
+    assert pediu_aval_ja_dado(recusa, ["deleta todos os arquivos temporais do computador"])
+    assert pediu_aval_ja_dado("Pronto, apaguei 850 MB.", ["deleta os temporarios"]) is None
+    assert pediu_aval_ja_dado(recusa, ["me explica o que é o TEMP"]) is None

@@ -25,6 +25,9 @@ from pathlib import Path
 
 from yvakor.entorno import sensores
 from yvakor.entorno.perfil import Perfil
+import logging
+
+_log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -55,7 +58,7 @@ def _baixar_prioridade_thread() -> None:
         k = ctypes.windll.kernel32
         k.SetThreadPriority(k.GetCurrentThread(), -2)   # THREAD_PRIORITY_LOWEST
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
 
 
 class MotorEntorno:
@@ -115,7 +118,7 @@ class MotorEntorno:
             try:
                 self.importar_historico()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         if sensores.psutil is not None:
             sensores.psutil.cpu_percent(interval=None)   # referência p/ leitura não bloqueante
         ultimo_flush = time.time()
@@ -125,20 +128,20 @@ class MotorEntorno:
             try:
                 self.ciclo()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             agora = time.time()
             if agora - ultimo_flush >= 60:
                 try:
                     self.perfil.flush()
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
                 ultimo_flush = agora
             if agora - self._nota_em >= 1800:
                 self._nota_em = agora
                 try:
                     self.gravar_nota()
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
 
     def _cpu_alta(self) -> bool:
         if sensores.psutil is None:
@@ -244,7 +247,7 @@ class MotorEntorno:
             from yvakor.notificacoes import emitir
             emitir(texto, categoria, 1, falar=False, detalhe="entorno")
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def importar_historico(self) -> dict:
         """Primeira subida: aprende com o que já está gravado (entradas e
@@ -417,15 +420,15 @@ def register_entorno_tools(registry, motor: MotorEntorno) -> list[str]:
     registry.register("entorno_perfil", entorno_perfil,
                       "Valor normal de uma métrica por hora do dia (vazio = lista "
                       "as métricas: pc.cpu, rede.download_kbs, uso.ativo…).",
-                      {"metrica": "str"})
+                      {"metrica": "str?"})
     registry.register("entorno_eventos", entorno_eventos,
                       "Anomalias e novidades do ambiente nas últimas N horas "
                       "(tipo: anomalia | novidade | vazio).",
-                      {"horas": "float", "tipo": "str"})
+                      {"horas": "float?", "tipo": "str?"})
     registry.register("entorno_status", entorno_status,
                       "Estado do motor de entorno: sensores, custo e intervalos.", {})
     registry.register("entorno_pausar", entorno_pausar,
                       "Pausa (true) ou retoma (false) o aprendizado do ambiente.",
-                      {"pausar": "bool"})
+                      {"pausar": "bool?"})
     return ["entorno_resumo", "entorno_perfil", "entorno_eventos",
             "entorno_status", "entorno_pausar"]

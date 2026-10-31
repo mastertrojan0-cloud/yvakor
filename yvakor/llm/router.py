@@ -3,7 +3,6 @@
 mova categorias de 'external' para 'local' no settings.yaml."""
 from __future__ import annotations
 import inspect
-import json
 import logging
 import re
 import threading
@@ -59,7 +58,11 @@ ACOES = ("abra", "abrir", "crie", "criar", "list", "edit", "apag", "mova",
          "mover", "copi", "baix", "instal", "execut", "rodar", "rode",
          "grav", "tire", "tirar", "ligu", "ligar", "deslig", "envi", "salv",
          "pesquis", "naveg", "clic", "preench", "analis", "compare",
-         "organiz", "corrija", "refator", "implement")
+         "organiz", "corrija", "refator", "implement",
+         # faltavam na conversa 71: "deleta", "verifica", "procede"…
+         "delet", "limp", "remov", "exclu", "verific", "atualiz", "proced",
+         "prossig", "autoriz", "configur", "consert", "repar", "diagnost",
+         "desinstal", "escane", "reinici", "mostr", "busc", "procur")
 
 
 class _SemProvedor(Exception):
@@ -231,7 +234,7 @@ class LLMRouter:
                        + (" (sem saldo ou credencial)" if fatal else "")
                        + " — usando o modelo local.", "sistema", 1, falar=False)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
 
     def _ok(self, nome: str) -> None:
         with self._lock:
@@ -357,7 +360,7 @@ class LLMRouter:
                                                     (time.time() - t0) * 1000,
                                                     getattr(p, "ultimo_uso", None), q)
                     except Exception:
-                        pass
+                        _log.debug("exceção ignorada", exc_info=True)
                 return p.name, msg
             except Exception as exc:
                 self._falhou(p.name, exc)
@@ -417,7 +420,7 @@ class LLMRouter:
                                         getattr(p, "ultimo_uso", None), 0.0, ok=False,
                                         detalhe=str(exc)[:120])
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
                 continue
             if not (r or "").strip():                    # vazio = falha (como no adapter)
                 erros.append(f"{p.name}: resposta vazia")
@@ -426,7 +429,7 @@ class LLMRouter:
                                         getattr(p, "ultimo_uso", None), 0.0, ok=False,
                                         detalhe="resposta vazia")
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
                 continue
             uso = getattr(p, "ultimo_uso", None)
             q = economia.avaliar(r, plano.tarefa, (uso or {}).get("finish"))

@@ -101,7 +101,9 @@ _PLANO = ('{"objetivo":"limpar downloads","pronto_quando":"pasta sem .tmp",'
           '"passos":["listar a pasta","apagar os .tmp"]}')
 _CHAMADA = ('{"acao":"usar_ferramenta","ferramenta":"limpar_tmp_teste",'
             '"args":{"caminho":"C:/d/a.tmp"}}')
-_PEDIDO = [{"role": "user", "content": "liste meus downloads e apague os arquivos .tmp"}]
+# O passo arriscado ("apagar os .tmp") vem do PLANO do agente, não do pedido:
+# é aí que o modo plano para e pergunta (ordem direta do usuário não para).
+_PEDIDO = [{"role": "user", "content": "liste meus downloads, organize e limpe a pasta"}]
 
 
 def _loop(r, chamadas, modo="auto"):
@@ -183,20 +185,20 @@ def test_sem_interface_ou_modo_nunca_executa_direto():
         assert chamadas == [{"caminho": "C:/d/a.tmp"}]
 
 
-def test_acao_arriscada_de_um_passo_tambem_pede_aprovacao():
-    """Teste real: "apague os arquivos .tmp da pasta X" não gerava plano
-    (1 verbo só) e o agente apagava direto, sem mostrar nada."""
+def test_ordem_direta_de_acao_arriscada_nao_para_no_plano():
+    """Política de 29/10: "apague os .tmp" é a própria autorização; a
+    confirmação fica no guard (popup da ferramenta), não numa 2ª pergunta."""
     chamadas, perguntas = [], []
-    interacao.definir(lambda *a: perguntas.append(a) or {"allow": False})
+    interacao.definir(lambda *a: perguntas.append(a))
     try:
-        r = _Roteiro([_PLANO])
+        r = _Roteiro([_CHAMADA, "Apaguei C:/d/a.tmp."])
         saida = AgentLoop(r, _registro(chamadas), raciocinio={
-            "planejar": True, "aprovar_plano": "auto"}).run(
+            "planejar": True, "verificar": False, "aprovar_plano": "auto"}).run(
             "t", [{"role": "user", "content": "apague os arquivos .tmp da pasta C:/d"}])
     finally:
         interacao.limpar()
-    assert perguntas and perguntas[0][0] == "plano" and chamadas == []
-    assert "cancelei" in saida
+    assert perguntas == [] and chamadas == [{"caminho": "C:/d/a.tmp"}]
+    assert saida == "Apaguei C:/d/a.tmp."
     assert not raciocinio.pedido_arriscado("pesquise voos para Manaus")
 
 
@@ -211,3 +213,51 @@ def test_pedido_de_modo_plano_forca_plano_mesmo_em_tarefa_simples():
     finally:
         interacao.limpar()
     assert r.vistos[0] == raciocinio.PEDIR_PLANO and perguntas and "cancelei" in saida
+
+
+def test_usuario_ja_autorizou_plano_arriscado_segue_sem_esperar():
+    """Conversa 71: "resolva de qualquer forma" e o plano ficou 8 min parado
+    esperando aprovação, terminando em "não executei nada"."""
+    chamadas, perguntas = [], []
+    interacao.definir(lambda *a: perguntas.append(a))
+    autorizado = [{"role": "user", "content":
+                   "liste meus downloads e apague os .tmp, pode executar de qualquer forma"}]
+    try:
+        r = _Roteiro([_PLANO, _CHAMADA, "Apaguei C:/d/a.tmp."])
+        saida = _loop(r, chamadas).run("t", autorizado)
+    finally:
+        interacao.limpar()
+    assert perguntas == [] and chamadas == [{"caminho": "C:/d/a.tmp"}]
+    assert saida == "Apaguei C:/d/a.tmp."
+
+
+def test_pedir_para_ver_o_plano_continua_valendo_mesmo_autorizado():
+    perguntas = []
+    interacao.definir(lambda *a: perguntas.append(a))
+    pedido = [{"role": "user", "content":
+               "me mostre o plano antes e depois pode executar: apague os .tmp"}]
+    try:
+        _loop(_Roteiro([_PLANO]), []).run("t", pedido)
+    finally:
+        interacao.limpar()
+    assert perguntas and perguntas[0][0] == "plano"
+
+
+def test_tempo_esgotado_resume_o_que_foi_feito():
+    """Antes: só "Interrompi… está no histórico" e o que foi descoberto sumia."""
+    import time as _t
+
+    class _Lento(_Roteiro):
+        def complete_messages(self, task, msgs, **k):
+            if not self.vistos:
+                _t.sleep(1.2)               # 1º passo estoura o limite de 1 s
+            return super().complete_messages(task, msgs, **k)
+
+    chamadas = []
+    r = _Lento([_CHAMADA, "Limpei a.tmp; faltou o resto. Mande continua."])
+    loop = AgentLoop(r, _registro(chamadas), max_iterations=6, timeout_s=1,
+                     raciocinio={"planejar": False, "verificar": False})
+    saida = loop.run("t", [{"role": "user", "content": "apague o a.tmp"}])
+    assert chamadas == [{"caminho": "C:/d/a.tmp"}]
+    assert saida.startswith("⏱ Tempo da tarefa esgotado") and "a.tmp" in saida
+    assert "OBSERVAÇÕES" in r.vistos[-1]          # resumo feito a partir do que rodou

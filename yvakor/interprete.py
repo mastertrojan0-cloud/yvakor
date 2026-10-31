@@ -26,6 +26,9 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from urllib.parse import quote_plus
+import logging
+
+_log = logging.getLogger(__name__)
 
 
 def _norm(texto: str) -> str:
@@ -91,9 +94,68 @@ def classificar(mensagem: str, tem_historico: bool) -> str:
         return "novo"
     if _CORRECAO.search(n) and len(n.split()) <= 12:
         return "correcao"
-    if _CONTINUACAO.search(n) or (_REFERENCIA.search(n) and len(n.split()) <= 15):
+    if (_CONTINUACAO.search(n) or _APROVACAO.search(n)
+            or (_REFERENCIA.search(n) and len(n.split()) <= 15)):
         return "continuacao"
     return "novo"
+
+
+# ---------------------------------------------------------------------- #
+# Conversa casual × tarefa (decide o atalho do modelo local)
+# ---------------------------------------------------------------------- #
+# Antes o atalho decidia pelo TAMANHO do texto (até 160 caracteres = "simples")
+# e mandava ao modelo local, sem ferramentas: "deleta os temporários",
+# "verifica os drivers", "sim" e "eu estou autorizando" eram respondidos por
+# ele com recusa, promessa vazia ou tutorial genérico (conversa 71).
+_APROVACAO = re.compile(
+    r"^\s*(sim|s|pode|pode sim|pode ir|procede|prossiga|prosseguir|vai|manda|"
+    r"bora|dale|confirmo|confirmado|autoriz\w*|claro|faz|faca|executa|segue|"
+    r"siga|aprovado|ok pode|com certeza)\b|\b(estou |te |lhe )?autoriz\w*|"
+    # "você escolha o melhor caminho e resolva": aprova o que estava em curso
+    r"\b(voce|vc) (escolh|decid)\w*|\bresolv(a|e)\b|\bde qualquer (forma|jeito)", re.I)
+# Radicais de verbos de ação (pt/es), casados no INÍCIO da palavra.
+_ACAO = re.compile(
+    r"\b(delet|apag|limp|remov|exclu|elimin|borr|verific|cheq|chec|confer|"
+    r"atualiz|actualiz|instal|desinstal|organiz|arrum|mov|copi|cri[ae]|abr[aei]|"
+    r"execut|rod[ae]|proced|prossig|continu|fa[cz]|mostr|list|busc|procur|"
+    r"pesquis|baix|descarg|envi|mand|configur|consert|corrig|repar|otimiz|"
+    r"escane|monitor|ger[ae]|calcul|convert|compact|extra[ia]|salv|imprim|"
+    r"deslig|lig[ue]|reinici|desativ|ativ|escrev|edit|renome|agend|lembr|"
+    r"analis|compar|diagnost|test|med[ei]|acess|naveg|clic|preench|digit|"
+    r"tir[ae]|grav|traduz|resum|tabel|planilh|relat)\w*", re.I)
+# Coisas do computador/rede/arquivos: pedir sobre elas é tarefa, não papo.
+_SISTEMA = re.compile(
+    r"\b(arquivo|pasta|diretorio|driver|drivers|computador|pc|notebook|windows|"
+    r"sistema|disco|hd|ssd|memoria|ram|cpu|processador|rede|wifi|internet|"
+    r"roteador|programa|app|aplicativo|software|temp|temporari\w*|lixo|lixeira|"
+    r"cache|navegador|chrome|edge|site|pagina|email|e-mail|whatsapp|camera|"
+    r"impressora|celular|tela|janela|download\w*|backup|senha|usuario|"
+    r"atualizac\w*|virus|antivirus|bateria|placa|bios|porta|servidor)\b", re.I)
+# Só papo vai ao modelo local. Pergunta de conhecimento ("o que é MCP?") ia
+# também, e o 3B inventava ("sistema operacional da IBM", exame de 29/10);
+# o DeepSeek responde isso em 1–2 s.
+_CASUAL = re.compile(
+    r"^\s*(oi|ola+|e ai|eai|bom dia|boa tarde|boa noite|hey|hello|hola|"
+    r"obrigad\w*|valeu|vlw|tmj|gracias|tudo bem|tudo certo|como (vai|voce esta|vc ta)|"
+    r"quem e voce|conta uma piada|me conta uma piada|piada|kkk+|haha+|rs+)\b", re.I)
+
+
+def conversa_casual(mensagem: str, historico: list[dict] | None = None) -> bool:
+    """True só para papo/pergunta geral que o modelo local responde bem
+    sem ferramentas. Na dúvida, False (vai ao agente com o modelo forte)."""
+    n = _norm(mensagem).strip()
+    if not n:
+        return False
+    hist = [m for m in (historico or []) if m.get("content")]
+    if hist:
+        # resposta a uma pergunta/proposta do agente, aprovação ou continuação
+        ultima = next((m["content"] for m in reversed(hist)
+                       if m.get("role") == "assistant"), "")
+        if ultima.rstrip().endswith("?") or classificar(n, True) != "novo":
+            return False
+    if _APROVACAO.search(n) or _ACAO.search(n) or _SISTEMA.search(n):
+        return False
+    return bool(_CASUAL.search(n))
 
 
 # ---------------------------------------------------------------------- #
@@ -144,6 +206,77 @@ def servicos(mensagem: str, contexto: str = "") -> list[dict]:
 
 
 # ---------------------------------------------------------------------- #
+# 3b. Intenção → ferramentas indicadas (o YVAKOR comanda, o modelo executa)
+# ---------------------------------------------------------------------- #
+# Exame de 29/10: com as ferramentas certas na lista, o modelo ia de shell
+# (ls -la no Windows, PowerShell de 7 passos), recusava "deleta os
+# temporários" e trocava sistema_drivers por sistema_drivers_atualizar. Para
+# as tarefas que o YVAKOR já sabe fazer, ele diz qual ferramenta e em que ordem.
+INTENCOES = (
+    ("organizar pastas",
+     re.compile(r"\b(organiz\w*|arrum\w*|bagun\w*)\b.*\b(pasta|arquivo|download|"
+                r"desktop|area de trabalho|documento|computador|pc)", re.I),
+     ["organizar_analisar()", "organizar_plano()", "organizar_executar(plano_id)"],
+     "só move (nada é apagado) e organizar_desfazer desfaz; Downloads/Documentos "
+     "podem estar em outro disco — a ferramenta já sabe onde"),
+    ("limpar temporários/lixo",
+     re.compile(r"\b(temporari\w*|temporais|temp|lixo|lixeira|cache)\b", re.I),
+     ["limpar_temporarios()", "esvaziar_lixeira() se pediram o lixo/lixeira"],
+     "é seguro: arquivos em uso ficam; a confirmação vem sozinha na execução"),
+    ("otimizar o PC",
+     re.compile(r"\b(otimiz\w*|aceler\w*|mais rapido|pc lento|computador lento|"
+                r"liberar espaco|libera espaco)\b", re.I),
+     ["limpar_temporarios()", "esvaziar_lixeira()", "organizar_analisar()",
+      "sistema_drivers()"],
+     "execute a limpeza e reporte MB liberados; não devolva scripts ao usuário"),
+    ("atualizar/reparar drivers",
+     # imperativo: "atualiza/atualize/resolva" — "precisam ser atualizados" é
+     # só verificar
+     re.compile(r"(?=.*\bdrivers?\b).*\b(atualiz(a|e|ar|em)|resolv(a|e|er)|repar(a|e|ar)|"
+                r"instal(a|e|ar)|corri(ja|ge|gir))\b", re.I),
+     ["sistema_drivers()", "sistema_drivers_atualizar(acao=\"auto\")"],
+     "o UAC do Windows é a confirmação; não chame sistema_drivers com 'acao'"),
+    ("verificar drivers",
+     re.compile(r"\bdrivers?\b", re.I),
+     ["sistema_drivers()"],
+     "uma chamada traz problemas, drivers antigos e Windows Update — não use shell"),
+    ("o que está no VS Code",
+     re.compile(r"\b(vs ?code|vscode|editor)\b|\b(selecionei|selecionad[ao]|"
+                r"este arquivo|esse arquivo|arquivo aberto|esta funcao|essa funcao)\b", re.I),
+     ["leia o bloco VS CODE do prompt (já traz arquivo e seleção)",
+      "vscode_contexto() se precisar de mais", "vscode_abrir(arquivo, linha) para mostrar"],
+     "NÃO use navegador nem a extensão do Chrome para isso"),
+    ("verificar vírus",
+     re.compile(r"\b(escane\w*|varr\w*|verific\w*|analis\w*|pass\w* o antivirus|"
+                r"procur\w*)\b.*\b(virus|malware|ameaca|trojan)|"
+                r"\b(virus|malware)\b.*\b(escane\w*|varr\w*|verific\w*|procur\w*)", re.I),
+     ["guardiao_verificar()", "guardiao_escanear(tipo=\"rapida\")"],
+     "o Windows Defender verifica em segundo plano e o guardião avisa ao terminar"),
+    ("segurança do PC/rede",
+     re.compile(r"\b(virus|malware|hacker|hack\w*|invad\w*|invasao|seguranca|"
+                r"antivirus|ameaca|trojan|ransomware|espiao|guardiao|protecao)\b", re.I),
+     ["guardiao_status()", "guardiao_verificar() se pedir para checar agora"],
+     "só observa e avisa; nunca bloqueia nem apaga"),
+    ("aparelhos da rede",
+     re.compile(r"\b(dispositivos?|aparelhos?)\b.*\b(rede|wifi|conectad\w*)\b", re.I),
+     ["rede_dispositivos()", "rede_escanear() se a lista estiver velha"], ""),
+)
+
+
+def ferramentas_indicadas(texto: str) -> list[tuple[str, list[str], str]]:
+    """Intenções reconhecidas no texto, com as ferramentas na ordem de uso."""
+    n = _norm(texto)
+    achadas, vistas = [], set()
+    for nome, rx, ferramentas, nota in INTENCOES:
+        geral = {"verificar drivers": "atualizar/reparar drivers",
+                 "segurança do PC/rede": "verificar vírus"}
+        if rx.search(n) and geral.get(nome) not in vistas:
+            achadas.append((nome, ferramentas, nota))
+            vistas.add(nome)
+    return achadas
+
+
+# ---------------------------------------------------------------------- #
 # 4. Interpretação completa
 # ---------------------------------------------------------------------- #
 @dataclass
@@ -158,10 +291,11 @@ class Interpretacao:
     objetivo: str = ""
     passos: list[str] = field(default_factory=list)
     usou_modelo: bool = False
+    indicadas: list[tuple[str, list[str], str]] = field(default_factory=list)
 
     def util(self) -> bool:
         return bool(self.correcoes or self.tipo != "novo" or self.servicos
-                    or self.objetivo)
+                    or self.objetivo or self.indicadas)
 
     def bloco(self, limite: int = 1400) -> str:
         if not self.util():
@@ -187,6 +321,12 @@ class Interpretacao:
             ]
         for s in self.servicos:
             linhas.append(f"- Serviço citado: {s['servico']} → {s['url']} — {s['instrucao']}")
+        for nome, ferramentas, nota in self.indicadas:
+            linhas.append(f"- Ferramentas indicadas ({nome}), nesta ordem: "
+                          + " → ".join(ferramentas) + (f". {nota}." if nota else "."))
+        if self.indicadas:
+            linhas.append("- Use essas ferramentas em vez de executar_shell/python e "
+                          "EXECUTE: o pedido do usuário já é a autorização.")
         if self.objetivo:
             linhas.append(f"- Objetivo provável: {self.objetivo}")
         for i, p in enumerate(self.passos[:5], 1):
@@ -237,6 +377,9 @@ def interpretar(mensagem: str, historico: list[dict] | None = None,
                        correcoes=correcoes)
     if tipo != "novo":
         it.pedido_anterior, it.resposta_anterior = _anteriores(historico)
+    # na continuação/correção vale a intenção herdada ("sim", "faz novamente")
+    it.indicadas = ferramentas_indicadas(
+        corrigido if tipo == "novo" else f"{corrigido} {it.pedido_anterior}")
     contexto = _consulta(it.pedido_anterior, "") if it.pedido_anterior else ""
     it.servicos = servicos(corrigido, contexto)
     if tipo != "novo" and not it.servicos and it.pedido_anterior:
@@ -270,7 +413,7 @@ def interpretar(mensagem: str, historico: list[dict] | None = None,
             it.passos = [str(p)[:200] for p in (dados.get("passos") or [])][:4]
             it.usou_modelo = bool(it.objetivo)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
     return it
 
 
@@ -288,7 +431,9 @@ _LARGOU = re.compile(
 def desistiu_apos_tentar(resposta: str, passos: int, falhas: int = 0) -> bool:
     if not resposta or passos == 0:
         return False
-    return bool(_LARGOU.search(resposta[:1500])) or (falhas >= 3 and passos >= 4)
+    # Só a ABERTURA conta: resposta completa com uma seção "o que não foi
+    # possível" no fim não é desistência (disparava 2ª tentativa à toa).
+    return bool(_LARGOU.search(resposta[:350])) or (falhas >= 3 and passos >= 4)
 
 
 def bloco_resgate(resposta: str, ferramentas: list[str], erros: list[str]) -> str:
