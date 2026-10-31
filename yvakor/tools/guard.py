@@ -4,6 +4,9 @@ from __future__ import annotations
 import re
 import sys
 import threading
+import logging
+
+_log = logging.getLogger(__name__)
 
 # Confirmador por thread: no modo servidor (sem terminal), o orquestrador
 # injeta aqui uma função (action, detail) -> bool que faz o handshake com a
@@ -15,7 +18,13 @@ _local = threading.local()
 # rodar código deixa de abrir popup — cada passo de gráfico/cálculo parava a
 # tarefa esperando um clique que o usuário sempre dava. Continua pedindo o que
 # apaga, desliga, mexe no registro/processos/usuários ou envia dados para fora.
-LIBERADAS_AUTONOMO = {"executar_python", "executar_shell", "cap_executar_codigo"}
+# Organizar pastas só move (com desfazer): reversível, então também roda sem
+# popup nesse modo. Limpar temporários e esvaziar a Lixeira apagam de vez:
+# continuam pedindo (1 confirmação para a limpeza toda).
+# Atualizar drivers: o UAC do Windows já é a confirmação humana.
+LIBERADAS_AUTONOMO = {"executar_python", "executar_shell", "cap_executar_codigo",
+                      "organizar_executar", "sistema_drivers_atualizar",
+                      "guardiao_escanear"}
 _DESTRUTIVO_SHELL = re.compile(
     r"\b(del|erase|rd|rmdir|rm|format|shutdown|restart-computer|stop-computer|"
     r"taskkill|stop-process|kill|remove-item|move-item|rename-item|diskpart|"
@@ -155,7 +164,7 @@ class ConfirmationGuard:
                     from yvakor.arquivos import _auditar
                     _auditar("acao_autonoma", action, {"detalhe": detail[:200]})
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
                 return True
             detail = f"[{motivo}] {detail}"     # o popup diz POR QUE perguntou
         # Ações externas/destrutivas (always_confirm) SEMPRE exigem um humano,
@@ -172,7 +181,7 @@ class ConfirmationGuard:
                     _auditar("acao_sem_confirmacao", action,
                              {"detalhe": detail[:200]})
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
                 _safe_print(f"  • executado (privilégios totais): {action}")
                 return True
             # Modo automático: aprova ações de trabalho sem travar.
@@ -192,7 +201,7 @@ class ConfirmationGuard:
                     _auditar("confirmacao_critica", action,
                              {"ok": ok, "detalhe": detail[:200]})
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
             return ok
 
         # Fora de um terminal interativo (ex.: servidor web), NUNCA bloqueia

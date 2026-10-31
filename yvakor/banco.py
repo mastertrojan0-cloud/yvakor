@@ -18,6 +18,7 @@ Tudo é tolerante a falhas: nenhuma função aqui levanta para quem chama.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import sqlite3
@@ -26,6 +27,8 @@ import time
 from pathlib import Path
 
 from yvakor import seguro
+
+_logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -38,6 +41,7 @@ COMPACTAR_LIVRE_MIN_MB = 2.0    # ... e pelo menos 2 MB recuperáveis
 JSONL_ROTACAO = {               # arquivo -> (max MB, cópias)
     "auditoria.jsonl": (5, 3), "avaliacoes.jsonl": (5, 3),
     "notificacoes.jsonl": (3, 2), "rede_monitor.jsonl": (3, 2),
+    "guardiao_eventos.jsonl": (3, 2),
     "logs/falhas.jsonl": (3, 2), "logs/crash.log": (3, 2),
     "logs/supervisor.jsonl": (2, 2),
 }
@@ -54,7 +58,7 @@ def _log(raiz: Path, evento: dict) -> None:
         with (pasta / "banco.jsonl").open("a", encoding="utf-8") as f:
             f.write(json.dumps(evento, ensure_ascii=False) + "\n")
     except Exception:
-        pass
+        _logger.debug("falha ao gravar banco.jsonl", exc_info=True)
 
 
 # --------------------------------------------------------------------------- #
