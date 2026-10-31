@@ -1,0 +1,47 @@
+{
+  "name": "yvakor",
+  "displayName": "YVAKOR",
+  "description": "O YVAKOR dentro do VS Code: conversa no workspace aberto, vê o arquivo e a seleção, abre arquivos e diffs.",
+  "publisher": "acmdigital",
+  "version": "0.1.0",
+  "license": "SEE LICENSE IN LICENSE",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other", "Machine Learning"],
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "yvakor", "title": "YVAKOR", "icon": "media/icone.svg" }
+      ]
+    },
+    "views": {
+      "yvakor": [
+        { "type": "webview", "id": "yvakor.chat", "name": "Conversa" }
+      ]
+    },
+    "commands": [
+      { "command": "yvakor.perguntarSelecao", "title": "YVAKOR: Perguntar sobre a seleção" },
+      { "command": "yvakor.novaConversa", "title": "YVAKOR: Nova conversa neste workspace" },
+      { "command": "yvakor.focar", "title": "YVAKOR: Abrir conversa" }
+    ],
+    "menus": {
+      "editor/context": [
+        { "command": "yvakor.perguntarSelecao", "when": "editorHasSelection", "group": "navigation@9" }
+      ]
+    },
+    "keybindings": [
+      { "command": "yvakor.perguntarSelecao", "key": "ctrl+alt+y", "when": "editorTextFocus" }
+    ],
+    "configuration": {
+      "title": "YVAKOR",
+      "properties": {
+        "yvakor.url": {
+          "type": "string",
+          "default": "http://127.0.0.1:7777",
+          "description": "Endereço do núcleo do YVAKOR."
+        }
+      }
+    }
+  }
+}

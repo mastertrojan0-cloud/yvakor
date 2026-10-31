@@ -22,6 +22,9 @@ import shutil
 import time
 from datetime import datetime
 from pathlib import Path
+import logging
+
+_log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 LIXEIRA = ROOT / "data" / "lixeira"
@@ -38,7 +41,15 @@ def _p(caminho: str) -> Path:
     if not c:
         raise ValueError("caminho vazio")
     p = Path(c)
-    return p if p.is_absolute() else (Path.cwd() / p)
+    if p.is_absolute():
+        return p
+    # workspace ativo: "src/app.py" é relativo ao projeto, não ao YVAKOR
+    try:
+        from yvakor.workspaces import caminho_ativo
+        base = caminho_ativo()
+    except Exception:
+        base = None
+    return (base or Path.cwd()) / p
 
 
 def _auditar(acao: str, caminho: str, extra: dict | None = None) -> None:
@@ -50,7 +61,7 @@ def _auditar(acao: str, caminho: str, extra: dict | None = None) -> None:
                 "acao": acao, "caminho": str(caminho), **(extra or {}),
             }, ensure_ascii=False) + "\n")
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
 
 
 def _snapshot(p: Path, acao: str) -> str:

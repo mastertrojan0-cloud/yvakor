@@ -31,6 +31,9 @@ from tkinter import font as tkfont
 from tkinter import ttk
 
 from yvakor.textos import sem_json_de_ferramenta
+import logging
+
+_log = logging.getLogger(__name__)
 
 BASE = os.environ.get("YVAKOR_URL", "http://127.0.0.1:7777")
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,7 +64,7 @@ def _tema_escuro() -> bool:
             ) as k:
                 return winreg.QueryValueEx(k, "AppsUseLightTheme")[0] == 0
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
     return True
 
 
@@ -137,7 +140,7 @@ def _preparar_windows():
             try:
                 ctypes.windll.gdi32.AddFontResourceExW(str(arq), 0x10, 0)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         try:
             ctypes.windll.shcore.SetProcessDpiAwareness(2)
         except Exception:
@@ -146,7 +149,7 @@ def _preparar_windows():
             except Exception:
                 ctypes.windll.user32.SetProcessDPIAware()
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
 
 
 def _barra_titulo_escura(root: tk.Tk):
@@ -167,7 +170,7 @@ def _barra_titulo_escura(root: tk.Tk):
             except Exception:
                 continue
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
 
 
 def _round_rect(canvas: tk.Canvas, x1, y1, x2, y2, raio, **kw):
@@ -228,6 +231,9 @@ class CorpoRico(tk.Text):
                          insertwidth=0, takefocus=0, exportselection=True)
         self._texto = texto
         self._fundo, self._fg = fundo, fg
+        # largura definida ANTES de montar: a tabela decide se cabe por ela
+        # (antes caía no padrão de 80 colunas e era cortada na bolha estreita)
+        self._largura_px = largura_px
         self._tags()
         self._montar(texto)
         self.configure(state="disabled")
@@ -246,7 +252,12 @@ class CorpoRico(tk.Text):
     def _ajustar(self, largura_px: int) -> None:
         if largura_px == self._largura_px:
             return
-        self._largura_px = largura_px
+        anterior, self._largura_px = self._largura_px, largura_px
+        if anterior and "|" in self._texto:      # tabela: refaz para a nova largura
+            super().configure(state="normal")
+            self.delete("1.0", "end")
+            self._montar(self._texto)
+            super().configure(state="disabled")
         try:
             f = tkfont.Font(font=(self._fam, self._tam))
             cols = max(24, largura_px // max(1, f.measure("0")))
@@ -257,13 +268,18 @@ class CorpoRico(tk.Text):
         self.after_idle(self._altura)
 
     def _altura(self) -> None:
+        # Altura pelos PIXELS reais do conteúdo, convertidos em linhas da fonte
+        # base. Contar "displaylines" cortava o fim da resposta: títulos (fonte
+        # maior), tabelas e o spacing1/3 ocupam mais que uma linha base.
         try:
             self.update_idletasks()
-            n = self.count("1.0", "end-1c", "displaylines")
-            linhas = int(n[0]) if n else 1
+            px = self.count("1.0", "end", "ypixels")
+            px = int(px[0]) if px else 0
+            linha = tkfont.Font(font=(self._fam, self._tam)).metrics("linespace") or 16
+            linhas = max(1, -(-px // linha) + 1)
         except Exception:
             linhas = self._texto.count("\n") + 2
-        super().configure(height=max(1, linhas))
+        super().configure(height=linhas)
 
     # ---- estilos ----
     def _tags(self) -> None:
@@ -326,7 +342,8 @@ class CorpoRico(tk.Text):
         larg = [max(len(r[i]) for r in cel) for i in range(n)]
         total = sum(larg) + 3 * (n - 1) + 2
         try:
-            maximo = max(30, self._largura_px // max(1, tkfont.Font(font=(self._mono, self._tam - 1)).measure("0")))
+            maximo = max(30, (self._largura_px - 24)
+                         // max(1, tkfont.Font(font=(self._mono, self._tam - 1)).measure("0")))
         except Exception:
             maximo = 80
         if total > maximo:                       # larga demais: vira lista (nada é cortado)
@@ -453,14 +470,14 @@ class ChatView(tk.Frame):
         try:
             self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def _agendar_resize(self, _evt=None):
         if self._resize_job:
             try:
                 self.after_cancel(self._resize_job)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         self._resize_job = self.after(60, self._resize)
 
     def _resize(self):
@@ -499,7 +516,7 @@ class ChatView(tk.Frame):
                 try:
                     lbl.configure(wraplength=wrap)
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
             else:
                 pendentes.append(lbl)
         self._rewrap_fila = pendentes
@@ -517,7 +534,7 @@ class ChatView(tk.Frame):
                 if lbl.winfo_exists():
                     lbl.configure(wraplength=largura)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         if self._rewrap_fila:
             self._rewrap_job = self.after(16, self._rewrap_lote)
 
@@ -526,7 +543,7 @@ class ChatView(tk.Frame):
             try:
                 self.after_cancel(self._rewrap_job)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         self._rewrap_job = None
         self._rewrap_fila = []
 
@@ -573,7 +590,7 @@ class ChatView(tk.Frame):
             self.canvas.yview_moveto(1)
             self._seguir = True
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     # ------------------------------ animação --------------------------- #
     @staticmethod
@@ -616,7 +633,7 @@ class ChatView(tk.Frame):
         try:
             self.canvas.yview_moveto(0)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def add_card(self, card):
         """Insere um painel ao vivo dentro da transcrição."""
@@ -780,7 +797,7 @@ class ChatView(tk.Frame):
             try:
                 menu.grab_release()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
 
     def _copiar(self, texto: str):
         try:
@@ -788,7 +805,7 @@ class ChatView(tk.Frame):
             self.clipboard_append(texto)
             self.update_idletasks()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def texto_tudo(self) -> str:
         partes = []
@@ -864,7 +881,7 @@ class ChatView(tk.Frame):
                 if lbl.winfo_exists():
                     lbl.configure(text=self._typing_texto)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
 
     def parar_typing(self):
         job = getattr(self, "_typing_job", None)
@@ -872,14 +889,14 @@ class ChatView(tk.Frame):
             try:
                 self.after_cancel(job)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         self._typing_job = None
         frame = getattr(self, "_typing_frame", None)
         if frame:
             try:
                 frame.destroy()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         self._typing_frame = None
         self._typing_label = None
         self._typing_canvas = None
@@ -926,7 +943,7 @@ class ChatView(tk.Frame):
             try:
                 self._vazio.destroy()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             self._vazio = None
 
 
@@ -1024,13 +1041,13 @@ class SessaoLista(tk.Frame):
         try:
             self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def _resize(self, evt):
         try:
             self.canvas.itemconfigure(self._win, width=evt.width)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         self._inner_config()
 
     def _bind_roda(self, widget):
@@ -1085,9 +1102,20 @@ class SessaoLista(tk.Frame):
         elif not filtradas:
             self._mostrar_vazio("Nada encontrado para essa busca.")
         else:
+            # Como no Claude Code: cada workspace com as conversas dele (mais
+            # recente primeiro); depois as conversas gerais, por data.
+            com_ws = [x for x in filtradas if x.get("workspace_nome")]
+            sem_ws = [x for x in filtradas if not x.get("workspace_nome")]
+            ordem_ws: list[str] = []
+            for x in com_ws:
+                if x["workspace_nome"] not in ordem_ws:
+                    ordem_ws.append(x["workspace_nome"])
+            filtradas = [x for nome in ordem_ws for x in com_ws
+                         if x["workspace_nome"] == nome] + sem_ws
             grupo = None
-            for s in filtradas[:60]:
-                rotulo = self._grupo(s.get("last_at"))
+            for s in filtradas[:80]:
+                rotulo = ("📁 " + s["workspace_nome"] if s.get("workspace_nome")
+                          else self._grupo(s.get("last_at")))
                 if rotulo != grupo:
                     grupo = rotulo
                     tk.Label(self.inner, text=rotulo.upper(), bg=PANEL,
@@ -1103,7 +1131,7 @@ class SessaoLista(tk.Frame):
         try:
             self.canvas.yview_moveto(pos)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def resultado_busca(self, achadas):
         """Resultado da busca no conteúdo (servidor): None limpa."""
@@ -1211,12 +1239,12 @@ class SessaoLista(tk.Frame):
                 try:
                     w.configure(bg=PANEL2)
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
             for w in acoes:
                 try:
                     w.configure(bg=PANEL2, fg=MUTED)
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
 
         def sair(_e=None):
             if ativa:
@@ -1225,12 +1253,12 @@ class SessaoLista(tk.Frame):
                 try:
                     w.configure(bg=PANEL)
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
             for w in acoes:
                 try:
                     w.configure(bg=PANEL, fg=PANEL)
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
 
         for w in (row, corpo, topo, titulo, baixo, prev, hora):
             w.bind("<Enter>", entrar)
@@ -1254,7 +1282,7 @@ class SessaoLista(tk.Frame):
                 try:
                     m.grab_release()
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
 
         for w in (row, corpo, topo, titulo, baixo, prev):
             w.bind("<Button-3>", menu)
@@ -1293,7 +1321,7 @@ def _token(renovar: bool = False) -> str:
             if _TOKEN_VIVO:
                 return _TOKEN_VIVO
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
     try:
         _TOKEN_VIVO = (ROOT / "data" / ".server_token").read_text(
             encoding="utf-8").strip()
@@ -1365,14 +1393,14 @@ def _encerrar_nucleo_travado() -> None:
                         if pai is not None and "yvakor.server" in " ".join(pai.cmdline()):
                             pai.terminate()
                     except Exception:
-                        pass
+                        _log.debug("exceção ignorada", exc_info=True)
                     proc.terminate()
                     try:
                         proc.wait(5)
                     except psutil.TimeoutExpired:
                         proc.kill()
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
 
 
 def _mtime_codigo_em_disco() -> float:
@@ -1418,7 +1446,7 @@ def garantir_nucleo(timeout_s: float = 45.0, on_status=None) -> bool:
             try:
                 on_status("núcleo desatualizado — reiniciando…")
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         _encerrar_nucleo_travado()
         for _ in range(24):              # espera a porta liberar (máx. ~6 s)
             if not ping(0.3):
@@ -1448,7 +1476,7 @@ def garantir_nucleo(timeout_s: float = 45.0, on_status=None) -> bool:
             try:
                 on_status("núcleo subindo…")
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         time.sleep(espera)
         espera = min(espera * 1.4, 0.8)
     return False
@@ -1650,11 +1678,11 @@ class JanelaCamera(tk.Toplevel):
             try:
                 self.after_cancel(self._job)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         try:
             self.app._cameras_abertas.pop(self.ip, None)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         self.destroy()
 
 
@@ -1798,7 +1826,7 @@ class JanelaCameraVivo(tk.Toplevel):
             try:
                 proc.terminate()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
 
     def _estado(self):
         if not self.vivo or self.player is None:
@@ -1815,7 +1843,7 @@ class JanelaCameraVivo(tk.Toplevel):
             if self.player.is_playing():
                 self.status.configure(text="AO VIVO · RTSP", fg=TEAL)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         self.after(1200, self._estado)
 
     def _pausar(self):
@@ -1843,7 +1871,7 @@ class JanelaCameraVivo(tk.Toplevel):
         try:
             self.app._cameras_abertas.pop(self.ip, None)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         self.destroy()
 
 
@@ -1927,7 +1955,7 @@ class TelaBrowser(tk.Frame):
             try:
                 self.after_cancel(self._job)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         self.destroy()
 
     def _destruir(self, evt):
@@ -2059,7 +2087,7 @@ class TelaCamera(tk.Frame):
             try:
                 proc.terminate()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
 
     def fechar(self):
         self.vivo = False
@@ -2082,7 +2110,7 @@ class App:
             dpi = self.root.winfo_fpixels("1i")
             self.root.tk.call("tk", "scaling", dpi / 72.0)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         largura = min(1180, self.root.winfo_screenwidth() - 80)
         altura = min(760, self.root.winfo_screenheight() - 120)
         x = max(0, (self.root.winfo_screenwidth() - largura) // 2)
@@ -2129,6 +2157,10 @@ class App:
         self._bootando = False
         self._ph = True
         self._ultimo_passo = ""
+        self._passos_ult: dict = {}          # passos da última resposta por conversa
+        self._prog_inicio = 0.0
+        self._ws_itens: dict = {}
+        self._ws_sel = None
         self._suprimir_selecao = False
 
         self._montar()
@@ -2149,7 +2181,7 @@ class App:
             from yvakor.robustez import _gravar
             _gravar("tk-callback", exc, val, tb)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def _vigia_nucleo(self):
         """Se o núcleo parar de responder, sobe de novo — com limite, para não
@@ -2217,7 +2249,7 @@ class App:
         try:
             self.root.after_cancel(job)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         self._jobs.discard(job)
 
     def _post(self, fn, *args):
@@ -2249,7 +2281,7 @@ class App:
         try:
             self.entrada.focus_set()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     # ----------------------------- animações --------------------------- #
     def _pulsar(self, i: int = 0):
@@ -2265,7 +2297,7 @@ class App:
                     self._canal_dot.itemconfigure(self._canal_dot_item,
                                                   fill=cor)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         self._agendar(100, self._pulsar, (i + 1) % 24)
 
     @staticmethod
@@ -2280,12 +2312,12 @@ class App:
                 if fg is not None:
                     widget.configure(fg=fg)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
 
         try:
             widget.configure(cursor="hand2")
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         # add="+": <ButtonPress-1> É o mesmo evento de <Button-1>. Sem o "+", este
         # hover SUBSTITUÍA o clique já ligado ao widget (o botão "Permitir" do popup
         # de ação protegida ficava morto: a conversa esperava 90 s e negava sozinha).
@@ -2302,7 +2334,7 @@ class App:
         try:
             style.theme_use("clam")
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         style.configure("YVAKOR.Vertical.TScrollbar", troughcolor=BG,
                         background=SCROLL, lightcolor=SCROLL,
                         darkcolor=SCROLL, bordercolor=BG,
@@ -2392,9 +2424,11 @@ class App:
         self.abas.adicionar("Tarefas", self._aba_tarefas)
         self.abas.adicionar("Agenda", self._aba_agenda)
         self.abas.adicionar("Sistema", self._aba_sistema)
+        self.abas.adicionar("Workspaces", self._aba_workspaces)
         self.abas.selecionar(0)
         self._atalhos()
         self._agendar(650, self._carregar_voz)
+        self._agendar(900, self.carregar_workspaces)   # rodapé mostra o ativo
 
     def _montar_rodape(self):
         rodape = tk.Frame(self.root, bg=STATUS_BG, height=30,
@@ -2430,6 +2464,20 @@ class App:
             self._st[chave] = lbl
         tk.Label(rodape, text="NÚCLEO LOCAL · SQLITE", bg=STATUS_BG,
                  fg=DIM, font=(UI, 7)).pack(side="right", padx=14)
+        # WORKSPACE ativo (clique → aba Workspaces)
+        item = tk.Frame(rodape, bg=STATUS_BG)
+        item.pack(side="right", padx=(0, 6))
+        tk.Label(item, text="WORKSPACE", bg=STATUS_BG, fg=DIM,
+                 font=(UI_SEMI, 7)).pack(side="left")
+        ws = tk.Label(item, text="nenhum", bg=STATUS_BG, fg=MUTED, font=FONT_XS,
+                      cursor="hand2")
+        ws.pack(side="left", padx=(5, 0))
+        ws.bind("<Button-1>", lambda e: self.abas.selecionar(4))
+        self._st["workspace"] = ws
+        est = self._st.get("estado")
+        if est is not None:
+            est.configure(cursor="hand2")
+            est.bind("<Button-1>", lambda e: self._ver_passos())
 
     # ------------------------- seletor de modelo ------------------------ #
     def _montar_menu_modelo(self, menu):
@@ -2568,6 +2616,9 @@ class App:
         menu.add_command(label="Galeria",
                          command=lambda: webbrowser.open(BASE + "/galeria"))
         menu.add_separator()
+        menu.add_command(label="Apagar todo o histórico de conversas…",
+                         command=self._apagar_historico)
+        menu.add_separator()
         menu.add_command(label="Sobre o YVAKOR", command=self._sobre)
         menu.add_command(label="Sair", command=self.fechar)
         x = evt.x_root if evt else self.btn_menu.winfo_rootx()
@@ -2578,7 +2629,77 @@ class App:
             try:
                 menu.grab_release()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
+
+    def _apagar_historico(self):
+        """Apaga as conversas, mantendo o aprendizado (com backup antes)."""
+        try:
+            r = api("/api/historico/resumo", timeout=10)
+        except Exception as exc:
+            return self.set_status(f"núcleo indisponível: {exc}", ERR)
+        win = tk.Toplevel(self.root)
+        win.title("Apagar histórico")
+        win.configure(bg=BG)
+        win.transient(self.root)
+        win.resizable(False, False)
+        win.grab_set()
+        _barra_titulo_escura(win)
+        tk.Label(win, text="APAGAR TODO O HISTÓRICO", bg=BG, fg=ERR,
+                 font=(UI_SEMI, 7)).pack(anchor="w", padx=20, pady=(18, 6))
+        texto = (f"Serão apagadas {r.get('conversas', 0)} conversas "
+                 f"({r.get('mensagens', 0)} mensagens e passos), "
+                 f"{r.get('notas_conversa', 0)} notas de conversa do cérebro, os rastros "
+                 "de tarefas, os anexos e o texto das avaliações.\n\n"
+                 "O APRENDIZADO FICA: lições, skills, fatos da memória, notas do cérebro, "
+                 "perfil, entorno, guardião, workspaces e tarefas.\n\n"
+                 "Antes, um backup completo vai para data\\backups.")
+        tk.Label(win, text=texto, bg=BG, fg=FG, font=FONT_XS, wraplength=430,
+                 justify="left").pack(anchor="w", padx=20)
+        tk.Label(win, text='Digite APAGAR para confirmar:', bg=BG, fg=MUTED,
+                 font=FONT_XS).pack(anchor="w", padx=20, pady=(12, 2))
+        campo = tk.Entry(win, bg=PANEL2, fg=FG, insertbackground=GOLD, bd=0, font=FONT,
+                         highlightthickness=1, highlightbackground=LINE, highlightcolor=ERR)
+        campo.pack(fill="x", padx=20, ipady=5)
+        botoes = tk.Frame(win, bg=BG)
+        botoes.pack(fill="x", padx=20, pady=16)
+
+        def confirmar():
+            if campo.get().strip().upper() != "APAGAR":
+                campo.configure(highlightbackground=ERR)
+                return
+            win.destroy()
+            self.set_status("apagando o histórico…", GOLD)
+
+            def trabalho():
+                try:
+                    j = api("/api/historico/apagar", {"confirmar": "APAGAR"}, timeout=120)
+                except Exception as exc:
+                    j = {"ok": False, "erro": str(exc)}
+                self._post(self._historico_apagado, j)
+            threading.Thread(target=trabalho, daemon=True).start()
+
+        apagar = tk.Label(botoes, text="Apagar histórico", bg=ERR, fg=ON_GOLD,
+                          font=(UI_SEMI, 9), padx=14, pady=6, cursor="hand2")
+        apagar.pack(side="right")
+        apagar.bind("<Button-1>", lambda e: confirmar())
+        self._botao(botoes, "Cancelar", win.destroy).pack(side="right", padx=(0, 6))
+        win.bind("<Return>", lambda e: confirmar())
+        win.bind("<Escape>", lambda e: win.destroy())
+        campo.focus_set()
+
+    def _historico_apagado(self, j: dict):
+        if not j.get("ok"):
+            return self.set_status(j.get("erro") or "não foi possível apagar", ERR)
+        self.sessao = j.get("nova_conversa")
+        self._passos_ult.clear()
+        self.carregar_sessoes(recarregar_chat=True)
+        self.set_status(f"histórico apagado ({j.get('conversas_apagadas', 0)} conversas) · "
+                        "aprendizado mantido · backup salvo", OK)
+        messagebox.showinfo(
+            "Histórico apagado",
+            f"{j.get('conversas_apagadas', 0)} conversas apagadas.\n"
+            f"Aprendizado mantido: {j.get('mantido')}.\n\nBackup: {j.get('backup')}",
+            parent=self.root)
 
     def _focar_busca(self):
         if self._busca_ph:
@@ -2631,7 +2752,7 @@ class App:
             try:
                 self._confirm_win.destroy()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             self._confirm_win = None
             return
         if not self._busca_ph or self.busca.get().strip():
@@ -2664,6 +2785,8 @@ class App:
             self.carregar_agenda()
         elif indice == 3 and time.time() - self._sistema_ts > 20:
             self.carregar_sistema()
+        elif indice == 4:
+            self.carregar_workspaces()
 
     def _sugestao(self, texto: str):
         self._definir_entrada(texto)
@@ -2684,6 +2807,20 @@ class App:
         self._canal_provider = tk.Label(canal, text="—", bg=BG, fg=GOLD,
                                         font=(UI, 8))
         self._canal_provider.pack(side="right")
+        # Cabeçalho do workspace da conversa (some em conversa geral)
+        self.ws_cab = tk.Frame(aba, bg=PANEL, highlightbackground=LINE,
+                               highlightthickness=1)
+        self.ws_cab_nome = tk.Label(self.ws_cab, text="", bg=PANEL, fg=GOLD,
+                                    font=(UI_SEMI, 9))
+        self.ws_cab_nome.pack(side="left", padx=(12, 8), pady=6)
+        self.ws_cab_info = tk.Label(self.ws_cab, text="", bg=PANEL, fg=MUTED,
+                                    font=FONT_XS, anchor="w")
+        self.ws_cab_info.pack(side="left", fill="x", expand=True)
+        self._botao(self.ws_cab, "VS Code", lambda: self._cab_acao("vscode")).pack(
+            side="right", padx=(0, 8), pady=4)
+        self._botao(self.ws_cab, "Mudanças", lambda: self._cab_acao("mudancas")).pack(
+            side="right", padx=(0, 6), pady=4)
+        self._ws_cab_id = None
         self.chat = ChatView(aba, ao_sugestao=self._sugestao)
         self.chat.pack(fill="both", expand=True)
         self._composer(aba)
@@ -2837,7 +2974,7 @@ class App:
             c.create_line(14, 21, 14, 24, fill=cor, width=1.4)
             c.create_line(10, 24, 18, 24, fill=cor, width=1.4)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def _menu_mais(self, evt):
         menu = tk.Menu(self.root, tearoff=0, bg=PANEL2, fg=FG,
@@ -2861,7 +2998,7 @@ class App:
             try:
                 menu.grab_release()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
 
     def _inserir_comando(self, texto: str):
         atual = self._texto_entrada().strip()
@@ -2922,7 +3059,7 @@ class App:
             if int(self.entrada.cget("height")) != linhas:
                 self.entrada.configure(height=linhas)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     # ------------------------------ tarefas -------------------------- #
     def _aba_tarefas(self, aba):
@@ -3213,7 +3350,7 @@ class App:
                 w.insert("end", texto + "\n", tag or ())
             w.configure(state="disabled")
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def add(self, tipo: str, texto: str):
         self.chat.add(tipo, texto)
@@ -3223,10 +3360,10 @@ class App:
         lbl = self._st.get("estado")
         if lbl:
             try:
-                curto = texto if len(texto) <= 58 else texto[:57] + "…"
+                curto = texto if len(texto) <= 96 else texto[:95] + "…"
                 lbl.configure(text=curto, fg=cor)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         self._atualizar_canal()
 
     def _atualizar_canal(self):
@@ -3242,7 +3379,7 @@ class App:
             self._canal_txt.configure(text=canal)
             self._canal_dot.itemconfigure(self._canal_dot_item, fill=ponto)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def _status_contexto(self):
         if self.sessao in self._envios:
@@ -3297,7 +3434,7 @@ class App:
                 text=f"{len(sessoes)} conversa" +
                      ("" if len(sessoes) == 1 else "s"))
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         if self._online is not True:
             self._online = True
             self.set_status("online", OK)
@@ -3307,6 +3444,7 @@ class App:
             return
         if carregar:
             self._carregar_conversa(self.sessao)
+        self._pintar_cabecalho()
 
     def _abrir_sessao(self, sid):
         if not sid:
@@ -3318,6 +3456,8 @@ class App:
         self.sessao = sid
         self.lista.marcar_ativa(sid)
         self._carregar_conversa(sid)
+        self._pintar_cabecalho()
+        self._agendar(700, self.carregar_workspaces)   # o núcleo ativou o workspace dela
 
     def _carregar_conversa(self, sid):
         if not sid:
@@ -3330,7 +3470,7 @@ class App:
         self.chat.add("system", "carregando conversa…", animar=False)
         self.set_status("carregando conversa…", GOLD)
         if sid in self._envios:
-            self.chat.typing(self._ultimo_passo or "pensando")
+            self.chat.typing("trabalhando…")
         self._atualizar_botao_envio()
 
         def trabalho():
@@ -3387,7 +3527,7 @@ class App:
         if not atual and not self._artefatos.get(sid):
             self.chat.mostrar_vazio()
         if sid in self._envios:
-            self.chat.typing(self._ultimo_passo or "pensando")
+            self.chat.typing("trabalhando…")
             self._iniciar_progresso(sid)
         if aviso:
             self.set_status(f"conversa ok; ativação falhou: {aviso}", GOLD)
@@ -3456,7 +3596,7 @@ class App:
             else:
                 self.btn_priv.configure(bg=PANEL, fg=MUTED, text="privada")
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def nova_conversa_privada(self):
         """Conversa efêmera: sem histórico, memória ou registro no SQLite."""
@@ -3470,7 +3610,7 @@ class App:
         try:
             self.lista.marcar_ativa(None)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         self._pintar_botao_privado(True)
         self.set_status("conversa privada · nada será salvo", TEAL)
         self._atualizar_botao_envio()
@@ -3578,7 +3718,11 @@ class App:
         mensagem = texto
         if texto.startswith("/"):
             from yvakor import atalhos as _atalhos
-            ex = _atalhos.expandir(texto)
+            try:   # comandos do núcleo (/skills, /plugins, /<skill>…) vão direto
+                servidor = api("/api/comandos", timeout=4).get("comandos") or []
+            except Exception:
+                servidor = []
+            ex = _atalhos.expandir(texto, _atalhos.juntar(None, servidor))
             if ex.get("erro"):
                 self.add("system", ex["erro"])
                 return
@@ -3601,7 +3745,7 @@ class App:
         token = self._pedido
         self._envios[sid] = token
         self._ultimo_passo = ""
-        self.chat.typing("pensando")
+        self.chat.typing("trabalhando…")
         self.set_status("pensando…", GOLD)
         self._atualizar_botao_envio()
         self._iniciar_progresso(sid)
@@ -3618,7 +3762,8 @@ class App:
                         {"role": ("assistant" if r == "assistant" else "user"),
                          "content": c}
                         for r, c in self._hist[:-1][-12:]]
-                j = api("/api/chat", corpo, timeout=600)
+                # > agent.timeout_s (600) + resumo final: o app não desiste antes
+                j = api("/api/chat", corpo, timeout=900)
             except Exception as exc:
                 self._post(self._falha, f"{type(exc).__name__}: {exc}",
                            sid, token, texto)
@@ -3642,7 +3787,7 @@ class App:
             else:
                 self.btn_enviar.configure(text="Enviar", bg=GOLD, fg=ON_GOLD)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         self._atualizar_canal()
 
     def _alternar_tema(self):
@@ -3672,7 +3817,7 @@ class App:
                 self.btn_enviar.configure(bg=GOLD_HOVER if entrando
                                           else GOLD)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def _destravar(self):
         sid = self.sessao
@@ -3711,12 +3856,13 @@ class App:
                 self._hist.append(("assistant", resposta))
             for a in artefatos:
                 self._adicionar_artefato(a)
+            # Os passos não poluem mais o chat: ficam na barra de status
+            # (clique em ESTADO para ver a lista).
             passos = [str(x) for x in (j.get("passos") or []) if x]
-            if passos:                       # o que o agente fez para chegar nessa resposta
-                resumo = " › ".join(x[:46] for x in passos[:8])
-                self.chat.add("system", f"⚙ {len(passos)} passo(s): {resumo}"
-                                        + (" …" if len(passos) > 8 else ""), animar=False)
-            self.set_status("pronto", OK)
+            self._passos_ult[sid] = passos
+            seg = int(time.time() - self._prog_inicio) if self._prog_inicio else 0
+            self.set_status(f"pronto · {len(passos)} passo(s) em {seg}s — clique para ver"
+                            if passos else "pronto", OK)
         else:
             self.set_status("resposta pronta em outra conversa", GOLD)
         self._atualizar_botao_envio()
@@ -3756,7 +3902,7 @@ class App:
             self.btn_voz.configure(text="🔊 VOZ" if self.voz_ativa else "🔇 VOZ",
                                    fg=TEAL if self.voz_ativa else MUTED)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def _carregar_voz(self):
         def trabalho():
@@ -3764,7 +3910,7 @@ class App:
                 j = api("/api/voz/ativo", timeout=5)
                 self.voz_ativa = bool(j.get("ativo", True))
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             self._post(self._pintar_botao_voz)
         threading.Thread(target=trabalho, daemon=True).start()
 
@@ -3778,7 +3924,7 @@ class App:
             try:
                 api("/api/voz/ativo", {"ativo": self.voz_ativa}, timeout=8)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         threading.Thread(target=salvar, daemon=True).start()
 
     def _falar_resposta(self, texto: str):
@@ -3796,7 +3942,7 @@ class App:
         try:
             api("/api/voz/falar", {"texto": fala}, timeout=120)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def ditar(self):
         if self._gravando:
@@ -3941,7 +4087,7 @@ class App:
             try:
                 win.destroy()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
 
         botoes = tk.Frame(win, bg=BG)
         botoes.pack(fill="x", padx=18, pady=(0, 14))
@@ -4100,7 +4246,7 @@ class App:
                 self.lbl_tarefas_vazio.place(relx=0.5, rely=0.3,
                                              anchor="center")
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def _ver_tarefa(self, _evt=None):
         if getattr(self, "_suprimir_selecao", False):
@@ -4170,7 +4316,7 @@ class App:
                                              "cancelada")
                 else "disabled")
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def _acao_tarefa(self, acao: str):
         sel = self.tree.selection()
@@ -4295,7 +4441,7 @@ class App:
             self._st["build"].configure(text=str(s.get("build") or "—"))
             self._canal_provider.configure(text=str(s.get("model") or "—"))
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         if self._online is not True and h.get("ok"):
             self._online = True
             self.set_status("online", OK)
@@ -4396,10 +4542,428 @@ class App:
         self._cancelar(self._poll_job)
         self._poll_job = self._agendar(400, self.poll_tarefas)
 
+    # ------------------- cabeçalho do workspace e mudanças ---------------- #
+    def _ws_da_sessao(self):
+        """Workspace da conversa aberta; conversa geral segue o ativo."""
+        conv = next((x for x in (getattr(self, "sessoes", None) or [])
+                     if x.get("id") == self.sessao), {})
+        wid = conv.get("workspace") or next(
+            (k for k, w in self._ws_itens.items() if w.get("ativo")), None)
+        w = self._ws_itens.get(wid) if wid else None
+        return (wid, w) if w and not w.get("sugestao") else (None, None)
+
+    def _pintar_cabecalho(self):
+        try:
+            wid, w = self._ws_da_sessao()
+            if not w:
+                self.ws_cab.pack_forget()
+                self._ws_cab_id = None
+                return
+            git = (f" · {w['branch']} · {w['alteracoes']} alteração(ões)"
+                   if w.get("git") else "")
+            self.ws_cab_nome.configure(text="📁 " + w["nome"])
+            self.ws_cab_info.configure(text=f"{w['caminho']}{git}")
+            self._ws_cab_id = wid
+            if not self.ws_cab.winfo_ismapped():
+                self.ws_cab.pack(fill="x", padx=16, pady=(0, 6), before=self.chat)
+        except Exception:
+            _log.debug("exceção ignorada", exc_info=True)
+
+    def _cab_acao(self, acao: str):
+        if not self._ws_cab_id:
+            return
+        if acao == "vscode":
+            return self._ws_post("abrir", {"id": self._ws_cab_id, "onde": "vscode"},
+                                 "aberto no VS Code", recarregar=False)
+        self._janela_mudancas(self._ws_cab_id)
+
+    def _janela_mudancas(self, wid: str):
+        w = self._ws_itens.get(wid) or {}
+        win = tk.Toplevel(self.root)
+        win.title(f"Mudanças · {w.get('nome', '')}")
+        win.configure(bg=BG)
+        win.geometry("1100x660")
+        win.transient(self.root)
+        _barra_titulo_escura(win)
+        topo = tk.Frame(win, bg=BG)
+        topo.pack(fill="x", padx=14, pady=(10, 6))
+        tk.Label(topo, text=f"Mudanças em {w.get('nome', '')}", bg=BG, fg=FG,
+                 font=FONT_B).pack(side="left")
+        info = tk.Label(topo, text="carregando…", bg=BG, fg=DIM, font=FONT_XS)
+        info.pack(side="left", padx=10)
+        corpo = tk.PanedWindow(win, orient="horizontal", bg=BG, bd=0, sashwidth=6)
+        corpo.pack(fill="both", expand=True, padx=14)
+        lista = tk.Listbox(corpo, bg=PANEL, fg=FG, bd=0, highlightthickness=0,
+                           selectbackground=TEAL_BG, selectforeground=FG,
+                           font=FONT_XS, activestyle="none")
+        texto = tk.Text(corpo, bg=PANEL, fg=FG, bd=0, wrap="none", padx=10, pady=8,
+                        font=("Consolas", 9), highlightthickness=0)
+        texto.tag_configure("add", foreground=OK)
+        texto.tag_configure("del", foreground=ERR)
+        texto.tag_configure("hunk", foreground=GOLD)
+        texto.tag_configure("meta", foreground=DIM)
+        corpo.add(lista, minsize=220, width=300)
+        corpo.add(texto, minsize=400)
+        botoes = tk.Frame(win, bg=BG)
+        botoes.pack(fill="x", padx=14, pady=8)
+        arquivos: list[dict] = []
+
+        def selecionado():
+            i = lista.curselection()
+            return arquivos[i[0]]["arquivo"] if i else None
+
+        def caminho_abs(rel):
+            return str(Path(w.get("caminho", "")) / rel)
+
+        self._botao(botoes, "Abrir no VS Code", lambda: selecionado() and self._ws_vscode(
+            "abrir", caminho_abs(selecionado()))).pack(side="left")
+        self._botao(botoes, "Diff no VS Code", lambda: selecionado() and self._ws_vscode(
+            "diff", caminho_abs(selecionado()))).pack(side="left", padx=6)
+        self._botao(botoes, "Fechar", win.destroy).pack(side="right")
+
+        def mostrar_diff(dif: str):
+            texto.configure(state="normal")
+            texto.delete("1.0", "end")
+            for linha in (dif or "(sem diferenças)").splitlines():
+                tag = ("hunk" if linha.startswith("@@") else
+                       "meta" if linha.startswith(("diff ", "index ", "+++", "---")) else
+                       "add" if linha.startswith("+") else
+                       "del" if linha.startswith("-") else ())
+                texto.insert("end", linha + "\n", tag)
+            texto.configure(state="disabled")
+
+        def ao_selecionar(_e=None):
+            rel = selecionado()
+            if not rel:
+                return
+
+            def trabalho():
+                try:
+                    d = api("/api/workspaces/diff?id=" + urllib.parse.quote(wid)
+                            + "&arquivo=" + urllib.parse.quote(rel), timeout=20)
+                except Exception as exc:
+                    d = {"diff": f"erro: {exc}"}
+                self._post(mostrar_diff, d.get("diff") or d.get("erro") or "")
+            threading.Thread(target=trabalho, daemon=True).start()
+
+        lista.bind("<<ListboxSelect>>", ao_selecionar)
+
+        def carregar():
+            try:
+                j = api("/api/workspaces/mudancas?id=" + urllib.parse.quote(wid), timeout=20)
+            except Exception as exc:
+                j = {"ok": False, "erro": str(exc)}
+            self._post(pintar, j)
+
+        def pintar(j):
+            if not win.winfo_exists():
+                return
+            if not j.get("ok"):
+                return info.configure(text=j.get("erro", "erro"), fg=ERR)
+            if not j.get("git"):
+                return info.configure(text="este workspace não usa git", fg=MUTED)
+            arquivos[:] = j.get("arquivos") or []
+            icone = {"novo": "+", "alterado": "~", "apagado": "−", "renomeado": "→"}
+            for a in arquivos:
+                lista.insert("end", f" {icone.get(a['estado'], '•')}  {a['arquivo']}")
+            info.configure(text=f"{len(arquivos)} arquivo(s) alterado(s)" if arquivos
+                           else "nada alterado desde o último commit", fg=MUTED)
+            if arquivos:
+                lista.selection_set(0)
+                ao_selecionar()
+        threading.Thread(target=carregar, daemon=True).start()
+        win.bind("<Escape>", lambda e: win.destroy())
+
+    def _ws_vscode(self, acao: str, arquivo: str):
+        def trabalho():
+            try:
+                j = api("/api/vscode/" + acao, {"arquivo": arquivo}, timeout=15)
+            except Exception as exc:
+                j = {"ok": False, "erro": str(exc)}
+            self._post(lambda: self.set_status(
+                "aberto no VS Code" if j.get("ok") else (j.get("erro") or "falhou"),
+                OK if j.get("ok") else ERR))
+        threading.Thread(target=trabalho, daemon=True).start()
+
+    # ---------------------------- workspaces --------------------------- #
+    def _ver_passos(self):
+        passos = self._passos_ult.get(self.sessao) or []
+        if self.sessao in self._envios and self._ultimo_passo:
+            passos = passos + [f"(agora) {self._ultimo_passo}"]
+        win = tk.Toplevel(self.root)
+        win.title("Passos da última resposta")
+        win.configure(bg=BG)
+        win.transient(self.root)
+        _barra_titulo_escura(win)
+        txt = tk.Text(win, bg=PANEL, fg=FG, bd=0, wrap="word", padx=14, pady=12,
+                      font=FONT_XS, highlightthickness=0, width=70, height=16)
+        txt.pack(fill="both", expand=True, padx=12, pady=12)
+        txt.insert("1.0", "\n".join(f"{i}. {p}" for i, p in enumerate(passos, 1))
+                   or "Nenhum passo registrado nesta conversa ainda.")
+        txt.configure(state="disabled")
+        win.bind("<Escape>", lambda e: win.destroy())
+
+    def _botao(self, pai, texto, acao, destaque=False):
+        bg, hv, fg = (GOLD, GOLD_HOVER, ON_GOLD) if destaque else (PANEL2, LINE, FG)
+        b = tk.Label(pai, text=texto, bg=bg, fg=fg, font=(UI_SEMI, 8) if destaque
+                     else FONT_XS, padx=12, pady=5, cursor="hand2")
+        b.bind("<Button-1>", lambda e: acao())
+        self._hover(b, bg, hv)
+        return b
+
+    def _aba_workspaces(self, aba):
+        topo = tk.Frame(aba, bg=BG)
+        topo.pack(fill="x", padx=16, pady=(10, 8))
+        tk.Label(topo, text="Workspaces", bg=BG, fg=FG, font=FONT_B).pack(side="left")
+        tk.Label(topo, text="pastas de projeto onde o YVAKOR trabalha", bg=BG, fg=DIM,
+                 font=FONT_XS).pack(side="left", padx=10)
+        self._botao(topo, "+ novo workspace", self._novo_workspace, True).pack(side="right")
+        self._botao(topo, "Adicionar pasta…", self._adicionar_pasta_ws).pack(
+            side="right", padx=(0, 6))
+        self._botao(topo, "Atualizar", self.carregar_workspaces).pack(side="right", padx=(0, 6))
+
+        corpo = tk.PanedWindow(aba, orient="horizontal", bg=BG, bd=0, sashwidth=6,
+                               sashrelief="flat", showhandle=False)
+        corpo.pack(fill="both", expand=True, padx=16)
+        esquerda = tk.Frame(corpo, bg=BG)
+        self.ws_tree = ttk.Treeview(esquerda, columns=("nome", "stack", "git"),
+                                    show="headings", selectmode="browse")
+        for coluna, titulo, largura in (("nome", "WORKSPACE", 200), ("stack", "STACK", 90),
+                                        ("git", "GIT", 110)):
+            self.ws_tree.heading(coluna, text=titulo, anchor="w")
+            self.ws_tree.column(coluna, width=largura, anchor="w")
+        self.ws_tree.tag_configure("ativo", foreground=GOLD)
+        self.ws_tree.tag_configure("sumiu", foreground=ERR)
+        self.ws_tree.tag_configure("sugestao", foreground=DIM)
+        self.ws_tree.pack(fill="both", expand=True)
+        self.ws_tree.bind("<<TreeviewSelect>>", self._ver_workspace)
+        self.ws_tree.bind("<Double-1>", lambda e: self._ws_acao("conversar"))
+        direita = tk.Frame(corpo, bg=BG)
+        self.ws_detalhe = tk.Text(direita, bg=PANEL, fg=FG, bd=0, wrap="word", padx=14,
+                                  pady=10, font=FONT_XS, highlightthickness=0)
+        self.ws_detalhe.pack(fill="both", expand=True)
+        self.ws_detalhe.tag_configure("titulo", foreground=GOLD, font=(DISPLAY, 14))
+        self.ws_detalhe.tag_configure("rotulo", foreground=MUTED, font=(UI_SEMI, 8),
+                                      spacing1=10)
+        self.ws_detalhe.tag_configure("mono", font=("Consolas", 9))
+        self.ws_detalhe.configure(state="disabled")
+        corpo.add(esquerda, minsize=300, width=420)
+        corpo.add(direita, minsize=260)
+
+        botoes = tk.Frame(aba, bg=BG)
+        botoes.pack(fill="x", padx=16, pady=8)
+        self.ws_btn_ativar = self._botao(botoes, "Ativar", lambda: self._ws_acao("ativar"), True)
+        self.ws_btn_ativar.pack(side="left")
+        self._botao(botoes, "Conversar neste workspace",
+                    lambda: self._ws_acao("conversar")).pack(side="left", padx=6)
+        self._botao(botoes, "Abrir pasta", lambda: self._ws_acao("pasta")).pack(side="left")
+        self._botao(botoes, "VS Code", lambda: self._ws_acao("vscode")).pack(side="left", padx=6)
+        self._botao(botoes, "Remover da lista", lambda: self._ws_acao("remover")).pack(
+            side="right")
+        self._texto_ws([("Carregando workspaces…", "rotulo")])
+
+    def _texto_ws(self, linhas):
+        w = self.ws_detalhe
+        w.configure(state="normal")
+        w.delete("1.0", "end")
+        for texto, tag in linhas:
+            w.insert("end", texto + "\n", tag or ())
+        w.configure(state="disabled")
+
+    def carregar_workspaces(self):
+        def trabalho():
+            try:
+                j = api("/api/workspaces", timeout=15)
+            except Exception as exc:
+                self._post(self._texto_ws, [(f"Núcleo indisponível: {exc}", "rotulo")])
+                return
+            self._post(self._pintar_workspaces, j)
+        threading.Thread(target=trabalho, daemon=True).start()
+
+    def _pintar_workspaces(self, j: dict):
+        if not self._vivo:
+            return
+        tree = self.ws_tree
+        tree.delete(*tree.get_children())
+        self._ws_itens = {}
+        ativo_nome = "nenhum"
+        for w in j.get("itens") or []:
+            git = (f"{w['branch']} · {w['alteracoes']} alt." if w.get("git") else "—")
+            tag = "ativo" if w.get("ativo") else ("sumiu" if not w.get("existe") else "")
+            nome = ("● " if w.get("ativo") else "") + w["nome"]
+            tree.insert("", "end", iid=w["id"], values=(nome, w.get("stack"), git),
+                        tags=(tag,) if tag else ())
+            self._ws_itens[w["id"]] = w
+            if w.get("ativo"):
+                ativo_nome = w["nome"]
+        for i, s in enumerate(j.get("sugestoes") or []):
+            iid = f"sug{i}"
+            tree.insert("", "end", iid=iid, values=("+ " + s["nome"], "sugestão", "duplo clique"),
+                        tags=("sugestao",))
+            self._ws_itens[iid] = {"sugestao": True, **s}
+        try:
+            self._st["workspace"].configure(
+                text=ativo_nome, fg=GOLD if ativo_nome != "nenhum" else MUTED)
+        except Exception:
+            _log.debug("exceção ignorada", exc_info=True)
+        self._pintar_cabecalho()
+        if self._ws_sel in self._ws_itens:
+            tree.selection_set(self._ws_sel)
+        elif not j.get("itens"):
+            self._texto_ws([
+                ("Nenhum workspace ainda", "titulo"),
+                ("Crie um com “+ novo workspace” (Python, Node, Web ou vazio) ou use "
+                 "“Adicionar pasta…” para um projeto que já existe. As sugestões abaixo "
+                 "são projetos encontrados no seu PC: duplo clique adiciona.", ""),
+                ("Com um workspace ativo, o YVAKOR trabalha dentro dele: o shell roda "
+                 "na pasta e caminhos relativos apontam para ela.", "rotulo")])
+
+    def _ver_workspace(self, _evt=None):
+        sel = self.ws_tree.selection()
+        if not sel:
+            return
+        self._ws_sel = sel[0]
+        w = self._ws_itens.get(sel[0]) or {}
+        if w.get("sugestao"):
+            self.ws_btn_ativar.configure(text="Adicionar")
+            self._texto_ws([(w["nome"], "titulo"), (w["caminho"], "mono"),
+                            ("Projeto encontrado no PC. “Adicionar” (ou duplo clique) "
+                             "transforma em workspace.", "rotulo")])
+            return
+        self.ws_btn_ativar.configure(text="Desativar" if w.get("ativo") else "Ativar")
+        self._texto_ws([(w.get("nome", ""), "titulo"), ("carregando…", "rotulo")])
+
+        def trabalho(wid=sel[0]):
+            try:
+                d = api("/api/workspaces/detalhe?id=" + urllib.parse.quote(wid), timeout=15)
+            except Exception as exc:
+                d = {"ok": False, "erro": str(exc)}
+            self._post(self._pintar_detalhe_ws, wid, d)
+        threading.Thread(target=trabalho, daemon=True).start()
+
+    def _pintar_detalhe_ws(self, wid, d: dict):
+        if self._ws_sel != wid:
+            return
+        if not d.get("ok"):
+            return self._texto_ws([("Workspace", "titulo"), (d.get("erro", "erro"), "rotulo")])
+        git = (f"branch {d['branch']} · {d['alteracoes']} arquivo(s) alterado(s)"
+               if d.get("git") else "sem git")
+        linhas = [(d["nome"] + ("   ● ativo" if d.get("ativo") else ""), "titulo"),
+                  (d["caminho"], "mono"), (f"{d.get('stack')} · {git}", "")]
+        if d.get("descricao"):
+            linhas.append((d["descricao"], ""))
+        if d.get("git_status"):
+            linhas += [("MUDANÇAS PENDENTES", "rotulo"), ("\n".join(d["git_status"]), "mono")]
+        if d.get("git_log"):
+            linhas += [("ÚLTIMOS COMMITS", "rotulo"), ("\n".join(d["git_log"]), "mono")]
+        linhas += [("ARQUIVOS", "rotulo"), ("\n".join(d.get("arvore") or ["(vazia)"]), "mono")]
+        if d.get("readme"):
+            linhas += [("README", "rotulo"), (d["readme"], "")]
+        self._texto_ws(linhas)
+
+    def _ws_acao(self, acao: str):
+        sel = self.ws_tree.selection()
+        if not sel:
+            return self.set_status("selecione um workspace", GOLD)
+        w = self._ws_itens.get(sel[0]) or {}
+        if w.get("sugestao"):
+            return self._ws_post("adicionar", {"caminho": w["caminho"], "nome": w["nome"]},
+                                 f"workspace {w['nome']} adicionado e ativo")
+        if acao == "ativar":
+            novo = None if w.get("ativo") else sel[0]
+            return self._ws_post("ativar", {"id": novo},
+                                 f"workspace {w['nome']} ativo" if novo else "nenhum workspace ativo")
+        if acao == "conversar":
+            def depois(_j):
+                self.abas.selecionar(0)
+                self.nova_conversa()
+                self._definir_entrada(f"Vamos trabalhar no workspace {w['nome']}: ")
+            return self._ws_post("ativar", {"id": sel[0]}, f"workspace {w['nome']} ativo",
+                                 depois)
+        if acao in ("pasta", "vscode"):
+            return self._ws_post("abrir", {"id": sel[0], "onde": acao}, "aberto", recarregar=False)
+        if acao == "remover":
+            if messagebox.askyesno("Remover da lista",
+                                   f"Tirar “{w['nome']}” da lista?\nA pasta NÃO é apagada.",
+                                   parent=self.root):
+                self._ws_sel = None
+                self._ws_post("remover", {"id": sel[0]}, "removido da lista (pasta mantida)")
+
+    def _ws_post(self, acao, dados, ok_msg, depois=None, recarregar=True):
+        def trabalho():
+            try:
+                j = api("/api/workspaces/" + acao, dados, timeout=30)
+            except Exception as exc:
+                j = {"ok": False, "erro": str(exc)}
+            self._post(self._ws_resultado, j, ok_msg, depois, recarregar)
+        threading.Thread(target=trabalho, daemon=True).start()
+
+    def _ws_resultado(self, j, ok_msg, depois, recarregar):
+        if j.get("ok"):
+            self.set_status(ok_msg, OK)
+            if recarregar:
+                self.carregar_workspaces()
+            if depois:
+                depois(j)
+        else:
+            self.set_status(j.get("erro") or j.get("error") or "falhou", ERR)
+
+    def _adicionar_pasta_ws(self):
+        pasta = filedialog.askdirectory(parent=self.root, title="Pasta do projeto")
+        if pasta:
+            self._ws_post("adicionar", {"caminho": pasta}, "workspace adicionado e ativo")
+
+    def _novo_workspace(self):
+        win = tk.Toplevel(self.root)
+        win.title("Novo workspace")
+        win.configure(bg=BG)
+        win.transient(self.root)
+        win.resizable(False, False)
+        _barra_titulo_escura(win)
+        tk.Label(win, text="NOVO WORKSPACE", bg=BG, fg=GOLD, font=(UI_SEMI, 7)).pack(
+            anchor="w", padx=20, pady=(18, 6))
+        campos = {}
+        for rotulo, chave in (("Nome", "nome"), ("Descrição (opcional)", "descricao")):
+            tk.Label(win, text=rotulo, bg=BG, fg=MUTED, font=FONT_XS).pack(anchor="w", padx=20)
+            e = tk.Entry(win, bg=PANEL2, fg=FG, insertbackground=GOLD, bd=0, font=FONT,
+                         width=42, highlightthickness=1, highlightbackground=LINE,
+                         highlightcolor=GOLD)
+            e.pack(fill="x", padx=20, pady=(2, 10), ipady=5)
+            campos[chave] = e
+        tk.Label(win, text="Modelo", bg=BG, fg=MUTED, font=FONT_XS).pack(anchor="w", padx=20)
+        modelo = tk.StringVar(value="python")
+        linha = tk.Frame(win, bg=BG)
+        linha.pack(anchor="w", padx=20, pady=(2, 6))
+        for valor, texto in (("python", "Python"), ("node", "Node"), ("web", "Web"),
+                             ("vazio", "Vazio")):
+            tk.Radiobutton(linha, text=texto, value=valor, variable=modelo, bg=BG, fg=FG,
+                           selectcolor=PANEL2, activebackground=BG, activeforeground=GOLD,
+                           font=FONT_XS, bd=0, highlightthickness=0).pack(side="left", padx=(0, 10))
+        tk.Label(win, text="Cria a pasta com README, .gitignore e git, e já deixa ativo.",
+                 bg=BG, fg=DIM, font=(UI, 7)).pack(anchor="w", padx=20)
+        botoes = tk.Frame(win, bg=BG)
+        botoes.pack(fill="x", padx=20, pady=16)
+
+        def criar():
+            nome = campos["nome"].get().strip()
+            if not nome:
+                campos["nome"].focus_set()
+                return
+            win.destroy()
+            self._ws_post("criar", {"nome": nome, "modelo": modelo.get(),
+                                    "descricao": campos["descricao"].get().strip()},
+                          f"workspace {nome} criado e ativo")
+        self._botao(botoes, "Criar", criar, True).pack(side="right")
+        self._botao(botoes, "Cancelar", win.destroy).pack(side="right", padx=(0, 6))
+        win.bind("<Return>", lambda e: criar())
+        win.bind("<Escape>", lambda e: win.destroy())
+        campos["nome"].focus_set()
+
     # --------------------- progresso e confirmação ------------------- #
     def _iniciar_progresso(self, sid):
         self._parar_progresso()
         self._prog_sid = sid
+        self._prog_inicio = time.time()
 
         def tick():
             if not self._vivo or self._prog_sid != sid:
@@ -4432,8 +4996,9 @@ class App:
         passos = p.get("steps") or []
         if passos:
             self._ultimo_passo = self._passo_texto(passos[-1])[:110]
-            if sid == self.sessao:
-                self.chat.set_typing_texto(self._ultimo_passo)
+            if sid == self.sessao:          # só na barra de status, não no chat
+                seg = int(time.time() - (self._prog_inicio or time.time()))
+                self.set_status(f"⏳ {seg}s · {self._ultimo_passo}", GOLD)
         pend = p.get("pending")
         if not pend:
             self._pend_id = None
@@ -4512,7 +5077,7 @@ class App:
             win.focus_force()
             self.root.bell()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def _abrir_pergunta(self, pend: dict):
         """Pergunta do agente (perguntar_usuario) ou plano para aprovação:
@@ -4595,7 +5160,7 @@ class App:
                  + (self.root.winfo_height() - altura) // 2)
             win.geometry(f"{largura}x{altura}+{x}+{y}")
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         try:
             if self.root.state() == "iconic":
                 self.root.deiconify()
@@ -4605,18 +5170,18 @@ class App:
             entrada.focus_force()
             self.root.bell()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def _responder_confirmacao(self, win, pend: dict, allow: bool,
                                resposta: str | None = None):
         try:
             win.grab_release()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         try:
             win.destroy()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         self._confirm_win = None
         sid = pend.get("session") or self.sessao
         if pend.get("tipo") in ("pergunta", "plano"):
@@ -4642,25 +5207,25 @@ class App:
             try:
                 self.root.destroy()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             return
         self._vivo = False
         for job in list(self._jobs):
             try:
                 self.root.after_cancel(job)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         self._jobs.clear()
         if self._confirm_win is not None:
             try:
                 self._confirm_win.destroy()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             self._confirm_win = None
         try:
             self.root.destroy()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def run(self):
         self.root.mainloop()
@@ -4672,7 +5237,7 @@ if __name__ == "__main__":
         from yvakor.robustez import instalar as _instalar_robustez
         _instalar_robustez()
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
     # Abre sempre numa conversa nova (as anteriores ficam no histórico, à
     # esquerda, com busca). --retomar volta a abrir na última conversa.
     App(nova="--retomar" not in sys.argv).run()

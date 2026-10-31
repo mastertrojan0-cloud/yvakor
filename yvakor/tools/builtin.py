@@ -18,6 +18,9 @@ import time
 import urllib.request
 import urllib.parse
 from pathlib import Path
+import logging
+
+_log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 SANDBOX = ROOT / "data" / "sandbox"
@@ -114,7 +117,25 @@ def http_get(url: str, max_chars: int = 8000) -> dict:
 # ----------------------------------------------------------------------- #
 # Arquivos — confinados ao sandbox (data/sandbox)
 # ----------------------------------------------------------------------- #
+def _workspace_ativo() -> Path | None:
+    try:
+        from yvakor.workspaces import caminho_ativo
+        return caminho_ativo()
+    except Exception:
+        return None
+
+
 def _resolver_sandbox(nome: str) -> Path:
+    # Com workspace ativo, "calc.py" é o arquivo do PROJETO (antes ia para
+    # data/sandbox e o agente dizia "não existe", teste de 30/10). O limite
+    # continua: nada fora do workspace.
+    ws = _workspace_ativo()
+    if ws is not None:
+        p = Path(str(nome)).expanduser()
+        alvo = (p if p.is_absolute() else ws / p).resolve()
+        if ws.resolve() not in alvo.parents and alvo != ws.resolve():
+            raise ValueError("caminho fora do workspace ativo não é permitido")
+        return alvo
     SANDBOX.mkdir(parents=True, exist_ok=True)
     # Evita aninhar quando o modelo já passa "data/sandbox/..." no nome.
     n = str(nome).replace("\\", "/").lstrip("/")
@@ -139,7 +160,11 @@ def escrever_arquivo(nome: str, conteudo: str) -> dict:
     alvo = _resolver_sandbox(nome)
     alvo.parent.mkdir(parents=True, exist_ok=True)
     alvo.write_text(conteudo, encoding="utf-8")
-    return {"ok": True, "caminho": str(alvo.relative_to(ROOT))}
+    try:
+        mostrado = str(alvo.relative_to(ROOT))
+    except ValueError:                    # arquivo do workspace, fora do YVAKOR
+        mostrado = str(alvo)
+    return {"ok": True, "caminho": mostrado}
 
 
 # ----------------------------------------------------------------------- #
@@ -182,6 +207,8 @@ def listar_diretorio(caminho: str = ".") -> dict:
 def ler_arquivo_local(caminho: str, max_chars: int = 20000) -> dict:
     """Lê qualquer arquivo do PC (somente leitura)."""
     p = Path(caminho).expanduser()
+    if not p.is_absolute() and _workspace_ativo() is not None:
+        p = _workspace_ativo() / p          # relativo ao projeto ativo
     if not p.exists() or not p.is_file():
         return {"ok": False, "erro": "arquivo não encontrado"}
     try:
@@ -256,9 +283,16 @@ def executar_shell(comando: str, timeout: int = 25, cwd: str | None = None) -> d
                     "Não abra navegador pelo shell. Use navegador_abrir para "
                     "abrir na janela da extensão."}
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
     if sys.platform == "win32":
         comando = _comando_windows(comando or "")
+    if not cwd:                      # com workspace ativo, o shell roda nele
+        try:
+            from yvakor.workspaces import caminho_ativo
+            ativo = caminho_ativo()
+            cwd = str(ativo) if ativo else None
+        except Exception:
+            _log.debug("exceção ignorada", exc_info=True)
     try:
         p = _ywproc.run(comando, shell=True, capture_output=True, text=True,
                            timeout=timeout, cwd=cwd)
@@ -290,7 +324,7 @@ def gerar_imagem(prompt: str, resolucao: str = "512x768",
             if p.returncode == 0:
                 hf_ok = True
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     if hf_ok:
         aspecto = "9:16" if "768" in resolucao.split("x")[1] else "1:1"
@@ -317,8 +351,8 @@ def gerar_imagem(prompt: str, resolucao: str = "512x768",
                     "stdout": p.stdout[-300:]}
         except subprocess.TimeoutExpired:
             return {"ok": False, "erro": "Higgsfield timeout (5min)"}
-        except Exception as e:
-            pass  # fallback para Perchance
+        except Exception:
+            _log.debug("exceção ignorada", exc_info=True)  # fallback para Perchance
 
     # Prioridade 2: Perchance (abre navegador, gratuito e sem login)
     params = json.dumps({
@@ -510,10 +544,18 @@ def register_builtins(registry) -> list[str]:
     reg("editar_arquivo_local", editar_arquivo_local,
         "Substitui um trecho dentro de um arquivo do PC.",
         {"caminho": "str", "busca": "str", "troca": "str"})
+    # Conversa 71: o modelo rodava PowerShell por dentro de Python+subprocess,
+    # que o guard sempre confirma (popup expirou 3x). Shell não destrutivo
+    # roda direto no modo autônomo; e há ferramentas prontas para o comum.
     reg("executar_python", executar_python,
-        "Executa código Python no sandbox (timeout).", {"codigo": "str"})
+        "Executa código Python no sandbox (timeout). Para comandos do Windows/"
+        "PowerShell use executar_shell, não subprocess (subprocess sempre pede "
+        "confirmação ao usuário).", {"codigo": "str"})
     reg("executar_shell", executar_shell,
-        "Executa um comando no shell do sistema (timeout).", {"comando": "str"})
+        "Executa um comando no shell do Windows (timeout), ex.: powershell "
+        "-NoProfile -Command \"...\". Antes, prefira a ferramenta pronta quando "
+        "existir (sistema_drivers*, limpar_temporarios, organizar_*).",
+        {"comando": "str"})
     reg("gerar_imagem", gerar_imagem,
         "Gera imagem: Higgsfield (programatico, baixa automatico) ou "
         "Perchance (abre no navegador, gratuito, sem login). "
