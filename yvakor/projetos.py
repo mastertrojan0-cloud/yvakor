@@ -1,7 +1,6 @@
 """YVAKOR — descoberta dos projetos existentes no computador."""
 from __future__ import annotations
 
-import json
 import os
 import time
 from datetime import datetime

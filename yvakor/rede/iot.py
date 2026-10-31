@@ -14,6 +14,9 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import logging
+
+_log = logging.getLogger(__name__)
 
 
 # ----------------------------------------------------------------------- #
@@ -89,7 +92,7 @@ class MQTT:
             try:
                 c.disconnect()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
 
     def ler(self, topico: str, segundos: float = 3.0,
             max_msgs: int = 30) -> dict:
@@ -120,7 +123,7 @@ class MQTT:
             try:
                 c.disconnect()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
 
 
 # ----------------------------------------------------------------------- #
@@ -173,7 +176,7 @@ class HTTPDispositivo:
             try:
                 r["json"] = json.loads(r.get("corpo") or "{}")
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         return r
 
     def shelly(self, alvo: str, metodo: str = "Shelly.GetStatus",
@@ -186,7 +189,7 @@ class HTTPDispositivo:
             try:
                 r["json"] = json.loads(r.get("corpo") or "{}")
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         return r
 
     def esphome(self, alvo: str, entidade: str = "sensor") -> dict:

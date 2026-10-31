@@ -23,6 +23,9 @@ from yvakor.rede import onvif
 from yvakor.rede.rtsp import CameraRTSP
 from yvakor.rede.escopo import EscopoRede
 from yvakor.rede.registro import RegistroRede
+import logging
+
+_log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -159,7 +162,7 @@ class Cameras:
                 try:
                     c.parar()
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
         raise RuntimeError(" | ".join(erros)[:500])
 
     def quadro(self, ip: str) -> bytes | None:
@@ -256,7 +259,7 @@ class Cameras:
             url = str(creds.get("rtsp_url") or "")
             transporte = str(creds.get("rtsp_transport") or transporte)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         if not url:
             try:
                 url = self._camera(dev).stream_url()

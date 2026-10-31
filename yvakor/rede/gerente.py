@@ -4,6 +4,9 @@ A cada ciclo: agrupa por tipo, testa capacidades e mantém a ficha atualizada.
 Campos com `manual=1` foram definidos pelo usuário e NÃO são sobrescritos.
 """
 from __future__ import annotations
+import logging
+
+_log = logging.getLogger(__name__)
 
 GRUPOS = {"camera": "câmeras", "tv": "TVs", "telefone": "telefones",
           "roteador": "infra", "iot": "IoT", "impressora": "impressoras",
@@ -26,7 +29,7 @@ def organizar(rede) -> dict:
             if testes:
                 campos["ultimo_teste"] = " | ".join(testes)[:300]
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         if campos:
             rede.registro.atualizar(dev.get("ip"), **campos)
             acoes.append({"ip": dev.get("ip"), "acao": "atualizado",

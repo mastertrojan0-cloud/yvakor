@@ -19,9 +19,10 @@ import socket
 import subprocess
 from yvakor import proc as _ywproc
 import threading
-import time
 from pathlib import Path
-from urllib.parse import quote
+import logging
+
+_log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -163,7 +164,6 @@ class CameraRTSP:
     def _parse_sdp(sdp: str) -> dict:
         video = {"control": "", "sps": b"", "pps": b"", "codec": "", "pt": "96"}
         em_video = False
-        base = ""
         for linha in sdp.splitlines():
             linha = linha.strip()
             if linha.startswith("m=video"):
@@ -344,18 +344,18 @@ class CameraRTSP:
                 self._pedido("TEARDOWN", self.url)
                 self._sock.close()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         self._sock = None
         try:
             if self._rtp is not None:
                 self._rtp.close()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         self._rtp = None
         try:
             if self._ffmpeg is not None:
                 self._ffmpeg.terminate()
                 self._ffmpeg.wait(timeout=3)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         self._ffmpeg = None

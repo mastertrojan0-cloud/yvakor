@@ -13,8 +13,10 @@ import statistics
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime
 from pathlib import Path
+import logging
+
+_log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 GRAFICOS = ROOT / "data" / "graficos"
@@ -117,7 +119,6 @@ def _svg_grafico(tipo: str, dados: list[float], titulo: str) -> str:
             pts = [(margem + i * passo,
                     altura - margem - (v / maxv) * (altura - 2 * margem))
                    for i, v in enumerate(dados)]
-            d = "M" + " L".join(f"{x:.1f},{y:.1f}" for x, y in pts)
             corpo = (f'<polyline points="{" ".join(f"{x:.1f},{y:.1f}" for x,y in pts)}" '
                      f'fill="none" stroke="#3fbfae" stroke-width="3"/>' +
                      "".join(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4" fill="#d9a441"/>'
@@ -262,7 +263,6 @@ def _poster_svg(prompt: str, caminho: Path) -> Path:
 
 def gerar_imagem(prompt: str, largura: int = 1024, altura: int = 1024) -> dict:
     import base64
-    import json
     import os
     import random
     IMAGENS.mkdir(parents=True, exist_ok=True)
@@ -287,7 +287,7 @@ def gerar_imagem(prompt: str, largura: int = 1024, altura: int = 1024) -> dict:
                     destino.write_bytes(r.read())
                 return {"ok": True, "arquivo": str(destino), "motor": "openai"}
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     nome = f"img-{int(time.time())}.jpg"
     destino = IMAGENS / nome
@@ -322,7 +322,6 @@ def _executar_local_limitado(cmd: list[str], cwd: str, timeout: int) -> dict:
     import ctypes
     import ctypes.wintypes as wt
     import subprocess
-    import time
 
     if not hasattr(ctypes, "WinDLL"):
         proc = _ywproc.run(cmd, cwd=cwd, capture_output=True, text=True,
@@ -358,7 +357,7 @@ def _executar_local_limitado(cmd: list[str], cwd: str, timeout: int) -> dict:
                     ("PeakProcessMemoryUsed", ctypes.c_size_t),
                     ("PeakJobMemoryUsed", ctypes.c_size_t)]
 
-    JOB_TIME, ACTIVE, PROC_MEM, JOB_MEM, KILL = 0x4, 0x8, 0x100, 0x200, 0x2000
+    ACTIVE, KILL = 0x8, 0x2000   # LIMIT_ACTIVE_PROCESS | LIMIT_KILL_ON_JOB_CLOSE
     k32.CreateJobObjectW.restype = wt.HANDLE
     job = k32.CreateJobObjectW(None, None)
     limites = "job-object"
@@ -384,7 +383,7 @@ def _fechar_job(estado: dict) -> None:
         if estado.get("job"):
             estado["k32"].CloseHandle(estado["job"])
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
 
 
 def executar_codigo(codigo: str, linguagem: str = "python",
@@ -462,7 +461,7 @@ def desenvolver(router, descricao: str, tipo: str = "auto",
                 webbrowser.open(url)
                 aberto = True
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         return {"ok": True, "tipo": "html", "arquivo": str(arq), "url": url,
                 "aberto": aberto, "linhas": len(codigo.splitlines())}
 

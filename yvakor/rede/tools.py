@@ -10,6 +10,9 @@ from __future__ import annotations
 from yvakor import proc as _ywproc
 
 from yvakor.rede.facade import Rede
+import logging
+
+_log = logging.getLogger(__name__)
 
 
 def _safe(fn, *args, **kwargs) -> dict:
@@ -100,7 +103,6 @@ def register_rede_tools(registry, rede: Rede) -> list[str]:
 
     def camera_janela(alvo: str) -> dict:
         dev = rede.cameras._dev(alvo)
-        import subprocess
         try:
             saida = _ywproc.run(
                 ["tasklist", "/FI", "IMAGENAME eq Yoosee.exe"],
@@ -108,13 +110,13 @@ def register_rede_tools(registry, rede: Rede) -> list[str]:
             if "Yoosee.exe" not in saida:
                 _ywproc.popen([r"C:\Program Files (x86)\Yoosee\Yoosee.exe"])
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         url = f"http://127.0.0.1:7777/camera/{dev['ip']}"
         try:
             import webbrowser
             webbrowser.open(url)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         return {"ok": True, "url": url, "janela": "YVAKOR",
                 "fonte": "espelho do app Yoosee (ao vivo)"}
 
@@ -128,7 +130,7 @@ def register_rede_tools(registry, rede: Rede) -> list[str]:
                 import webbrowser
                 webbrowser.open(r["url"])
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         return r
 
     # ------------------------------------------------------------------ #
@@ -328,7 +330,7 @@ def register_rede_tools(registry, rede: Rede) -> list[str]:
                     if e.get("ip") == dev.get("ip"):
                         eventos.append(e)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         return {"ok": True, "dispositivo": dev, "testes": testes,
                 "eventos": eventos[-20:]}
 
@@ -368,7 +370,7 @@ def register_rede_tools(registry, rede: Rede) -> list[str]:
             import webbrowser
             webbrowser.open(url)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         return {"ok": True, "url": url}
 
     def gerenciar() -> dict:

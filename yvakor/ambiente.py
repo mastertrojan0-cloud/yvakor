@@ -17,6 +17,9 @@ import time
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+import logging
+
+_log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 CACHE_TESTES = ROOT / "data" / "ambiente_probes.json"
@@ -233,7 +236,7 @@ def aprender_equipamento(rede, cerebro, alvo: str,
         try:
             cerebro.sincronizar()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
     return {"ok": True, "ip": dev.get("ip"), "tipo": tipo, "nota": str(arq)}
 
 def mapear(rede, cerebro) -> dict:
@@ -249,7 +252,7 @@ def mapear(rede, cerebro) -> dict:
     try:
         cerebro.sincronizar()
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
     return {"ok": True, "notas": len(notas), "equipamentos": len(notas) - 1,
             "arquivos": notas, "vault": str(vault)}
 

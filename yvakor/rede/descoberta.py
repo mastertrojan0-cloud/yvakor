@@ -16,15 +16,15 @@ import asyncio
 import ipaddress
 import re
 import socket
-import subprocess
 from yvakor import proc as _ywproc
-import subprocess
 import time
 import xml.etree.ElementTree as ET
-from urllib.parse import urlparse
 
 from yvakor.rede.escopo import EscopoRede
 from yvakor.rede.registro import RegistroRede
+import logging
+
+_log = logging.getLogger(__name__)
 
 OUI = {
     "00:1a:11": "Google", "54:60:09": "Google", "f4:f5:d8": "Google",
@@ -121,7 +121,7 @@ def _netbios(ip: str) -> str:
                 if nome and nome not in ("..", "--"):
                     return nome
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
     return ""
 
 
@@ -173,7 +173,7 @@ def arp_tabela() -> dict[str, str]:
                 continue
             tabela[ip] = mac
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
     return tabela
 
 
@@ -190,7 +190,7 @@ async def _testar_portas(ip: str, portas: list[int], timeout: float,
                 try:
                     await escritor.wait_closed()
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
                 abertas.append(porta)
             except Exception:
                 return
@@ -390,7 +390,7 @@ def mdns(segundos: float = 4.0) -> list[dict]:
             try:
                 zc.close()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
     return list(achados.values())
 
 
@@ -556,7 +556,7 @@ class Descobridor:
                         in ("", "desconhecido")):
                     self.registro.remover(antigo["ip"])
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         self.ultimo = {
             "total": len(dispositivos),
             "duracao_s": round(time.time() - inicio, 1),

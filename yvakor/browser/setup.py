@@ -11,8 +11,10 @@ Se nenhum existir, baixa o Chromium do Playwright (~130 MB, uma vez só).
 from __future__ import annotations
 
 import sys
-import subprocess
 from yvakor import proc as _ywproc
+import logging
+
+_log = logging.getLogger(__name__)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -44,7 +46,7 @@ def main(argv: list[str] | None = None) -> int:
         print("  [navegador] OK - Chromium do Playwright")
         return 0
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
 
     if only_check:
         print("  [navegador] nenhum navegador disponível "

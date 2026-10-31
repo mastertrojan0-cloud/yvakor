@@ -23,9 +23,12 @@ from yvakor.memory.db import (
     conectar, criar_fts, fts_query, hash_texto, meta_get, meta_set,
     normalizar, otimizar_fts, tem_fts5,
 )
+import logging
+
+_log = logging.getLogger(__name__)
 
 try:  # opcional, continua suportado se instalado
-    import chromadb
+    import chromadb  # noqa: F401  (só testa se está instalado)
     HAS_CHROMA = True
 except ImportError:
     HAS_CHROMA = False
@@ -242,7 +245,7 @@ class SemanticMemory:
         padrao = f"%{normalizar(query)}%"
         rows = self.conn.execute(
             "SELECT fato FROM facts WHERE lower(fato) LIKE ? "
-            f"AND obsoleto=0 AND revisar=0 ORDER BY id DESC LIMIT ?",
+            "AND obsoleto=0 AND revisar=0 ORDER BY id DESC LIMIT ?",
             (padrao, top_k)).fetchall()
         return [r[0] for r in rows]
 
@@ -343,4 +346,4 @@ class SemanticMemory:
             self.otimizar()
             self.conn.close()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)

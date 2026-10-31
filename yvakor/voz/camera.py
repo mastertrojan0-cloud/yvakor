@@ -9,6 +9,9 @@ from __future__ import annotations
 import re
 
 from yvakor.memory.db import normalizar
+import logging
+
+_log = logging.getLogger(__name__)
 
 PALAVRAS_CAMERA = ("camara", "camaras", "camera", "câmera", "cameras",
                    "câmeras", "vigia", "monitor", "entrada", "garagem",
@@ -72,7 +75,7 @@ def _alvo(orchestrator, texto: str) -> str:
         if cams:
             return cams[0]["ip"]
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
     return "192.168.15.7"
 
 

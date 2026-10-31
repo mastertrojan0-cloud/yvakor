@@ -6,6 +6,9 @@ from datetime import datetime
 import re
 
 from yvakor.memory.db import normalizar
+import logging
+
+_log = logging.getLogger(__name__)
 
 DIAS = ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira",
         "sexta-feira", "sábado", "domingo"]
@@ -173,7 +176,6 @@ def detectar(texto: str) -> dict | None:
 
 
 def _ps(comando: str) -> str:
-    import subprocess
     try:
         p = _ywproc.run(["powershell", "-NoProfile", "-Command", comando],
                            capture_output=True, text=True, timeout=15)
@@ -214,7 +216,7 @@ def executar(orchestrator, intent: dict, ultima: str = "") -> str:
                     p = Path(foto_alt["arquivo"]).resolve()
                     intent["texto"] = foto_alt.get("titulo") or intent.get("texto")
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         try:
             rel = p.relative_to(Path("data/imagens").resolve())
             url = "/midia/imagens/" + quote(rel.as_posix())
@@ -471,7 +473,7 @@ def executar(orchestrator, intent: dict, ultima: str = "") -> str:
         try:
             total = len(orchestrator.rede.registro.listar())
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         return (f"Estou online. Conheço {total} dispositivo(s) na rede e "
                 "posso ouvir, ver a câmera, pesquisar e executar tarefas.")
     if acao == "repetir":

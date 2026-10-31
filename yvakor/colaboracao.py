@@ -5,6 +5,9 @@ import re
 
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import logging
+
+_log = logging.getLogger(__name__)
 
 
 def _json_ou_texto(bruto: str) -> dict:
@@ -13,7 +16,7 @@ def _json_ou_texto(bruto: str) -> dict:
         if i >= 0 and f > i:
             return json.loads(bruto[i:f + 1])
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
     return {}
 
 

@@ -631,3 +631,9 @@ def test_json_de_ferramenta_nao_vaza_na_resposta_final():
     assert _extrair_resposta_final(so) == so
     # formato responder continua extraindo o texto
     assert _extrair_resposta_final('{"acao":"responder","texto":"oi"}') == "oi"
+
+
+def test_proc_texto_com_acento_nao_derruba_leitura():
+    from yvakor import proc
+    p = proc.run(["cmd", "/c", "echo ação"], capture_output=True, text=True)
+    assert p.returncode == 0 and p.stdout

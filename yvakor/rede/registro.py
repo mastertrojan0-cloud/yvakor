@@ -16,6 +16,9 @@ from datetime import datetime
 from pathlib import Path
 
 from yvakor import seguro
+import logging
+
+_log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -37,7 +40,7 @@ class RegistroRede:
                        "journal_size_limit=33554432"):
                 self.conn.execute(f"PRAGMA {_p}")
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         self._migrate()
         self._creds: dict[str, dict] = self._load_creds()
 

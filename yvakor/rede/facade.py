@@ -14,6 +14,9 @@ from yvakor.rede.iot import MQTT, HTTPDispositivo
 from yvakor.rede.registro import RegistroRede
 from yvakor.rede.telefone import Telefones
 from yvakor.rede.tv import Televisores
+import logging
+
+_log = logging.getLogger(__name__)
 
 
 class Rede:
@@ -47,4 +50,4 @@ class Rede:
         try:
             self.casts.shutdown()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)

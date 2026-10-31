@@ -1,7 +1,6 @@
 """YVAKOR — agenda e tarefas agendadas (lembretes/automações)."""
 from __future__ import annotations
 
-import json
 import threading
 import time
 import uuid
@@ -10,6 +9,9 @@ from pathlib import Path
 
 from yvakor import seguro
 from yvakor.config import ROOT
+import logging
+
+_log = logging.getLogger(__name__)
 
 ARQUIVO = ROOT / "data" / "agenda.json"
 
@@ -27,7 +29,7 @@ def parse_quando(texto: str) -> datetime:
     try:
         return datetime.fromisoformat(texto)
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
     base = agora
     if "amanha" in t or "amanhã" in t:
         base = agora + timedelta(days=1)
@@ -109,7 +111,7 @@ class Agenda:
                     threading.Thread(target=self._executar, args=(t.copy(),),
                                      daemon=True).start()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             time.sleep(15)
 
     def _executar(self, t: dict):
@@ -123,9 +125,9 @@ class Agenda:
                         f"Agenda: {t.get('titulo')} — {str(resposta)[:300]}",
                         "agenda", 2)
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         with self._lock:
             if t.get("repetir") in ("diario", "semanal"):
                 try:
@@ -133,7 +135,7 @@ class Agenda:
                     dt += timedelta(days=1 if t["repetir"] == "diario" else 7)
                     t["quando"] = dt.isoformat(timespec="seconds")
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
             else:
                 self.tarefas = [x for x in self.tarefas
                                 if x["id"] != t["id"]]

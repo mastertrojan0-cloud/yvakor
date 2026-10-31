@@ -15,9 +15,11 @@ from __future__ import annotations
 import ipaddress
 import json
 import socket
-import subprocess
 from yvakor import proc as _ywproc
 import time
+import logging
+
+_log = logging.getLogger(__name__)
 
 LOOPBACK = ipaddress.ip_network("127.0.0.0/8")
 
@@ -37,7 +39,7 @@ def _ps_json(comando: str, timeout: int = 8):
         if p.returncode == 0 and p.stdout.strip():
             return json.loads(p.stdout)
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
     return None
 
 
@@ -101,7 +103,7 @@ class EscopoRede:
                         except ValueError:
                             pass
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
         # 2) Windows: Get-NetIPAddress com prefixo e nome da interface
         if not pares:
@@ -130,7 +132,7 @@ class EscopoRede:
                         pares.append((ipaddress.ip_network(f"{ip}/24",
                                                            strict=False), ""))
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
 
         # Descarta redes de adaptadores virtuais; se sobrar nada, usa tudo.
         fisicas = [(r, n) for r, n in pares

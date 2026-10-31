@@ -8,9 +8,11 @@ import time
 import urllib.parse
 import urllib.request
 from datetime import datetime
-from pathlib import Path
 
 from yvakor.config import ROOT
+import logging
+
+_log = logging.getLogger(__name__)
 
 PASTA = ROOT / "data" / "pesquisas"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) YVAKOR/1.0"
@@ -39,7 +41,7 @@ def _decodificar_bing(href: str) -> str:
             bruto += "=" * (-len(bruto) % 4)
             return base64.urlsafe_b64decode(bruto).decode("utf-8", "replace")
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
     return href
 
 
@@ -54,7 +56,7 @@ def buscar(pergunta: str, limite: int = 8) -> list[dict]:
         try:
             extras.extend(fn(*a))
         except Exception:
-            pass                       # cada fonte é opcional: a que falhar não derruba a busca
+            _log.debug("exceção ignorada", exc_info=True)                       # cada fonte é opcional: a que falhar não derruba a busca
     if _PEDIDO_NOTICIA.search(original):
         tentar(buscar_noticias, pergunta, 5)
     if _PEDIDO_DEFINICAO.search(original):
@@ -127,7 +129,7 @@ def _buscar_motores(pergunta: str, limite: int = 8) -> list[dict]:
             if len(itens) >= limite:
                 break
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
     return itens
 
 
@@ -367,7 +369,7 @@ def pesquisa_profunda(pergunta: str, router, max_fontes: int = 4) -> dict:
     try:
         arq.write_text(corpo, encoding="utf-8")
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
     return {"ok": True, "resposta": resposta, "fontes": fontes,
             "arquivo": str(arq), "pergunta": pergunta}
 

@@ -15,6 +15,9 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import logging
+
+_log = logging.getLogger(__name__)
 
 
 def _ip_lan() -> str:
@@ -132,7 +135,7 @@ class ServidorMidia:
                 self._httpd.shutdown()
                 self._httpd.server_close()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         self._httpd = None
 
 
@@ -166,7 +169,7 @@ class Chromecasts:
         try:
             modelo = cast.device.model_name or ""
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         return {"nome": nome, "ip": host, "porta": porta,
                 "uuid": uuid, "modelo": modelo}
 
@@ -192,7 +195,7 @@ class Chromecasts:
             try:
                 browser.stop_discovery()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         return saida
 
     def _cliente(self, alvo: str):
@@ -233,13 +236,13 @@ class Chromecasts:
             dados["volume"] = round(float(cast.status.volume_level) * 100)
             dados["mudo"] = bool(cast.status.volume_muted)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         try:
             mc = cast.media_controller
             dados["tocando"] = mc.status.player_state
             dados["titulo"] = mc.status.title or mc.status.media_artist or None
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         return dados
 
     def tocar(self, alvo: str, midia: str,

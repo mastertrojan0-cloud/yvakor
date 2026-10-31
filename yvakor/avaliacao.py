@@ -19,12 +19,15 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+import logging
+
+_log = logging.getLogger(__name__)
 
 for _stream in (sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
 
 ROOT = Path(__file__).resolve().parent.parent
 

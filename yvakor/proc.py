@@ -25,6 +25,11 @@ def _preparar(kwargs: dict) -> dict:
     # esconder a janela de um app GUI legítimo (o Chrome controlado, o Yoosee).
     if _NT:
         kwargs.setdefault("creationflags", NO_WINDOW)
+    # Modo texto: saída de comando do Windows com acento em outra codificação
+    # (cp850/utf-8) derrubava a thread de leitura com UnicodeDecodeError e a
+    # saída inteira se perdia. Troca o caractere ilegível em vez de quebrar.
+    if kwargs.get("text") or kwargs.get("universal_newlines") or kwargs.get("encoding"):
+        kwargs.setdefault("errors", "replace")
     return kwargs
 
 

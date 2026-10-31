@@ -13,7 +13,6 @@ política em cada comando; este módulo só guarda, valida e responde.
 """
 from __future__ import annotations
 
-import json
 import re
 import threading
 from pathlib import Path

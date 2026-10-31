@@ -16,6 +16,9 @@ import sqlite3
 import threading
 import unicodedata
 from pathlib import Path
+import logging
+
+_log = logging.getLogger(__name__)
 
 PRAGMAS = (
     "journal_mode=WAL",
@@ -110,12 +113,12 @@ class ConexaoThreadLocal:
                 try:
                     conn.close()
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
             self._todas.clear()
         try:
             self._local.conn = None
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
 
 def conectar(caminho: Path | str) -> ConexaoThreadLocal:

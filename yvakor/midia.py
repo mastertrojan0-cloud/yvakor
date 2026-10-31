@@ -1,10 +1,12 @@
 """YVAKOR — reprodução de mídia com VLC (local, URL, RTSP)."""
 from __future__ import annotations
 
-import os
 import subprocess
 from yvakor import proc as _ywproc
 from pathlib import Path
+import logging
+
+_log = logging.getLogger(__name__)
 
 VLC_CAMINHOS = (
     r"C:\Program Files\VideoLAN\VLC\vlc.exe",
@@ -70,7 +72,7 @@ class Player:
                 try:
                     self.proc.terminate()
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
         self.proc = None
         self.alvo = ""
         return {"ok": True, "parado": True}

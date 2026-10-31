@@ -18,6 +18,9 @@ from __future__ import annotations
 import threading
 
 from yvakor.browser.session import BrowserSession
+import logging
+
+_log = logging.getLogger(__name__)
 
 MOTORES_PADRAO = {
     "edge": {"channel": "msedge", "profile_dir": "data/browser_profiles/edge",
@@ -121,7 +124,7 @@ class Navegadores:
             try:
                 sess.close()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         return {"ok": True, "fechado": True}
 
     def shutdown(self) -> None:
@@ -129,4 +132,4 @@ class Navegadores:
             try:
                 sess.shutdown()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)

@@ -34,7 +34,7 @@ def main():
         if msg.lower() in ("sair", "exit", "quit"):
             break
         try:
-            print(f"\n  pensando...", flush=True, end="")
+            print("\n  pensando...", flush=True, end="")
             response = agent.process(msg)
             print(f"\r{' ' * 30}\r", end="")  # limpa "pensando..."
             print(f"\nyvakor > {response}")

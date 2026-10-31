@@ -13,6 +13,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from yvakor.memory.db import conectar
+import logging
+
+_log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -82,4 +85,4 @@ class Telemetria:
             self.conn.execute("PRAGMA optimize")
             self.conn.close()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)

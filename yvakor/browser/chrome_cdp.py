@@ -16,6 +16,9 @@ import urllib.request
 from pathlib import Path
 
 from yvakor.config import ROOT
+import logging
+
+_log = logging.getLogger(__name__)
 
 PERFIL_PADRAO = ROOT / "data" / "browser_profiles" / "chrome-cdp"
 
@@ -124,7 +127,7 @@ def _registrar_abertura(porta: str) -> None:
                     f"porta={porta} thread={threading.current_thread().name} "
                     f"pilha: {pilha}\n")
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
 
 
 def garantir_para_url(url: str, perfil: str | Path | None = None) -> dict:

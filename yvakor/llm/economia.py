@@ -35,7 +35,6 @@ import sqlite3
 import threading
 import time
 import unicodedata
-from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -118,7 +117,7 @@ def tokens_mensagens(msgs: list[dict], razao: float = 3.6) -> int:
 # Compressão de prompt (sem chamar IA)
 # --------------------------------------------------------------------------- #
 def _enxugar(texto: str) -> str:
-    t = texto.replace("\r\n", "\n").replace("​", "")
+    t = texto.replace("\r\n", "\n").replace("\u200b", "")
     t = re.sub(r"[ \t]+\n", "\n", t)
     t = re.sub(r"[ \t]{2,}", " ", t)
     t = re.sub(r"\n{3,}", "\n\n", t)

@@ -26,6 +26,9 @@ from pathlib import Path
 
 from yvakor import seguro
 from yvakor.config import ROOT
+import logging
+
+_log = logging.getLogger(__name__)
 
 ARQ = ROOT / "data" / "licoes.json"
 MAX_LICOES = 80
@@ -186,7 +189,7 @@ def destilar_feedback(router, tipo: str, pedido: str, resposta: str,
         if i >= 0 and f > i:
             return str(json.loads(bruto[i:f + 1]).get("licao") or "").strip()
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
     return ""
 
 

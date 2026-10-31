@@ -28,7 +28,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pyinstaller>=6.0"]
+dev = ["pytest>=8.0", "pyinstaller>=6.0", "ruff>=0.6"]
 
 [project.scripts]
 yvakor = "yvakor.main:main"
@@ -40,3 +40,19 @@ include = ["yvakor*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+# Checagem de qualidade: `python -m ruff check yvakor` (também roda em
+# tests/test_qualidade.py). Só regras que apontam bug real — estilo fica livre.
+[tool.ruff]
+target-version = "py310"
+extend-exclude = ["venv", "dist", "data"]
+
+[tool.ruff.lint]
+select = [
+  "F",       # pyflakes: nome indefinido, import morto, variável não usada
+  "E9",      # erros de sintaxe/IO
+  "PLE",     # erros do pylint (caractere invisível, etc.)
+  "B006",    # default mutável em argumento
+  "B023",    # closure de loop capturando a variável errada
+  "B033",    # valor duplicado em set
+]

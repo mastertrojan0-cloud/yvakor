@@ -27,7 +27,9 @@ import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+import logging
+
+_log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -64,7 +66,7 @@ class CoworkStore:
                        "journal_size_limit=33554432"):
                 self.conn.execute(f"PRAGMA {_p}")
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         self._lock = threading.Lock()
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS cowork_tasks (
@@ -86,7 +88,7 @@ class CoworkStore:
             try:
                 self.conn.execute(f"ALTER TABLE cowork_tasks ADD COLUMN {col}")
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         self.conn.commit()
 
     def insert(self, task: dict) -> None:
@@ -337,7 +339,7 @@ class CoworkManager:
                 return {"objetivo": str(data.get("objetivo") or descricao),
                         "etapas": etapas[:limite]}
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         return {"objetivo": descricao,
                 "etapas": [{"id": 1, "titulo": "Executar a tarefa",
                             "objetivo": descricao,
@@ -410,7 +412,7 @@ class CoworkManager:
         try:
             self._orch._tl.segundo_plano = True
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
         def on_event(tipo: str, dado: dict) -> None:
             if tipo == "ferramenta":
@@ -423,7 +425,7 @@ class CoworkManager:
                 try:
                     self._anotar(tid, self._orch._rotulo_plano(dado))
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
             elif tipo == "aprovacao_plano":
                 self._anotar(tid, "📋 esperando você aprovar o plano", tipo="aviso")
             elif tipo == "observacao" and isinstance(dado, dict):
@@ -540,7 +542,7 @@ class CoworkManager:
                         f"**Status:** {status}\n\n---\n\n{resultado}\n",
                         encoding="utf-8")
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
             if erro:
                 # O erro já aparece no campo próprio do cartão; evita duplicar
                 # como passo ("⚠ ..." duas vezes na interface).
@@ -556,7 +558,7 @@ class CoworkManager:
             try:
                 nav_ctx.limpar()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             self._fechar_abas_da_tarefa(tid)
             with self._lock:
                 self._threads.pop(tid, None)
@@ -638,7 +640,7 @@ class CoworkManager:
                     t["pendente_confirmacao"] = prog.get("pending")
                     t["ao_vivo"] = (prog.get("steps") or [])[-6:]
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
             itens.append(t)
         return itens
 

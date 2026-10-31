@@ -14,12 +14,14 @@ from __future__ import annotations
 import json
 import os
 import re
-import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
 from yvakor import seguro
+import logging
+
+_log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 ARQ_AJUSTES = ROOT / "data" / "ajustes.json"
@@ -157,7 +159,7 @@ def recarregar_provedores(agente) -> None:
     try:
         r.definir_modo(r.modo)                           # zera breaker/probe: tenta a nuvem de novo
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
 
 
 def _modelo_configurado(provedor: str) -> str:

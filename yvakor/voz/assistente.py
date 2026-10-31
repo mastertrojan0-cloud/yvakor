@@ -18,6 +18,9 @@ import time
 
 from yvakor.voz.stt_multi import STTMulti
 from yvakor.voz.tts import TTS
+import logging
+
+_log = logging.getLogger(__name__)
 
 ALIASES_PADRAO = ["yvakor", "yvacor", "evacor", "eva coruja",
                   "iva cor", "ivacor", "yva kor", "eva cor", "yvakour"]
@@ -137,7 +140,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             _s.reconfigure(encoding="utf-8")
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
     from yvakor.orchestrator import Orchestrator
     from yvakor.config import load_settings
 
@@ -161,7 +164,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             orch.shutdown()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
 
 def json_dumps(obj) -> str:

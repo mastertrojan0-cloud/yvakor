@@ -18,13 +18,15 @@ from __future__ import annotations
 import re
 
 from yvakor.memory.db import normalizar
+import logging
+
+_log = logging.getLogger(__name__)
 
 STOPWORDS = {
     "qual", "quais", "quando", "onde", "como", "porque", "por", "para", "the",
     "que", "uma", "um", "uns", "umas", "dos", "das", "com", "sem", "meu",
     "minha", "meus", "minhas", "seu", "sua", "isso", "este", "esta", "esse",
-    "essa", "aquilo", "tem", "ter", "foi", "ser", "sao", "está", "esta",
-    "voce", "você", "pode", "poderia", "favor", "sobre", "mais", "menos",
+    "essa", "aquilo", "tem", "ter", "foi", "ser", "sao", "está", "voce", "você", "pode", "poderia", "favor", "sobre", "mais", "menos",
     "aqui", "ali", "agora", "hoje", "ontem", "e", "ou", "de", "do", "da",
     "em", "no", "na", "nos", "nas", "ao", "aos", "é", "eu", "ele", "ela",
     "nós", "eles", "elas", "não", "sim", "já", "muito", "bem", "tudo",
@@ -200,7 +202,7 @@ class Resolvedor:
                         "resposta": resposta,
                     })
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
         # fatos fora do vault (semântica) também entram
         try:
@@ -210,7 +212,7 @@ class Resolvedor:
                                    "cobertura": cobertura,
                                    "resposta": f"{fato}\n\n— do cérebro: [[Memória]]"})
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
         if pode_direto and (not candidatos or
                             max(c["cobertura"] for c in candidatos) < self.limiar_direto):
@@ -224,7 +226,7 @@ class Resolvedor:
                     # revisão. Evita compor o loop auto-reforçante.
                     self.c.semantic.store(fato, fonte="conversa", confianca=0.5)
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
                 return {"modo": "cerebro", "confianca": round(conv[0], 2),
                         "resposta": f"{fato}\n\n— do cérebro: [[Memória]]",
                         "fontes": ["Memória"],
@@ -265,6 +267,6 @@ class Resolvedor:
                     partes.append(f"### {nota.get('titulo')} "
                                   f"({nota.get('tipo')})\n{resumo}")
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         texto = "\n\n".join(partes)
         return texto[:limite]

@@ -26,6 +26,9 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+import logging
+
+_log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -135,12 +138,12 @@ class BrowserSession:
             if self._ctx is not None and self.mode != "cdp":
                 self._ctx.close()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         try:
             if self._pw is not None:
                 self._pw.stop()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def _call(self, fn, *args, timeout: float = 90, **kwargs):
         self._ensure_thread()
@@ -182,7 +185,7 @@ class BrowserSession:
                     self._ctx.set_default_timeout(self.timeout_ms)
                     self._ctx.set_default_navigation_timeout(self.nav_timeout_ms)
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
             if self._page is None or self._page.is_closed():
                 paginas = self._ctx.pages if self._ctx else []
                 self._page = paginas[0] if paginas else self._ctx.new_page()
@@ -237,7 +240,7 @@ class BrowserSession:
                     self._ctx.set_default_timeout(self.timeout_ms)
                     self._ctx.set_default_navigation_timeout(self.nav_timeout_ms)
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
                 return self._ctx
             except Exception as exc:
                 erros.append(f"{channel or 'chromium'}: {str(exc)[:160]}")
@@ -291,7 +294,7 @@ class BrowserSession:
             if self._ctx is not None:
                 self._ctx.close()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         self._ctx, self._page = None, None
         self._abas.clear()
 
@@ -333,7 +336,7 @@ class BrowserSession:
         try:
             page.evaluate(self._VISUAL_JS)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def _mover_visual(self, page, x: float, y: float) -> None:
         if not getattr(self, "realismo", True):
@@ -344,7 +347,7 @@ class BrowserSession:
                 "([x,y]) => { const c=document.getElementById('yvakor-cursor');"
                 " if(c) c.style.transform=`translate(${x}px,${y}px)`; }", [x, y])
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def _clique_visual(self, loc, timeout: int) -> None:
         page = self._page
@@ -366,7 +369,7 @@ class BrowserSession:
                     }""",
                     [caixa["x"], caixa["y"], caixa["width"], caixa["height"]])
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             self._mover_visual(page, x, y)
             try:
                 page.evaluate(
@@ -382,7 +385,7 @@ class BrowserSession:
                         });
                     }""", [x, y])
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             page.wait_for_timeout(120)
         loc.click(timeout=timeout)
 
@@ -397,7 +400,7 @@ class BrowserSession:
                 self._mover_visual(page, caixa["x"] + caixa["width"] / 2,
                                    caixa["y"] + caixa["height"] / 2)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         loc.click()
         loc.fill("")
         atraso = int(getattr(self, "digitar_ms", 35))
@@ -497,7 +500,7 @@ class BrowserSession:
                         pg.close()
                         fechadas += 1
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
             if self._aba_atual not in self._abas:
                 self._aba_atual = "principal"
                 self._abas["principal"] = (self._ctx.pages[0]
@@ -565,7 +568,7 @@ class BrowserSession:
         try:
             page.wait_for_load_state("domcontentloaded", timeout=10000)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         if resp is not None and resp.status >= 400:
             self._last_error = f"HTTP {resp.status} em {url}"
         self._sync_state(page)
@@ -706,7 +709,7 @@ class BrowserSession:
         try:
             page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         data = page.evaluate(self._SNAPSHOT_JS, self.max_elements)
         self._sync_state(page)
         return data
@@ -875,12 +878,12 @@ class BrowserSession:
             try:
                 loc.scroll_into_view_if_needed(timeout=timeout)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             self._clique_visual(loc, timeout)
             try:
                 self._page.wait_for_load_state("domcontentloaded", timeout=15000)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             data = self._snapshot_raw(self._page)
             return {
                 "ok": True,
@@ -912,11 +915,11 @@ class BrowserSession:
                 try:
                     loc.press("Enter")
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
                 try:
                     self._page.wait_for_load_state("domcontentloaded", timeout=15000)
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
             data = self._snapshot_raw(self._page)
             return {
                 "ok": True,
@@ -935,7 +938,7 @@ class BrowserSession:
             try:
                 self._page.wait_for_load_state("domcontentloaded", timeout=15000)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             data = self._snapshot_raw(self._page)
             return {"ok": True, "tecla": key, "url": data["url"],
                     "resumo": self._render_snapshot(data, self.snapshot_chars)}
@@ -1040,7 +1043,7 @@ class BrowserSession:
             try:
                 self._page.bring_to_front()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             data = self._snapshot_raw(self._page)
             return {"ok": True, "aba": idx, "url": data["url"],
                     "resumo": self._render_snapshot(data, self.snapshot_chars)}
@@ -1121,7 +1124,7 @@ class BrowserSession:
                 self._q.put(None)
                 self._thread.join(timeout=8)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     # ================================================================== #
     # Estado para a interface

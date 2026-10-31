@@ -13,6 +13,9 @@ from datetime import datetime
 from pathlib import Path
 
 from yvakor.config import ROOT
+import logging
+
+_log = logging.getLogger(__name__)
 
 PASTA = ROOT / "data" / "artefatos"
 FOTOS = PASTA / "fotos"
@@ -133,7 +136,7 @@ def _linhas(dados) -> list[list[str]]:
         if isinstance(j, list):
             return _linhas(j)
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
     return [linha for linha in csv.reader(io.StringIO(texto))]
 
 
@@ -221,7 +224,7 @@ def buscar_foto(termo: str, quantidade: int = 1) -> dict:
                     "url_origem": item.get("url") or "",
                     "tipo": "foto"})
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     # Openverse — todas as licenças, com atribuição
     if not fotos:
@@ -250,7 +253,7 @@ def buscar_foto(termo: str, quantidade: int = 1) -> dict:
                     "url_origem": item.get("foreign_landing_url") or img_url,
                     "tipo": "foto"})
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     # Wikimedia Commons — todas as licenças, com atribuição
     if not fotos:
@@ -286,7 +289,7 @@ def buscar_foto(termo: str, quantidade: int = 1) -> dict:
                     "url_origem": info.get("descriptionurl") or img,
                     "tipo": "foto"})
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     # Fallback criativo: gera a imagem quando não existe foto adequada.
     if not fotos:
@@ -304,7 +307,7 @@ def buscar_foto(termo: str, quantidade: int = 1) -> dict:
                     "url_origem": "",
                     "tipo": "imagem"})
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     if not fotos:
         return {"ok": False, "erro": "nenhuma foto encontrada"}

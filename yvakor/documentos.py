@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import hashlib
-import subprocess
 from yvakor import proc as _ywproc
-import tempfile
 from pathlib import Path
 
 from yvakor.config import ROOT
+import logging
+
+_log = logging.getLogger(__name__)
 
 TEMP = ROOT / "data" / "temp"
 OCR_PS1 = TEMP / "yvakor_ocr.ps1"
@@ -89,7 +90,7 @@ def _ocr_pdf(caminho: Path, max_paginas: int = 20) -> dict:
                     achou_ocr = True
                 temp.unlink(missing_ok=True)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             if t and not achou_ocr:      # sem OCR (ou ele não achou mais): fica o texto curto que já existe
                 textos.append(t)
         doc.close()

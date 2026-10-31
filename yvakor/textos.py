@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import json
 import re
+import logging
+
+_log = logging.getLogger(__name__)
 
 
 _OBS = re.compile(r"OBSERVA[ÇC][ÃA]O\s*\([^)\n]{0,60}\)\s*:\s*", re.I)
@@ -40,7 +43,7 @@ def sem_json_de_ferramenta(texto: str) -> str:
                     _, fim = dec.raw_decode(resto)
                     i += (len(texto[i:]) - len(resto)) + fim
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
         partes.append(texto[i:])
         sem_obs = "".join(partes).strip()
         if sem_obs:

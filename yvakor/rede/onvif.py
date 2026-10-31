@@ -173,7 +173,7 @@ def descobrir(segundos: float = 3.0) -> list[dict]:
         f'<e:Envelope xmlns:e="{NS_S}" xmlns:w="{NS_WSA}" xmlns:d="{NS_WSD}" '
         'xmlns:dn="http://www.onvif.org/ver10/network/wsdl">'
         "<e:Header><w:MessageID>uuid:" + str(os.urandom(16).hex()) + "</w:MessageID>"
-        f"<w:To e:mustUnderstand=\"true\">urn:schemas-xmlsoap-org:ws:2005:04:discovery</w:To>"
+        "<w:To e:mustUnderstand=\"true\">urn:schemas-xmlsoap-org:ws:2005:04:discovery</w:To>"
         '<w:Action e:mustUnderstand="true">'
         "http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</w:Action>"
         "</e:Header><e:Body><d:Probe><d:Types>dn:NetworkVideoTransmitter"

@@ -12,6 +12,9 @@ import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
+import logging
+
+_log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 ARQUIVO = ROOT / "data" / "notificacoes.jsonl"
@@ -75,7 +78,7 @@ class Notificador:
                 self.tts.falar(mensagem, assincrono=True,
                                prioridade=int(prioridade))
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         return {"ok": True, **evento}
 
     def recentes(self, limite: int = 20) -> list[dict]:

@@ -185,8 +185,6 @@ class Televisores:
 
     def desligar(self, alvo: str) -> dict:
         ip = self._ip(alvo)
-        dev = self.registro.obter(alvo) or {}
-        servicos = " ".join(dev.get("servicos") or []).lower()
         try:
             return self._samsung_chave(ip, "power")
         except Exception as exc_s:

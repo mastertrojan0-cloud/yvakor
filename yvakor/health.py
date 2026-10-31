@@ -1,13 +1,15 @@
 """YVAKOR — saúde do sistema com cache curto (para monitoramento externo)."""
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 import threading
 import time
 import urllib.request
 from pathlib import Path
+import logging
+
+_log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 _INICIO = time.time()
@@ -56,11 +58,11 @@ def coletar(agente=None, forcar: bool = False, build: str = "") -> dict:
         try:
             telemetria = agente.telemetria.resumo(7)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         try:
             monitor = agente.monitor_rede.status() if agente.monitor_rede else {}
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     try:
         from yvakor import banco as _banco

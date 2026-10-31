@@ -19,6 +19,9 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+import logging
+
+_log = logging.getLogger(__name__)
 
 _TRAVAS: dict[str, threading.Lock] = {}
 _TRAVAS_LOCK = threading.Lock()
@@ -59,7 +62,7 @@ def gravar_texto(path: Path | str, texto: str, *, backup: bool = False) -> None:
                     json.loads(path.read_text(encoding="utf-8"))
                     _substituir_copia(path, path.with_name(path.name + ".bak"))
                 except Exception:
-                    pass          # o atual já está ruim: não sobrescreve o .bak bom
+                    _log.debug("exceção ignorada", exc_info=True)          # o atual já está ruim: não sobrescreve o .bak bom
             _substituir(tmp, path)
         finally:
             try:
@@ -96,7 +99,7 @@ def ler_json(path: Path | str, padrao: Any = None) -> Any:
             try:
                 gravar_texto(path, json.dumps(dados, ensure_ascii=False, indent=2))
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         return dados
     return padrao
 

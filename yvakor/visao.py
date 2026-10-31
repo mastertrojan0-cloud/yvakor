@@ -5,6 +5,9 @@ import base64
 import json
 import urllib.request
 from pathlib import Path
+import logging
+
+_log = logging.getLogger(__name__)
 
 OLLAMA = "http://127.0.0.1:11434"
 
@@ -95,7 +98,7 @@ def analisar(caminho: str | Path, pergunta: str = "") -> dict:
         from yvakor.documentos import extrair_texto
         ocr = extrair_texto(caminho)
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
     if not visao.get("ok") and not ocr:
         return {"ok": False, "erro": visao.get("erro", "sem análise")}
     partes = []

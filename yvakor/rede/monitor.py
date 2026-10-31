@@ -7,6 +7,9 @@ import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
+import logging
+
+_log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 EVENTOS = ROOT / "data" / "rede_monitor.jsonl"
@@ -70,9 +73,9 @@ class MonitorRede:
                         from yvakor.rede.gerente import organizar
                         self.ultima["gerente"] = organizar(self.rede)
                     except Exception:
-                        pass
+                        _log.debug("exceção ignorada", exc_info=True)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             self.proxima = time.time() + self.intervalo
             if self._parar.wait(self.intervalo):
                 break
@@ -82,7 +85,7 @@ class MonitorRede:
             if self.aprendiz is not None:
                 self.aprendiz(dev)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     def _evento(self, tipo: str, ip: str, dev: dict) -> None:
         ev = {"ts": datetime.now().isoformat(timespec="seconds"),
@@ -97,7 +100,7 @@ class MonitorRede:
             elif tipo == "saiu":
                 _notificar(f"Dispositivo saiu da rede: {ip}", "rede", 1)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         if tipo == "entrou" and self.aprendiz is not None:
             threading.Thread(target=self._aprender, args=(dev,),
                              daemon=True).start()

@@ -26,6 +26,9 @@ import urllib.request
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin
+import logging
+
+_log = logging.getLogger(__name__)
 
 _tl = threading.local()
 
@@ -391,7 +394,7 @@ def web_ler(url: str = "", inicio: int = 0, max_chars: int = 12000,
         try:
             leitor.feed(html)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         texto, titulo, lista = leitor.markdown(), leitor.titulo.strip(), leitor.links
     inicio = max(0, int(inicio or 0))
     max_chars = max(500, min(int(max_chars or 12000), 40000))

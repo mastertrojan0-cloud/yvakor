@@ -15,6 +15,9 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
+import logging
+
+_log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 LOGS = ROOT / "data" / "logs"
@@ -29,7 +32,7 @@ def _registrar(evento: dict) -> None:
         emitir(evento.get("mensagem", "Servidor reiniciado"), "sistema", 2,
                falar=False)
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
 
 
 def _saudavel(url: str) -> bool:
@@ -48,7 +51,7 @@ def _matar(proc: subprocess.Popen) -> None:
         try:
             proc.kill()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
 
 def _log_rotativo() -> object:
@@ -129,7 +132,7 @@ def main() -> int:
             try:
                 saida.close()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         duracao = round(time.time() - t0, 1)
         if codigo == 0 and args.once:
             return 0

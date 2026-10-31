@@ -11,6 +11,9 @@ rodar no modelo LOCAL — é assim que a dependência externa diminui.
 """
 from __future__ import annotations
 from datetime import datetime
+import logging
+
+_log = logging.getLogger(__name__)
 
 RELEVANT_TYPES = {"codigo", "prospeccao", "analise_complexa", "pesquisa_sintese"}
 
@@ -43,7 +46,7 @@ class ReflectionLoop:
                     f"Padrão detectado: {verdict.get('nome_skill')} — "
                     f"{verdict.get('motivo')}. Use [skill] para salvar.")
         except Exception:
-            pass  # reflexão nunca pode quebrar o fluxo principal
+            _log.debug("exceção ignorada", exc_info=True)  # reflexão nunca pode quebrar o fluxo principal
 
     def create_skill_from_context(self, instruction: str, recent: list[str]) -> str:
         context = "\n".join(recent[-20:])

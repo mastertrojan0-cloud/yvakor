@@ -8,6 +8,9 @@ import threading
 import time
 import traceback
 from pathlib import Path
+import logging
+
+_log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 LOGS = ROOT / "data" / "logs"
@@ -35,7 +38,7 @@ def _gravar(tipo: str, exc_type, exc, tb) -> None:
         emitir(f"Falha interna registrada ({tipo}): {str(exc)[:120]}",
                "sistema", 2)
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
 
 
 def _hook_sys(exc_type, exc, tb):
@@ -54,7 +57,7 @@ def _hook_nao_levantavel(args):
     try:
         _gravar("nao_levantavel", args.exc_type, args.exc_value, args.exc_traceback)
     except Exception:
-        pass
+        _log.debug("exceção ignorada", exc_info=True)
 
 
 def ao_encerrar(callback) -> None:
@@ -66,7 +69,7 @@ def ao_encerrar(callback) -> None:
         try:
             callback()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     for nome in ("SIGTERM", "SIGBREAK"):
         sig = getattr(signal, nome, None)

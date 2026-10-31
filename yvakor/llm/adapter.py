@@ -6,6 +6,9 @@ import json
 import urllib.error
 import threading
 import urllib.request
+import logging
+
+_log = logging.getLogger(__name__)
 
 
 class ProviderErro(RuntimeError):
@@ -103,7 +106,7 @@ class LLMProvider:
             try:
                 inteiro = exc.read().decode("utf-8", "replace")
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             corpo = inteiro[:300]
             espera = None
             try:

@@ -1,7 +1,6 @@
 """YVAKOR — comandos de voz para a rede (direto, sem IA)."""
 from __future__ import annotations
 
-import re
 
 from yvakor.memory.db import normalizar
 
