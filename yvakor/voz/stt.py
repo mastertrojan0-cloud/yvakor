@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import queue
 import shutil
 import subprocess
@@ -27,6 +26,9 @@ import wave
 import zipfile
 from array import array
 from pathlib import Path
+import logging
+
+_log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 URL_MODELO = "https://alphacephei.com/vosk/models/{}.zip"
@@ -184,8 +186,6 @@ class STT:
 
     def testar_microfone(self, segundos: float = 1.5) -> dict:
         """Testa captura em subprocesso; nunca trava o agente."""
-        import subprocess
-        import sys
         dev = repr(self.dispositivo_entrada)
         codigo = (
             "import sounddevice as sd, numpy as np\n"
@@ -252,7 +252,7 @@ class STT:
             with sd.RawInputStream(samplerate=16000, blocksize=4000,
                                    dtype="int16", channels=1,
                                    device=self.dispositivo_entrada,
-                                   callback=callback) as stream:
+                                   callback=callback):
                 while True:
                     bloco = fila.get(timeout=limite + 2)
                     blocos.append(bloco)
@@ -264,7 +264,7 @@ class STT:
                             if parcial:
                                 on_partial(parcial)
                         except Exception:
-                            pass
+                            _log.debug("exceção ignorada", exc_info=True)
                     nivel = self._rms(bloco)
                     if nivel >= self.silencio_rms:
                         falou = True

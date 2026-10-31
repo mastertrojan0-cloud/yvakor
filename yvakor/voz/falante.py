@@ -11,6 +11,9 @@ import queue
 import threading
 import time
 from pathlib import Path
+import logging
+
+_log = logging.getLogger(__name__)
 
 
 class Falante:
@@ -23,6 +26,7 @@ class Falante:
         self._seq = 0
         self._recentes: dict[str, float] = {}
         self.ultimo_erro = ""
+        self._epoca = 0             # muda a cada interromper(): descarta o que já estava saindo
 
     def _garantir_thread(self):
         if self._thread and self._thread.is_alive():
@@ -64,14 +68,24 @@ class Falante:
                 self._fila.put(item)
         return removidos
 
+    def interromper(self) -> int:
+        """Pausa/parar: esvazia a fila e descarta o que estava sendo gerado."""
+        with self._lock:
+            self._epoca += 1
+            return self.cancelar_abaixo(99)
+
     def _worker(self):
         while True:
             item = self._fila.get()
             if item is None:
                 break
             _, _, texto, kwargs = item
+            epoca = self._epoca
             try:
                 r = self.gerar(texto, **(kwargs or {}))
+                # parar() durante a geração (edge-tts leva 1–3 s): não toca
+                if epoca != self._epoca:
+                    continue
                 if r.get("ok") and r.get("arquivo"):
                     self.tocar(Path(r["arquivo"]))
                     self._recentes[texto] = time.time()
@@ -89,4 +103,4 @@ class Falante:
         try:
             self._fila.put(None)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)

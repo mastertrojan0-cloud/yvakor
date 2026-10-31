@@ -12,12 +12,16 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import shutil
-import subprocess
-from yvakor import proc as _ywproc
 import threading
+import wave
+from yvakor import proc as _ywproc
 import time
 from pathlib import Path
+import logging
+
+_log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -59,6 +63,30 @@ class TTS:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._cache_hits = 0
         self._cache_miss = 0
+        # Pausar precisa interromper a fala JÁ começada: a reprodução síncrona
+        # (PlaySound sem SND_ASYNC) não parava com SND_PURGE e ia até o fim.
+        self._parar_evento = threading.Event()
+        self._ffplay = None
+        self._pref_cache: tuple[float, bool] = (0.0, True)
+
+    # ------------------------------------------------------------------ #
+    # Pausa (botão 🔇 VOZ do app → preferencias.json "voz_ativa")
+    # ------------------------------------------------------------------ #
+    def pausada(self) -> bool:
+        """True se o usuário desligou a voz. Vale para TODA fala do servidor
+        (respostas, narração de tarefa, avisos), não só a do app."""
+        arq = ROOT / "data" / "preferencias.json"
+        try:
+            mtime = arq.stat().st_mtime
+        except OSError:
+            return False
+        if mtime != self._pref_cache[0]:
+            try:
+                ativa = bool(json.loads(arq.read_text(encoding="utf-8")).get("voz_ativa", True))
+            except (OSError, ValueError):
+                ativa = True
+            self._pref_cache = (mtime, ativa)
+        return not self._pref_cache[1]
         self.ultimo_erro = ""
 
     def _voz_para(self, idioma: str | None) -> str:
@@ -97,24 +125,47 @@ class TTS:
     def _ffmpeg() -> str | None:
         return shutil.which("ffmpeg")
 
+    @staticmethod
+    def _duracao_wav(caminho: Path) -> float:
+        try:
+            with wave.open(str(caminho), "rb") as w:
+                return w.getnframes() / float(w.getframerate() or 1)
+        except (wave.Error, OSError, EOFError):
+            return 120.0
+
     def _tocar_arquivo(self, caminho: Path) -> bool:
+        """Toca e devolve True se foi até o fim; False se parar() interrompeu."""
         if not caminho.exists():
             return False
+        self._parar_evento.clear()
         try:
             import winsound
-            winsound.PlaySound(str(caminho), winsound.SND_FILENAME)
+            winsound.PlaySound(str(caminho), winsound.SND_FILENAME
+                               | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+            fim = time.time() + self._duracao_wav(caminho) + 0.3
+            while time.time() < fim:
+                if self._parar_evento.wait(0.1):
+                    winsound.PlaySound(None, winsound.SND_PURGE)
+                    return False
             return True
         except Exception:
-            pass
-        # Fallback: ffplay
+            _log.debug("exceção ignorada", exc_info=True)
+        # Fallback: ffplay (processo que parar() mata)
         ffplay = shutil.which("ffplay")
         if ffplay:
             try:
-                _ywproc.run([ffplay, "-nodisp", "-autoexit", "-loglevel",
-                                "quiet", str(caminho)], timeout=120)
+                self._ffplay = _ywproc.popen([ffplay, "-nodisp", "-autoexit", "-loglevel",
+                                              "quiet", str(caminho)])
+                fim = time.time() + 120
+                while self._ffplay.poll() is None and time.time() < fim:
+                    if self._parar_evento.wait(0.1):
+                        self._ffplay.kill()
+                        return False
                 return True
             except Exception:
                 return False
+            finally:
+                self._ffplay = None
         return False
 
     # ------------------------------------------------------------------ #
@@ -229,7 +280,7 @@ class TTS:
                                              "-y", "-i", str(mp3), str(wav)],
                                             capture_output=True, timeout=60)
                         except Exception:
-                            pass
+                            _log.debug("exceção ignorada", exc_info=True)
                     if wav.exists():
                         self._cache_miss += 1
                         shutil.copy2(wav, cache)
@@ -249,6 +300,8 @@ class TTS:
     def falar(self, texto: str, motor: str | None = None,
               tocar: bool = True, assincrono: bool = False,
               prioridade: int = 1, idioma: str | None = None) -> dict:
+        if tocar and self.pausada():
+            return {"ok": True, "pausada": True, "falou": False}
         if assincrono:
             # fila única: nunca duas vozes ao mesmo tempo
             if not hasattr(self, "falante"):
@@ -263,18 +316,24 @@ class TTS:
         return r
 
     def parar(self) -> dict:
-        """Interrompe a fala atual e limpa a fila (barge-in)."""
+        """Interrompe a fala atual na hora e limpa a fila (barge-in/pausa)."""
         removidos = 0
+        self._parar_evento.set()
         try:
             if hasattr(self, "falante"):
-                removidos = self.falante.cancelar_abaixo(99)
+                removidos = self.falante.interromper()
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         try:
             import winsound
             winsound.PlaySound(None, winsound.SND_PURGE)
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
+        try:
+            if self._ffplay is not None:
+                self._ffplay.kill()
+        except Exception:
+            _log.debug("exceção ignorada", exc_info=True)
         return {"ok": True, "fila_limpa": removidos}
 
     def estatisticas(self) -> dict:
@@ -300,5 +359,5 @@ class TTS:
                     nome, cultura = linha.strip().split("|", 1)
                     saida["sapi"].append({"nome": nome, "cultura": cultura})
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
         return saida

@@ -17,10 +17,28 @@ Otimizações:
 """
 from __future__ import annotations
 
+import re
 import threading
 import time
+import unicodedata
 
 from yvakor.voz.assistente import contem_ativacao, limpar_para_fala
+import logging
+
+_log = logging.getLogger(__name__)
+
+# "para", "silêncio", "chega" — calar a fala na hora, sem passar pela IA
+# (antes não havia como pausar a voz falando).
+_CALAR = re.compile(
+    r"^(yvakor[,\s]+)?(para|pare|parar|pausa|pausar|silencio|cala( a boca)?|chega|"
+    r"basta|stop|quieto|para de falar|pare de falar|fica quieto|fique quieto)"
+    r"( de falar| agora| por favor)?[.!\s]*$", re.I)
+
+
+def pediu_calar(texto: str) -> bool:
+    t = unicodedata.normalize("NFKD", (texto or "").lower())
+    t = "".join(c for c in t if not unicodedata.combining(c)).strip()
+    return bool(_CALAR.match(t))
 
 
 FRASES_FERRAMENTA = {
@@ -108,11 +126,11 @@ class SessaoVoz:
             try:
                 self.voz.stt._carregar()
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             try:
                 self.voz.tts.gerar("Certo.")
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
         threading.Thread(target=_tarefa, daemon=True,
                          name="yvakor-voz-aquecer").start()
 
@@ -133,7 +151,7 @@ class SessaoVoz:
             self.voz.tts.falar(frase, assincrono=True,
                                idioma=getattr(self, "idioma", "pt-BR"))
         except Exception:
-            pass
+            _log.debug("exceção ignorada", exc_info=True)
 
     # ------------------------------------------------------------------ #
     # Comando
@@ -144,6 +162,9 @@ class SessaoVoz:
         texto = (texto or "").strip()
         if not texto:
             return {"ok": False, "erro": "nada foi dito"}
+        if pediu_calar(texto):
+            r = self.interromper()
+            return {"ok": True, "calou": True, "resposta": "", **r}
 
         # Comandos de câmera: executa direto, sem IA (voz → ação)
         from yvakor.voz.camera import detectar as detectar_camera
@@ -157,7 +178,7 @@ class SessaoVoz:
                     self.voz.tts.falar(resposta, assincrono=True,
                                        prioridade=2, idioma=self.idioma)
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
             self.turnos += 1
             self.aberta_ate = time.time() + self.janela
             try:
@@ -166,7 +187,7 @@ class SessaoVoz:
                     session_id=getattr(orch.episodic,
                                        "active_id", "default"))
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             return {"ok": True, "resposta": resposta, "acao": r.get("acao"),
                     "comando": "camera"}
 
@@ -181,7 +202,7 @@ class SessaoVoz:
                     self.voz.tts.falar(resposta, assincrono=True,
                                        prioridade=2, idioma=self.idioma)
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
             self.turnos += 1
             self.aberta_ate = time.time() + self.janela
             try:
@@ -189,7 +210,7 @@ class SessaoVoz:
                     "voz", texto, resposta,
                     session_id=getattr(orch.episodic, "active_id", "default"))
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             return {"ok": True, "resposta": resposta, "acao": rr.get("acao"),
                     "comando": "rede"}
 
@@ -204,7 +225,7 @@ class SessaoVoz:
                     self.voz.tts.falar(resposta, assincrono=True,
                                        prioridade=2, idioma=self.idioma)
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
             self.turnos += 1
             self.aberta_ate = time.time() + self.janela
             return {"ok": True, "resposta": resposta,
@@ -237,7 +258,7 @@ class SessaoVoz:
                     self.voz.tts.falar(resposta, assincrono=True,
                                        prioridade=2, idioma=self.idioma)
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
             self.turnos += 1
             self.aberta_ate = time.time() + self.janela
             return {"ok": True, "resposta": resposta, "comando": "nome"}
@@ -255,7 +276,7 @@ class SessaoVoz:
                     self.voz.tts.falar(resposta, assincrono=True,
                                        prioridade=2, idioma=self.idioma)
                 except Exception:
-                    pass
+                    _log.debug("exceção ignorada", exc_info=True)
             self.ultima_resposta = resposta
             self.turnos += 1
             self.aberta_ate = time.time() + self.janela
@@ -281,7 +302,7 @@ class SessaoVoz:
             try:
                 self.voz.tts.falante.cancelar_abaixo(2)
             except Exception:
-                pass
+                _log.debug("exceção ignorada", exc_info=True)
             fala = self.voz.tts.falar(limpar_para_fala(resposta),
                                       assincrono=True, prioridade=2,
                                       idioma=self.idioma)
